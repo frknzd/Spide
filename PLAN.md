@@ -117,8 +117,8 @@ Spide/
 - [x] 3. Frontend shell: dark canvas, bottom prompt, Tauri command/event plumbing, snapshot rendering.
 - [x] 4. Class rendering: UML boxes, relations with correct notation, elk initial layout, d3-force living physics, metric→visual mappings, ghost/accept/prune states, animations.
 - [x] 5. Hover cards; right-click prune; right-drag marquee prune; feedback popover → agent.
-- [ ] 6. MCP server (rmcp, localhost) with read/propose/evaluate tools; validation of ops.
-- [ ] 7. Pi bridge: spawn `pi --mode rpc`, write `.pi/mcp.json` + skill/system prompt, stream answers into bubble.
+- [x] 6. MCP server (rmcp, localhost) with read/propose/evaluate tools; validation of ops.
+- [x] 7. Pi bridge: spawn `pi --mode rpc`, write `.pi/mcp.json` + skill/system prompt, stream answers into bubble.
 - [ ] 8. Decision flow: decision cards, option preview mini-canvases, custom option, defence → examiner verdict, overrule (lenient/strict setting).
 - [ ] 9. `design.json` file watcher → diff → proposals.
 - [ ] 10. Derived tabs: Domain + Package (deterministic), Use Case + Sequence (agent, with validation + stale marker); prune/feedback in tabs.

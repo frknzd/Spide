@@ -122,10 +122,11 @@ export function classBox(
   const rows: Row[] = [];
   let y = headerH + 6;
   const attrY = headerH;
+  const isEnum = c.stereotype === "enum" || c.stereotype === "enumeration";
   for (const a of c.attributes) {
-    const text = truncate(attrText(a), F.member);
+    const text = truncate(isEnum ? a.name : attrText(a), F.member);
     w = Math.max(w, textWidth(text, F.member) + 2 * PAD_X);
-    rows.push({ text, kind: "attribute", name: a.name, status: a.status, isStatic: a.is_static, isAbstract: false, y: y + 12 });
+    rows.push({ text, kind: "attribute", name: a.name, status: a.status, isStatic: a.is_static && !isEnum, isAbstract: false, y: y + 12 });
     y += LINE;
   }
   if (c.attributes.length === 0) y += 6;
