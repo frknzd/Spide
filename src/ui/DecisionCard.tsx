@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NodeDefs } from "../canvas/ClassNode";
 import { boxesFor, DiagramContent } from "../canvas/DiagramContent";
 import { elkLayout } from "../canvas/layout";
@@ -43,6 +43,10 @@ function DecisionCard({ d, snap, onPreview, toast }: { d: Decision; snap: Snapsh
   const lenient = snap.view.settings.examiner === "lenient";
   const previews = snap.previews.filter((p) => p.decision === d.id);
   const health = snap.metrics.health;
+  const verdictRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (rejected) verdictRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [rejected, d.attempts.length]);
 
   const submit = () => {
     if (!ownMode && !choice) return toast("error", "pick an option or write your own");
@@ -93,7 +97,7 @@ function DecisionCard({ d, snap, onPreview, toast }: { d: Decision; snap: Snapsh
       </div>
 
       {rejected && last?.feedback && (
-        <div className="verdict reject">
+        <div className="verdict reject" ref={verdictRef}>
           <b>Examiner:</b> {last.feedback}
         </div>
       )}
@@ -111,7 +115,7 @@ function DecisionCard({ d, snap, onPreview, toast }: { d: Decision; snap: Snapsh
           }} />
         <div className="d-actions">
           {evaluating ? (
-            <span className="evaluating"><span className="spinner" /> the examiner is reading your defence…</span>
+            <span className="eval-note"><span className="spinner" /> the examiner is reading your defence…</span>
           ) : (
             <>
               <button className="primary" onClick={submit}>{rejected ? "Defend again" : "Defend"}</button>

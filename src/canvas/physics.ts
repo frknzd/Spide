@@ -89,10 +89,10 @@ function packageCohesion(strength: number) {
 function packageSeparation(margin: number) {
   let nodes: SimNode[] = [];
   const force = (alpha: number) => {
-    const boxes = new Map<string, { x1: number; y1: number; x2: number; y2: number; ns: SimNode[] }>();
+    const boxes = new Map<string, { x1: number; y1: number; x2: number; y2: number; ns: SimNode[]; layer: number | null }>();
     for (const n of nodes) {
       if (!n.pkg) continue;
-      const b = boxes.get(n.pkg) ?? { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity, ns: [] };
+      const b = boxes.get(n.pkg) ?? { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity, ns: [], layer: n.layer };
       b.x1 = Math.min(b.x1, n.x! - n.w / 2);
       b.y1 = Math.min(b.y1, n.y! - n.h / 2);
       b.x2 = Math.max(b.x2, n.x! + n.w / 2);
@@ -110,9 +110,11 @@ function packageSeparation(margin: number) {
         const oy = Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1) + margin;
         if (ox <= 0 || oy <= 0) continue;
         const acx = (a.x1 + a.x2) / 2, bcx = (b.x1 + b.x2) / 2, acy = (a.y1 + a.y2) / 2, bcy = (b.y1 + b.y2) / 2;
-        const horizontal = ox < oy;
+        // different layers separate vertically in layer order (outer layers on top)
+        const layered = a.layer !== null && b.layer !== null && a.layer !== b.layer;
+        const horizontal = !layered && ox < oy;
         const s = (horizontal ? ox : oy) * k;
-        const dir = horizontal ? (bcx >= acx ? 1 : -1) : (bcy >= acy ? 1 : -1);
+        const dir = layered ? (b.layer! > a.layer! ? 1 : -1) : horizontal ? (bcx >= acx ? 1 : -1) : (bcy >= acy ? 1 : -1);
         for (const n of a.ns) horizontal ? (n.vx! -= (dir * s) / a.ns.length * 2) : (n.vy! -= (dir * s) / a.ns.length * 2);
         for (const n of b.ns) horizontal ? (n.vx! += (dir * s) / b.ns.length * 2) : (n.vy! += (dir * s) / b.ns.length * 2);
       }
@@ -240,6 +242,10 @@ export class LivingLayout {
           if (ns.length) {
             x = ns.reduce((a, b) => a + b.x!, 0) / ns.length + (Math.random() - 0.5) * 260;
             y = ns.reduce((a, b) => a + b.y!, 0) / ns.length + (Math.random() - 0.5) * 200 + 120;
+            if (s.layer !== null) {
+              const nl = ns.filter((n) => n.layer !== null);
+              if (nl.length) y = nl[0].y! + (s.layer - nl[0].layer!) * LAYER_GAP * 0.8;
+            }
           } else {
             const i = next.size + added;
             const ang = i * 2.4;
