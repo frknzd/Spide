@@ -157,9 +157,9 @@ real code. Goal: make Spide a complete loop: **brief → decide → see conseque
 - [x] F2 metrics read rules; issue `rule`/`explain`/`fix_hint`; new issue kinds; existing metric tests still green
 - [x] F3 rules UI in BriefPanel, `/rules`, "fix with agent"
 **B — impact**
-- [ ] B1 `impact.rs` (+ move `health_delta`), tests (cycle introduced/resolved, flipped dep, rule break)
-- [ ] B2 impact in snapshot previews + proposals + MCP replies
-- [ ] B3 DecisionCard impact line; ComparePanel
+- [x] B1 `impact.rs` (+ move `health_delta`), tests (cycle introduced/resolved, flipped dep, rule break)
+- [x] B2 impact in snapshot previews + proposals + MCP replies
+- [x] B3 DecisionCard impact line; ComparePanel
 **C — scenarios**
 - [ ] C1 `scenarios.rs` scoring + `chatty_scenario`; SequenceView header
 - [ ] C2 change scenarios model/ops/MCP `set_change_impact`, ripple/locality, staleness, `/stress`

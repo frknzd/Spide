@@ -10,6 +10,7 @@ import type { Design, Tab, Target } from "./state/types";
 import { AnswerBubble } from "./ui/AnswerBubble";
 import { BriefPanel, MODES } from "./ui/BriefPanel";
 import { HealthRing, ProposalBar, Tabs, Toasts, type Toast } from "./ui/Chrome";
+import { ComparePanel } from "./ui/ComparePanel";
 import { DecisionPanel } from "./ui/DecisionCard";
 import { FeedbackPopover, type PruneState } from "./ui/FeedbackPopover";
 import { HoverCard } from "./ui/HoverCard";
@@ -32,6 +33,7 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [history, setHistory] = useState(false);
   const [brief, setBrief] = useState(false);
+  const [compare, setCompare] = useState<string | null>(null);
   const [preview, setPreview] = useState<Design | null>(null);
   const [focusKey, setFocusKey] = useState(0);
   const [scenario, setScenario] = useState<string | null>(null);
@@ -135,6 +137,10 @@ export default function App() {
       case "/lenient": return run(api.setExaminer(false).then(() => toast("info", "examiner: lenient — you may overrule")));
       case "/history": return setHistory((h) => !h);
       case "/brief": return setBrief((b) => !b);
+      case "/compare": {
+        const d = view?.decisions.find((x) => (x.state === "open" || x.state === "rejected") && x.options.length > 1);
+        return d ? setCompare(d.id) : toast("error", "no open decision with several options");
+      }
       case "/rules": {
         if (!arg) return setBrief(true);
         const p = PRESETS.find((x) => x.preset === arg.replace(/[- ]/g, "_") || x.label === arg);
@@ -317,7 +323,10 @@ export default function App() {
           <RulesSection rules={view.rules} run={run} />
         </BriefPanel>
       )}
-      {pending.length > 0 && <DecisionPanel decisions={pending} snap={snap} onPreview={setPreview} toast={toast} />}
+      {pending.length > 0 && <DecisionPanel decisions={pending} snap={snap} onPreview={setPreview} toast={toast} onCompare={setCompare} />}
+      {compare && view.decisions.find((x) => x.id === compare && (x.state === "open" || x.state === "rejected" || x.state === "evaluating")) && (
+        <ComparePanel d={view.decisions.find((x) => x.id === compare)!} snap={snap} onClose={() => setCompare(null)} />
+      )}
 
       <div className="bottom">
         <ProposalBar count={view.proposals.length} onAccept={() => run(api.acceptAll())}

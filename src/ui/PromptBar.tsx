@@ -15,6 +15,7 @@ export const COMMANDS: { cmd: string; help: string }[] = [
   { cmd: "/history", help: "conversation history (⌘J)" },
   { cmd: "/brief", help: "goals, qualities, constraints, expected changes + partner mode (⌘B)" },
   { cmd: "/mode", help: "/mode examiner | socratic | devils_advocate | sketch" },
+  { cmd: "/compare", help: "compare the open decision's options side by side" },
   { cmd: "/rules", help: "/rules [clean | hexagonal | layered | modular_monolith | none] — architecture rules" },
   { cmd: "/skip", help: "skip the brief and start designing" },
   { cmd: "/export png", help: "export current diagram as PNG" },

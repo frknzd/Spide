@@ -2,6 +2,7 @@
 
 pub mod derive;
 pub mod diff;
+pub mod impact;
 pub mod metrics;
 pub mod model;
 pub mod ops;

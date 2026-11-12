@@ -184,6 +184,21 @@ export interface OptionPreview {
   health: number | null;
   error: string | null;
   focus: string[];
+  impact: Impact | null;
+}
+export interface ClassDelta { class: string; fan_in: number; fan_out: number; heat: number }
+export interface Impact {
+  added: string[];
+  changed: string[];
+  removed: string[];
+  health_before: number;
+  health_after: number;
+  new_issues: string[];
+  resolved_issues: string[];
+  flipped_deps: [string, string][];
+  rule_breaks: string[];
+  affected_scenarios: string[];
+  class_deltas: ClassDelta[];
 }
 export interface DomainClass { name: string; stereotype: string | null; attributes: Attribute[]; status: Status }
 export interface Derived {
@@ -201,6 +216,7 @@ export interface Snapshot {
   ghost_health: number | null;
   ghost_metrics: Metrics | null;
   previews: OptionPreview[];
+  proposal_impacts: { proposal: string; impact: Impact }[];
   derived: Derived;
   can_undo: boolean;
   can_redo: boolean;

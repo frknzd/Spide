@@ -1,7 +1,7 @@
 //! Agent-facing tool API (served over MCP). Pure functions over the store.
 
 use crate::derive;
-use crate::metrics::{compute, Metrics};
+use crate::metrics::compute;
 use crate::model::*;
 use crate::ops::Op;
 use crate::store::{summarize, Store};
@@ -113,15 +113,7 @@ fn parse<T: for<'de> Deserialize<'de>>(v: &Value) -> Result<T, String> {
     serde_json::from_value(v.clone()).map_err(|e| format!("invalid arguments: {e}"))
 }
 
-fn health_delta(before: &Metrics, after: &Metrics) -> String {
-    let mut s = format!("Health if accepted: {} → {}.", before.health, after.health);
-    let old: Vec<&String> = before.issues.iter().map(|i| &i.message).collect();
-    let new: Vec<&str> = after.issues.iter().filter(|i| !old.contains(&&i.message)).map(|i| i.message.as_str()).collect();
-    if !new.is_empty() {
-        s.push_str(&format!(" New issues: {}.", new.join("; ")));
-    }
-    s
-}
+use crate::impact::health_delta;
 
 /// Where the design is in the boundaries → responsibilities → interactions → details progression.
 pub fn stage(d: &Design) -> &'static str {
@@ -233,9 +225,9 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
                 .options
                 .iter()
                 .enumerate()
-                .map(|(i, o)| match store.preview(&o.ops, "x") {
-                    Ok(p) => format!("{}: health {}", (b'A' + i as u8) as char, compute(&p, true).health),
-                    Err(_) => String::new(),
+                .filter_map(|(i, o)| {
+                    let id = if o.id.is_empty() { ((b'A' + i as u8) as char).to_string() } else { o.id.clone() };
+                    crate::impact::impact_of_ops(&store.design, &o.ops).ok().map(|im| format!("{id}: {}", im.summary()))
                 })
                 .collect();
             // pending (ghost) forces count as known
@@ -257,7 +249,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             };
             ok(
                 format!(
-                    "Decision {id} is now shown to the user with live previews (current health {}; {}).{warn} \
+                    "Decision {id} is now shown to the user with live previews (current health {}). Consequences per option: {}.{warn} \
                      Wait: the user will choose and defend; Spide will then ask you to examine the defence. \
                      End your turn now with at most one short sentence.",
                     before.health,
@@ -275,9 +267,20 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             let a: A = parse(args)?;
             let before = compute(&store.view(), true);
             let summary = summarize(&a.ops);
+            let standalone = crate::impact::impact_of_ops(&store.design, &a.ops).ok();
             let id = store.propose_ops(a.ops, a.rationale, "agent").map_err(|e| e.0)?;
             let after = compute(&store.view(), true);
-            ok(format!("Proposal {id} shown as ghosts ({summary}). {}", health_delta(&before, &after)), true)
+            let mut text = format!("Proposal {id} shown as ghosts ({summary}). {}", health_delta(&before, &after));
+            if let Some(im) = standalone.filter(|im| !im.flipped_deps.is_empty() || !im.affected_scenarios.is_empty()) {
+                if !im.flipped_deps.is_empty() {
+                    let f: Vec<String> = im.flipped_deps.iter().map(|(a, b)| format!("{a} → {b}")).collect();
+                    text.push_str(&format!(" Flipped dependencies: {}.", f.join(", ")));
+                }
+                if !im.affected_scenarios.is_empty() {
+                    text.push_str(&format!(" Affects {} — check they still work.", im.affected_scenarios.join(", ")));
+                }
+            }
+            ok(text, true)
         }
         "evaluate_defense" => {
             #[derive(Deserialize)]

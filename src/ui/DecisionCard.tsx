@@ -5,21 +5,24 @@ import { elkLayout } from "../canvas/layout";
 import { healthColor } from "../canvas/visuals";
 import { api } from "../state/api";
 import type { Decision, Design, OptionPreview, Pos, Snapshot } from "../state/types";
+import { ImpactLine } from "./Impact";
 
 interface Props {
   decisions: Decision[];
   snap: Snapshot;
   onPreview: (d: Design | null) => void;
   toast: (kind: string, text: string) => void;
+  onCompare: (id: string) => void;
 }
 
-export function DecisionPanel({ decisions, snap, onPreview, toast }: Props) {
+export function DecisionPanel({ decisions, snap, onPreview, toast, onCompare }: Props) {
   const [idx, setIdx] = useState(0);
   const d = decisions[Math.min(idx, decisions.length - 1)];
   return (
     <div className="decision-panel" data-ui onMouseLeave={() => onPreview(null)}>
       <div className="dp-head">
         <span className="dp-kicker">design decision{decisions.length > 1 ? ` ${idx + 1}/${decisions.length}` : ""}</span>
+        {d.options.length > 1 && <button className="link" onClick={() => onCompare(d.id)} title="side by side (/compare)">compare</button>}
         {decisions.length > 1 && (
           <span className="dp-nav">
             <button onClick={() => setIdx((i) => (i + decisions.length - 1) % decisions.length)}>‹</button>
@@ -77,6 +80,7 @@ function DecisionCard({ d, snap, onPreview, toast }: { d: Decision; snap: Snapsh
                 )}
               </div>
               <MiniPreview pv={pv} />
+              <ImpactLine impact={pv?.impact} />
               {o.summary && <div className="o-sum">{o.summary}</div>}
               {o.tradeoffs?.length > 0 && (
                 <div className="tradeoffs">

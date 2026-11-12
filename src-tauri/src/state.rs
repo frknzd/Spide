@@ -3,6 +3,7 @@
 use serde::Serialize;
 use spide_core::metrics::{compute, Metrics};
 use spide_core::store::revalidate_sequences;
+use spide_core::impact::{impact_of_ops, Impact};
 use spide_core::{derive, Design, DecisionState, Store};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -48,6 +49,14 @@ pub struct OptionPreview {
     pub error: Option<String>,
     /// Classes touched by the option (new or changed) — the preview focuses on these.
     pub focus: Vec<String>,
+    /// Consequences if this option were chosen.
+    pub impact: Option<Impact>,
+}
+
+#[derive(Serialize)]
+pub struct ProposalImpact {
+    pub proposal: String,
+    pub impact: Impact,
 }
 
 #[derive(Serialize)]
@@ -62,6 +71,7 @@ pub struct Snapshot {
     /// Ghost metrics (heat etc. for proposed classes too).
     pub ghost_metrics: Option<Metrics>,
     pub previews: Vec<OptionPreview>,
+    pub proposal_impacts: Vec<ProposalImpact>,
     pub derived: derive::Derived,
     pub can_undo: bool,
     pub can_redo: bool,
@@ -172,6 +182,7 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
         for o in &d.options {
             let tag = format!("{}:{}", d.id, o.id);
             let focus: Vec<String> = o.ops.iter().flat_map(|op| op.touched_classes()).collect();
+            let impact = impact_of_ops(&store.design, &o.ops).ok();
             match store.preview(&o.ops, &tag) {
                 Ok(p) => {
                     let h = compute(&p, true).health;
@@ -182,6 +193,7 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
                         health: Some(h),
                         error: None,
                         focus,
+                        impact,
                     })
                 }
                 Err(e) => previews.push(OptionPreview {
@@ -191,10 +203,18 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
                     health: None,
                     error: Some(e.0),
                     focus,
+                    impact: None,
                 }),
             }
         }
     }
+    // proposals on their own (a proposal that builds on another one has no standalone impact)
+    let proposal_impacts = store
+        .design
+        .proposals
+        .iter()
+        .filter_map(|p| impact_of_ops(&store.design, &p.ops).ok().map(|impact| ProposalImpact { proposal: p.id.clone(), impact }))
+        .collect();
     let derived = derive::derive(&view, &metrics);
     Snapshot {
         rev: store.design.rev,
@@ -203,6 +223,7 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
         ghost_health,
         ghost_metrics,
         previews,
+        proposal_impacts,
         derived,
         can_undo: store.can_undo(),
         can_redo: store.can_redo(),

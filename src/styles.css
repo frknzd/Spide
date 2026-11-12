@@ -241,3 +241,23 @@ textarea { font: inherit; color: var(--text); background: transparent; border: n
 .issue .fixbtn:hover { text-decoration: underline; }
 .issue .iexp { color: var(--faint); font-size: 11.5px; margin-left: 2px; }
 .issue.forbidden_dep .ik, .issue.module_boundary .ik, .issue.forbidden_type .ik { color: var(--warn); }
+
+/* ---------------------------------------------------------- impact + compare */
+.impact { margin-top: 6px; font-size: 11.5px; }
+.im-line { display: flex; flex-wrap: wrap; gap: 4px 9px; align-items: baseline; }
+.im-line.click { cursor: pointer; }
+.im-add { color: #86efac; }
+.im-chg { color: var(--warn); }
+.im-rem { color: #fda4af; }
+.im-bad { color: var(--bad); }
+.im-good { color: var(--good); }
+.im-details { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); line-height: 1.4; }
+.im-sec > div:not(.hc-h) { font-size: 11.5px; }
+.dp-head .link { margin-left: auto; margin-right: 8px; }
+.compare { position: fixed; inset: 40px 14px 100px; z-index: 35; display: flex; flex-direction: column; background: rgba(29,30,34,.98); border: 1px solid var(--line);
+  border-radius: 16px; box-shadow: 0 20px 70px rgba(0,0,0,.6); animation: node-in .25s both; overflow: hidden; }
+.cmp-head { display: flex; gap: 14px; align-items: baseline; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+.cmp-q { font-weight: 600; font-size: 15px; flex: 1; }
+.cmp-cols { flex: 1; display: grid; gap: 1px; background: var(--line); overflow: hidden; }
+.cmp-col { background: #1f2024; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; overflow: auto; min-width: 0; }
+.cmp-svg { width: 100%; height: 52vh; flex: none; border-radius: 10px; background: rgba(0,0,0,.18); }
