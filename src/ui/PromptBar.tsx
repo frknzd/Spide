@@ -8,12 +8,14 @@ export const COMMANDS: { cmd: string; help: string }[] = [
   { cmd: "/reject", help: "reject all ghost proposals" },
   { cmd: "/tidy", help: "re-layout the diagram" },
   { cmd: "/fit", help: "fit diagram to screen (or double-click)" },
+  { cmd: "/find", help: "/find <class> — zoom to a class and focus it (Esc clears)" },
   { cmd: "/pruned", help: "show / hide pruned elements" },
   { cmd: "/strict", help: "strict examiner: no overruling" },
   { cmd: "/lenient", help: "lenient examiner: you may overrule" },
   { cmd: "/history", help: "conversation history (⌘J)" },
   { cmd: "/export png", help: "export current diagram as PNG" },
   { cmd: "/export puml", help: "export current diagram as PlantUML" },
+  { cmd: "/export all", help: "export every diagram as PlantUML into a folder" },
   { cmd: "/save", help: "save a copy of the design (JSON)" },
   { cmd: "/open", help: "open a design (JSON)" },
   { cmd: "/new", help: "new design in a folder" },
@@ -60,7 +62,7 @@ export function PromptBar(p: Props) {
       {suggestions.length > 0 && (
         <div className="cmd-list">
           {suggestions.slice(0, 8).map((c) => (
-            <div key={c.cmd} className="cmd" onMouseDown={(e) => { e.preventDefault(); setText(c.cmd + (c.cmd === "/name" ? " " : "")); ta.current?.focus(); }}>
+            <div key={c.cmd} className="cmd" onMouseDown={(e) => { e.preventDefault(); setText(c.cmd + (c.cmd === "/name" || c.cmd === "/find" ? " " : "")); ta.current?.focus(); }}>
               <span>{c.cmd}</span>
               <em>{c.help}</em>
             </div>

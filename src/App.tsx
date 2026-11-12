@@ -65,10 +65,7 @@ export default function App() {
     (t: Target) => {
       if (!view) return;
       if (t.kind === "proposal") return void run(api.accept(t.id));
-      const pruned =
-        (t.kind === "class" && view.classes.find((c) => c.name === t.name)?.status === "pruned") ||
-        (t.kind === "relation" && view.relations.find((r) => r.id === t.id)?.status === "pruned");
-      if (pruned) return void run(api.restore(t));
+      if (isPruned(view, t)) return void run(api.restore(t));
       if (t.kind === "use_case") {
         setScenario(t.name);
         setTab("sequence");
@@ -104,6 +101,12 @@ export default function App() {
     await run(api.exportPlantUml(tab, path).then(() => toast("info", `exported ${path}`)));
   };
 
+  const exportAll = async () => {
+    const dir = await openDialog({ directory: true, multiple: false, title: "Folder for the PlantUML files" });
+    if (typeof dir !== "string") return;
+    await run(api.exportPlantUmlAll(dir).then((files) => toast("info", `exported ${files.length} diagram${files.length === 1 ? "" : "s"} to ${dir}`)));
+  };
+
   const command = async (text: string) => {
     const [cmd, ...args] = text.split(" ");
     const arg = args.join(" ").trim();
@@ -113,6 +116,15 @@ export default function App() {
       case "/accept": return run(api.acceptAll());
       case "/reject": return run(Promise.all((view?.proposals ?? []).map((p) => api.reject(p.id))));
       case "/tidy": return canvasRef.current?.tidy();
+      case "/find": {
+        if (!arg) return canvasRef.current?.focus(null);
+        const name = findClass(view, arg);
+        if (!name) return toast("error", `no class matches “${arg}”`);
+        const go = () => canvasRef.current?.focus(name) || toast("error", `${name} is not on the canvas`);
+        if (tab === "class") return void go();
+        setTab("class");
+        return void setTimeout(go, 300);
+      }
       case "/fit": return tab === "class" || tab === "domain" ? canvasRef.current?.fit() : vpRef.current?.fit();
       case "/pruned": return run(api.setShowPruned(!view?.settings.show_pruned));
       case "/strict": return run(api.setExaminer(true).then(() => toast("info", "examiner: strict — no overruling")));
@@ -123,8 +135,9 @@ export default function App() {
       case "/folder": return run(api.reveal());
       case "/name": return arg ? run(api.setName(arg)) : toast("error", "usage: /name <title>");
       case "/export":
+        if (arg.startsWith("a")) return exportAll();
         if (arg.startsWith("p")) return arg.startsWith("png") ? exportPng() : exportPuml();
-        return toast("error", "usage: /export png | /export puml");
+        return toast("error", "usage: /export png | /export puml | /export all");
       case "/save": {
         const path = await saveDialog({ defaultPath: `${slug(view?.name)}.json`, filters: [{ name: "Spide design", extensions: ["json"] }] });
         if (path) await run(api.saveAs(path).then(() => toast("info", `saved ${path}`)));
@@ -188,6 +201,7 @@ export default function App() {
         }
       }
       if (e.key === "Escape") {
+        if (!inField) canvasRef.current?.focus(null);
         setPrune(null);
         setHistory(false);
         setHover(null);
@@ -289,6 +303,38 @@ export default function App() {
       <Toasts toasts={toasts} onDone={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
       {snap.pi_status === "offline" && snap.pi_error && <div className="pi-error" data-ui>agent: {snap.pi_error}</div>}
     </div>
+  );
+}
+
+/** Is the target currently pruned (so a click restores it)? */
+function isPruned(d: Design, t: Target): boolean {
+  const cls = (name: string) => d.classes.find((c) => c.name === name);
+  const st = (() => {
+    switch (t.kind) {
+      case "class": return cls(t.name)?.status;
+      case "attribute": return cls(t.class)?.attributes.find((a) => a.name === t.name)?.status;
+      case "method": return cls(t.class)?.methods.find((m) => m.name === t.name)?.status;
+      case "relation": return d.relations.find((r) => r.id === t.id)?.status;
+      case "package": return d.packages.find((p) => p.name === t.name)?.status;
+      case "actor": return d.use_cases.actors.find((a) => a.name === t.name)?.status;
+      case "use_case": return d.use_cases.use_cases.find((u) => u.name === t.name)?.status;
+      case "sequence": return d.sequences.find((s) => s.name === t.name)?.status;
+      case "message": return d.sequences.find((s) => s.name === t.sequence)?.messages[t.index]?.status;
+      default: return undefined;
+    }
+  })();
+  return st === "pruned";
+}
+
+/** Best class-name match: exact, then prefix, then substring (case-insensitive). */
+function findClass(d: Design | undefined, q: string): string | null {
+  const names = (d?.classes ?? []).filter((c) => c.status !== "pruned").map((c) => c.name);
+  const l = q.toLowerCase();
+  return (
+    names.find((n) => n.toLowerCase() === l) ??
+    names.find((n) => n.toLowerCase().startsWith(l)) ??
+    names.find((n) => n.toLowerCase().includes(l)) ??
+    null
   );
 }
 

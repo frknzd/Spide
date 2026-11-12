@@ -8,6 +8,8 @@ export interface WorldRect { x1: number; y1: number; x2: number; y2: number }
 export interface ViewportApi {
   toWorld(cx: number, cy: number): [number, number];
   fit(animate?: boolean): void;
+  /** Centre a world point (in the visible area left of insetRight), optionally at zoom k. */
+  zoomTo(x: number, y: number, k?: number): void;
   svg(): SVGSVGElement | null;
   world(): SVGGElement | null;
   transform(): Transform;
@@ -95,7 +97,16 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
     else setT(to);
   }, []);
 
-  useImperativeHandle(ref, () => ({ toWorld, fit, svg: () => svgRef.current, world: () => worldRef.current, transform: () => tRef.current }), [toWorld, fit]);
+  const zoomTo = useCallback((x: number, y: number, k?: number) => {
+    const s = svgRef.current;
+    if (!s) return;
+    const full = s.getBoundingClientRect();
+    const kk = k ?? Math.max(tRef.current.k, 0.9);
+    const bottom = 150; // keep clear of the prompt
+    animateTo({ k: kk, x: (full.width - insetRef.current) / 2 - x * kk, y: (full.height - bottom) / 2 - y * kk });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useImperativeHandle(ref, () => ({ toWorld, fit, zoomTo, svg: () => svgRef.current, world: () => worldRef.current, transform: () => tRef.current }), [toWorld, fit, zoomTo]);
 
   // first content → fit
   useEffect(() => {

@@ -184,8 +184,10 @@ impl PiBridge {
     }
 
     pub fn stop(&self) {
-        if let Some(mut p) = self.proc.lock().unwrap().take() {
-            let _ = p.generation;
+        if let Some(mut p) = self.proc.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            // An intentional stop is not a crash: invalidate this generation so its
+            // stdout thread doesn't report "pi exited" (possibly over a newer pi).
+            let _ = self.generation.compare_exchange(p.generation, p.generation + 1, Ordering::SeqCst, Ordering::SeqCst);
             drop(p.stdin); // EOF → orderly shutdown
             let child = &mut p.child;
             for _ in 0..20 {

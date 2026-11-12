@@ -40,5 +40,6 @@ export const api = {
   saveAs: (path: string) => call("save_as", { path }),
   exportPng: (svg: string, path: string, scale: number) => call("export_png", { svg, path, scale }),
   exportPlantUml: (view: string, path: string) => call("export_plantuml", { view, path }),
+  exportPlantUmlAll: (dir: string) => call<string[]>("export_plantuml_all", { dir }),
   reveal: () => call("reveal_project"),
 };

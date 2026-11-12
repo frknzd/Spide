@@ -11,6 +11,8 @@ import { Viewport, type ViewportApi, type WorldRect } from "./Viewport";
 export interface CanvasApi {
   fit(): void;
   tidy(): void;
+  /** Zoom to a class and pin focus mode on it; null clears. Returns false if it isn't on the canvas. */
+  focus(name: string | null): boolean;
   viewport(): ViewportApi | null;
 }
 
@@ -95,7 +97,24 @@ export const Canvas = forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
     });
   };
 
-  useImperativeHandle(ref, () => ({ fit: () => vp.current?.fit(), tidy, viewport: () => vp.current }));
+  const [pinned, setPinned] = useState<string | null>(null);
+  const focus = (name: string | null) => {
+    if (!name) {
+      setPinned(null);
+      return true;
+    }
+    const n = layout.nodes.get(name);
+    if (!n || n.x == null || n.y == null) return false;
+    setPinned(name);
+    vp.current?.zoomTo(n.x, n.y);
+    return true;
+  };
+  // a pinned class that disappears (pruned, renamed) unpins itself
+  useEffect(() => {
+    if (pinned && !p.data.classes.some((c) => c.name === pinned)) setPinned(null);
+  }, [p.data.classes, pinned]);
+
+  useImperativeHandle(ref, () => ({ fit: () => vp.current?.fit(), tidy, focus, viewport: () => vp.current }));
 
   const pos = new Map<string, Pos>();
   for (const n of layout.nodes.values()) pos.set(n.id, { x: n.x!, y: n.y! });
@@ -128,7 +147,7 @@ export const Canvas = forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
     });
   };
 
-  const focusClass = p.hoverKey?.startsWith("class:") ? p.hoverKey.slice(6) : null;
+  const focusClass = p.hoverKey?.startsWith("class:") ? p.hoverKey.slice(6) : pinned;
 
   return (
     <Viewport

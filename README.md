@@ -25,7 +25,7 @@ Spide opens the project folder `~/Documents/Spide/untitled`. Set `SPIDE_PROJECT=
 
 ## Using it
 
-- **Prompt.** The prompt at the bottom is the only way to add things, for example "let's start a class diagram for a library system". Type `/` to see the commands: `/undo`, `/accept`, `/tidy`, `/pruned`, `/strict`, `/lenient`, `/export png`, `/export puml`, `/save`, `/open`, `/new`, `/history`, `/stop`, `/agent restart`.
+- **Prompt.** The prompt at the bottom is the only way to add things, for example "let's start a class diagram for a library system". Type `/` to see the commands: `/undo`, `/accept`, `/tidy`, `/find <class>`, `/pruned`, `/strict`, `/lenient`, `/export png`, `/export puml`, `/export all`, `/save`, `/open`, `/new`, `/history`, `/stop`, `/agent restart`.
 - **Ghost proposals.** Small changes from the agent show up as translucent, breathing "ghosts". Click a ghost to accept it, or right-click it to reject it.
 - **Decisions.**
   1. The panel on the right shows the agent's question and 2–3 options. Each option has a mini preview and the health score you would get by choosing it.
@@ -33,9 +33,9 @@ Spide opens the project folder `~/Documents/Spide/untitled`. Set `SPIDE_PROJECT=
   3. Pick an option, or describe your own alternative.
   4. Defend your choice. The examiner either accepts it, which applies the change, or rejects it and tells you what is still missing.
   5. In *lenient* mode you can **overrule** a rejection. The affected elements are then marked `⚠ overruled`. In *strict* mode you have to keep defending.
-- **Prune.** Right-click a class, member, relation or package to remove it. To remove several elements at once, hold the right mouse button and drag a box around them. A small box then asks what you didn't like. Press ⏎ to send your answer to the agent, or Esc to prune without comment. Pruned elements stay in the model, hidden by default (`/pruned` shows them), and the agent is told not to bring them back.
+- **Prune.** Right-click a class, member, relation or package to remove it. To remove several elements at once, hold the right mouse button and drag a box around them. A small box then asks what you didn't like. Press ⏎ to send your answer to the agent, or Esc to prune without comment. Pruned elements stay in the model, hidden by default (`/pruned` shows them), and the agent is told not to bring them back. Click any pruned element to restore it. Restoring a package also restores its classes.
 - **Hover** over any element to see its details: members with full signatures, responsibilities, rationale, and metrics (fan-in/out, instability, LCOM4).
-- **Canvas.** Drag to pan, pinch or ⌘-scroll to zoom, double-click to fit. ⌘1–5 switches tabs, ⌘Z / ⇧⌘Z undo and redo, ⌘J opens the conversation, ⌘E exports a PNG and ⇧⌘E exports PlantUML.
+- **Canvas.** Drag to pan, pinch or ⌘-scroll to zoom, double-click to fit. `/find <class>` zooms to a class and keeps it in focus mode (neighbours lit, the rest dimmed) until Esc. ⌘1–5 switches tabs, ⌘Z / ⇧⌘Z undo and redo, ⌘J opens the conversation, ⌘E exports a PNG and ⇧⌘E exports PlantUML.
 
 ### What the visuals mean
 
@@ -62,7 +62,7 @@ Layers follow clean architecture. `ui` and `infrastructure` form the outer ring,
 ## Exports
 
 - **PNG** renders the same SVG the canvas shows, using `resvg` at 2×. Animations are frozen in the image.
-- **PlantUML** is exported per tab. The export keeps every member with its visibility and type, plus stereotypes, multiplicities, layer-coloured packages, cycles and layer violations in colour, a health legend, and `down`/`right` direction hints taken from the canvas. PlantUML uses its own layout engine, so the PNG is the pixel-exact export.
+- **PlantUML** is exported per tab, or for every non-empty diagram at once with `/export all`. The export keeps every member with its visibility and type, plus stereotypes, multiplicities, layer-coloured packages, cycles and layer violations in colour, a health legend, and `down`/`right` direction hints taken from the canvas. PlantUML uses its own layout engine, so the PNG is the pixel-exact export.
 - **JSON** via `/save` and `/open`. The project's `design.json` is always up to date.
 
 ## Architecture
@@ -79,7 +79,7 @@ agent/spide-skill.md  the agent's instructions (examiner workflow, modelling con
 - The Rust store is the single source of truth. The UI only sends intents (prompt, prune, accept, defend, overrule, undo) and renders the snapshots it receives.
 - Agents change the design **only** through MCP tools: `get_design`, `get_metrics`, `get_view`, `propose_decision`, `propose_ops`, `evaluate_defense`, `set_use_cases`, `set_sequence`. Every change becomes a proposal or a decision, and invalid ops are rejected atomically with a clear error.
 - Other agents can join the session. A pi you start in a terminal in the project folder picks up `.pi/mcp.json`, and any agent can also edit `design.json` directly. Spide turns such edits into ghost proposals instead of applying them silently.
-- The MCP server is a small streamable-HTTP JSON-RPC implementation (initialize, tools/list, tools/call) on `127.0.0.1` only, with an Origin check. It replaces the `rmcp` crate that was originally planned, to avoid tracking that crate's fast-changing API.
+- The MCP server is a small streamable-HTTP JSON-RPC implementation (initialize, tools/list, tools/call) on `127.0.0.1` only. Every route (including the dev routes) requires a loopback `Host` header and, when a browser sends one, a local `Origin`, which blocks cross-site requests and DNS rebinding. It replaces the `rmcp` crate that was originally planned, to avoid tracking that crate's fast-changing API.
 - Environment variables: `SPIDE_PROJECT` (project folder), `SPIDE_PI` (path to the pi binary), `SPIDE_PI_ARGS` (extra pi arguments, e.g. `--model …`).
 
 ## Development

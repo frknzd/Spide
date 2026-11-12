@@ -512,12 +512,14 @@ fn set_status(d: &mut Design, t: &Target, st: Status, fb: Option<String>) -> Res
         }
         Target::Package { name } => {
             d.packages.iter_mut().find(|p| &p.name == name).ok_or_else(nf)?.status = st;
-            // pruning a package prunes its classes
-            if st == Status::Pruned {
-                for c in d.classes.iter_mut().filter(|c| c.package.as_deref() == Some(name)) {
-                    c.status = st;
-                    c.feedback = fb.clone();
-                }
+            // pruning a package prunes its classes; restoring it brings them back
+            let affected = |c: &Class| match st {
+                Status::Pruned => c.status.is_live(),
+                _ => c.status == Status::Pruned,
+            };
+            for c in d.classes.iter_mut().filter(|c| c.package.as_deref() == Some(name.as_str()) && affected(c)) {
+                c.status = st;
+                c.feedback = fb.clone();
             }
         }
         Target::Actor { name } => {

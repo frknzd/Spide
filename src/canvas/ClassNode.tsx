@@ -76,8 +76,10 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
           const tgt: Target = r.status === "proposed" && member?.proposal ? { kind: "proposal", id: member.proposal } : { kind: r.kind, class: cls.name, name: r.name };
           const tw = textWidth(r.text, F.member);
           return (
-            <g key={r.kind + r.name + r.y} data-target={T(tgt)} data-hover={`${r.kind}:${cls.name}.${r.name}`} style={{ cursor: "context-menu" }}>
-              <rect x={2} y={r.y - 12} width={w - 4} height={16} fill="transparent" />
+            <g key={r.kind + r.name + r.y} data-target={T(tgt)} data-hover={`${r.kind}:${cls.name}.${r.name}`} style={{ cursor: r.status === "pruned" ? "pointer" : "context-menu" }}>
+              <rect x={2} y={r.y - 12} width={w - 4} height={16} fill="transparent">
+                {r.status === "pruned" && <title>pruned · click to restore</title>}
+              </rect>
               <text x={PAD_X} y={r.y} fontFamily={FONT_MONO} fontSize={12} fill={rowColor(r.status)}
                 fontStyle={r.isAbstract ? "italic" : undefined} textDecoration={r.isStatic ? "underline" : undefined}>
                 {r.text}

@@ -140,3 +140,26 @@ fn sequence_validation() {
     assert!(stored.messages[0].problem.is_some());
     assert!(stored.messages[1].problem.is_none());
 }
+
+#[test]
+fn restore_package_brings_back_its_classes() {
+    let mut s = library();
+    s.prune(&[Target::Package { name: "domain".into() }], None).unwrap();
+    assert!(s.design.classes.iter().all(|c| c.status == Status::Pruned));
+    s.restore(&Target::Package { name: "domain".into() }).unwrap();
+    assert!(s.design.classes.iter().all(|c| c.status == Status::Accepted));
+    assert!(s.design.classes.iter().all(|c| c.feedback.is_none()));
+}
+
+#[test]
+fn restore_members() {
+    let mut s = library();
+    let attr = Target::Attribute { class: "Book".into(), name: "isbn".into() };
+    let method = Target::Method { class: "Library".into(), name: "lend".into() };
+    s.prune(&[attr.clone(), method.clone()], None).unwrap();
+    assert!(s.view().class("Book").unwrap().attributes.is_empty(), "pruned members are hidden");
+    s.restore(&attr).unwrap();
+    s.restore(&method).unwrap();
+    assert_eq!(s.view().class("Book").unwrap().attributes.len(), 1);
+    assert_eq!(s.view().class("Library").unwrap().methods.len(), 1);
+}

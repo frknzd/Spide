@@ -37,7 +37,7 @@ pub fn abort_agent(pi: State<'_, PiBridge>) -> R {
     pi.abort()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn restart_agent(st: State<'_, AppState>, pi: State<'_, PiBridge>) -> R {
     pi.restart(&st)
 }
@@ -207,22 +207,32 @@ pub fn regenerate(st: State<'_, AppState>, pi: State<'_, PiBridge>, view: String
 
 // ---------------------------------------------------------------- files
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn new_design(st: State<'_, AppState>, pi: State<'_, PiBridge>, dir: String) -> R {
     switch_project(&st, &pi, PathBuf::from(dir), None)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_design(st: State<'_, AppState>, pi: State<'_, PiBridge>, path: String) -> R {
     let path = PathBuf::from(path);
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let design = Design::from_json(&text).map_err(|e| format!("not a Spide design: {e}"))?;
     let dir = path.parent().map(PathBuf::from).ok_or("bad path")?;
-    // a design.json elsewhere is copied into its folder's design.json
+    // a design.json elsewhere is copied into its folder's design.json; never clobber a different one
+    let target = dir.join("design.json");
+    if path.file_name() != target.file_name() {
+        if let Ok(existing) = std::fs::read_to_string(&target) {
+            if existing != text {
+                let backup = dir.join(format!("design.{}.bak.json", spide_core::store::now_ms()));
+                std::fs::copy(&target, &backup).map_err(|e| format!("could not back up {}: {e}", target.display()))?;
+                st.toast("info", format!("existing design.json backed up to {}", backup.display()));
+            }
+        }
+    }
     switch_project(&st, &pi, dir, Some(design))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_as(st: State<'_, AppState>, path: String) -> R {
     let json = st.lock().store.design.to_json();
     crate::state::write_atomic(&PathBuf::from(path), &json).map_err(|e| e.to_string())
@@ -251,18 +261,52 @@ fn switch_project(st: &AppState, pi: &PiBridge, dir: PathBuf, design: Option<Des
     pi.restart(st)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_png(svg: String, path: String, scale: f32) -> R {
     let png = spide_core::png::render(&svg, scale).map_err(|e| e.to_string())?;
     std::fs::write(path, png).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_plantuml(st: State<'_, AppState>, view: String, path: String) -> R {
     let snap = st.snapshot();
     let text = spide_core::plantuml::export(&view, &snap.view, &snap.metrics, &snap.view.layout)
         .map_err(|e| e.to_string())?;
     std::fs::write(path, text).map_err(|e| e.to_string())
+}
+
+/// PlantUML for every diagram into `dir`; returns the written file paths.
+#[tauri::command(async)]
+pub fn export_plantuml_all(st: State<'_, AppState>, dir: String) -> R<Vec<String>> {
+    let snap = st.snapshot();
+    let dir = PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let base = slug(&snap.view.name);
+    let mut written = vec![];
+    for view in ["class", "domain", "package", "usecase", "sequence"] {
+        let empty = match view {
+            "usecase" => snap.view.use_cases.use_cases.is_empty(),
+            "sequence" => snap.view.sequences.is_empty(),
+            _ => snap.view.classes.is_empty(),
+        };
+        if empty {
+            continue;
+        }
+        let text = spide_core::plantuml::export(view, &snap.view, &snap.metrics, &snap.view.layout)?;
+        let path = dir.join(format!("{base}-{view}.puml"));
+        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+        written.push(path.display().to_string());
+    }
+    if written.is_empty() {
+        return Err("nothing to export yet".into());
+    }
+    Ok(written)
+}
+
+fn slug(s: &str) -> String {
+    let s: String = s.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let s = s.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+    if s.is_empty() { "design".into() } else { s }
 }
 
 #[tauri::command]
@@ -309,6 +353,7 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "save_as" => save_as(s, req("path")?),
         "export_png" => export_png(req("svg")?, req("path")?, a.get("scale").and_then(Value::as_f64).unwrap_or(2.0) as f32),
         "export_plantuml" => export_plantuml(s, req("view")?, req("path")?),
+        "export_plantuml_all" => return export_plantuml_all(s, req("dir")?).map(|v| serde_json::json!(v)),
         _ => Err(format!("unknown command {cmd}")),
     }?;
     Ok(Value::Null)
