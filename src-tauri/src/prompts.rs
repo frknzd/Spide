@@ -101,6 +101,16 @@ pub fn examine(d: &Decision, mode: ExaminerMode, design: &Design) -> String {
     )
 }
 
+pub fn fix_issue(message: &str, rule: Option<&str>, fix_hint: Option<&str>) -> String {
+    format!(
+        "[spide · fix issue]\nThe user wants this architecture issue fixed:\n\"{message}\"{}{}\n\
+         Read get_design and get_metrics, then raise ONE propose_decision with 2–3 concrete ways to resolve it \
+         (each with ops and trade-offs against the brief). Don't pick for the user. Reply with one sentence.",
+        rule.map(|r| format!("\nBroken rule: {r}")).unwrap_or_default(),
+        fix_hint.map(|f| format!("\nTypical fix: {f}")).unwrap_or_default(),
+    )
+}
+
 pub fn gen_use_cases() -> String {
     "[spide · generate use case diagram]\nRead the current class model with get_design and derive a use case diagram for it: \
      actors (human roles and external systems), use cases (verb phrases, user goals) with the classes that realise them, \

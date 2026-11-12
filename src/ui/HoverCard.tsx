@@ -133,7 +133,9 @@ export function HoverCard({ hoverKey, at, snap, design, metrics }: Props) {
         {r.status === "proposed" && proposalNote(design, r.proposal)}
         {r.rationale && <div className="hc-rat">{r.rationale}</div>}
         {cyc && <div className="hc-bad">⟲ part of a dependency cycle — break it with an interface, an event, or by moving responsibility</div>}
-        {lv && <div className="hc-warn">⚠ points outward across layers (inner layer depends on outer)</div>}
+        {lv && metrics.issues.filter((i) => i.rule && i.targets.includes(r.id)).map((i, k) => (
+          <div key={k} className="hc-warn">⚠ {i.explain}{i.fix_hint && <div className="faint small">fix: {i.fix_hint}</div>}</div>
+        ))}
         <div className="faint small">right-click to prune</div>
       </>
     );

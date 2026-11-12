@@ -114,8 +114,8 @@ legend right
   <b>health 66/100</b>
   dependency cycle: LendingService ⇄ Loan ⇄ LoanController ⇄ LoanRepository ⇄ Member
   package cycle: application ⇄ domain ⇄ infrastructure ⇄ ui
-  layer violation: LendingService->LoanRepository:association points from an inner layer outward
-  layer violation: Member->LoanController:dependency points from an inner layer outward
+  layer violation: LendingService->LoanRepository:association — application is an inner layer; it must not depend on the outer infrastructure layer
+  layer violation: Member->LoanController:dependency — domain is an inner layer; it must not depend on the outer ui layer
   NotificationLog is not connected to anything
 endlegend
 @enduml

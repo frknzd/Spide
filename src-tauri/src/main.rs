@@ -62,6 +62,8 @@ fn main() {
             commands::set_show_pruned,
             commands::apply_user_ops,
             commands::set_partner,
+            commands::set_rules,
+            commands::fix_issue,
             commands::set_brief_skipped,
             commands::set_name,
             commands::regenerate,

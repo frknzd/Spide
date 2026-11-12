@@ -62,6 +62,11 @@ export interface Tradeoff { force: string; effect: string; note: string | null }
 export interface DecisionOption { id: string; label: string; summary: string | null; ops: Op[]; pros: string[]; cons: string[]; tradeoffs: Tradeoff[] }
 export type ForceKind = "goal" | "quality" | "constraint" | "change";
 export interface Force { name: string; kind: ForceKind; description: string | null; priority: number; status: Status; proposal: string | null }
+export type Preset = "clean" | "hexagonal" | "layered" | "modular_monolith" | "none";
+export interface DepRule { from: string; to: string; reason: string | null }
+export interface TypeRule { layer: Layer; pattern: string; reason: string | null }
+export interface Thresholds { god_members: number; god_responsibilities: number; high_fan_out: number; max_scenario_hops: number }
+export interface Rules { preset: Preset; forbidden: DepRule[]; forbidden_types: TypeRule[]; thresholds: Thresholds }
 export type PartnerMode = "examiner" | "socratic" | "devils_advocate" | "sketch";
 export type DecisionState = "open" | "evaluating" | "rejected" | "accepted" | "overruled" | "dismissed";
 export interface Attempt { option: string | null; custom: string | null; defense: string; verdict: string | null; feedback: string | null }
@@ -128,6 +133,7 @@ export interface Design {
   log: { rev: number; at: number; actor: string; summary: string }[];
   layout: Record<string, Record<string, Pos>>;
   settings: { examiner: "lenient" | "strict"; show_pruned: boolean; partner: PartnerMode; brief_skipped: boolean };
+  rules: Rules;
 }
 
 export interface ClassMetrics {
@@ -156,7 +162,7 @@ export interface PackageMetrics {
 }
 export interface PackageDep { from: string; to: string; count: number; in_cycle: boolean; layer_violation: boolean }
 export interface ImplicitEdge { from: string; to: string; via: string; in_cycle: boolean }
-export interface Issue { kind: string; severity: number; message: string; targets: string[] }
+export interface Issue { kind: string; severity: number; message: string; targets: string[]; rule: string | null; explain: string; fix_hint: string | null }
 export interface Metrics {
   classes: Record<string, ClassMetrics>;
   packages: PackageMetrics[];
@@ -165,6 +171,7 @@ export interface Metrics {
   cycle_edges: string[];
   package_cycles: string[][];
   layer_violations: string[];
+  edge_rules: Record<string, string>;
   implicit_edges: ImplicitEdge[];
   issues: Issue[];
   health: number;

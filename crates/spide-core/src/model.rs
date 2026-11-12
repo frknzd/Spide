@@ -503,6 +503,8 @@ pub struct Design {
     /// Canvas positions per view and element (e.g. `class` → `Order` → pos).
     pub layout: BTreeMap<String, BTreeMap<String, Pos>>,
     pub settings: Settings,
+    /// Architecture rules (style preset, forbidden dependencies/types, thresholds).
+    pub rules: crate::rules::Rules,
     pub counter: u64,
 }
 
@@ -525,6 +527,7 @@ impl Default for Design {
             log: vec![],
             layout: BTreeMap::new(),
             settings: Settings::default(),
+            rules: crate::rules::Rules::default(),
             counter: 0,
         }
     }

@@ -1,9 +1,9 @@
 // Small chrome pieces: health ring, tabs, proposal bar, toasts.
 import { useEffect, useState } from "react";
 import { healthColor } from "../canvas/visuals";
-import type { Metrics, Tab } from "../state/types";
+import type { Issue, Metrics, Tab } from "../state/types";
 
-export function HealthRing({ metrics, ghost }: { metrics: Metrics; ghost: number | null }) {
+export function HealthRing({ metrics, ghost, onFix }: { metrics: Metrics; ghost: number | null; onFix?: (i: Issue) => void }) {
   const [open, setOpen] = useState(false);
   const h = metrics.health;
   const r = 19;
@@ -32,9 +32,10 @@ export function HealthRing({ metrics, ghost }: { metrics: Metrics; ghost: number
             <div className="faint">No cycles, god classes, layer violations or orphans. Clean.</div>
           ) : (
             metrics.issues.slice(0, 12).map((i, k) => (
-              <div key={k} className={`issue ${i.kind}`}>
-                <span className="ik">{i.kind}</span>
+              <div key={k} className={`issue ${i.kind}`} title={[i.explain, i.fix_hint && `fix: ${i.fix_hint}`].filter(Boolean).join("\n")}>
+                <span className="ik">{i.kind.replace("_", " ")}</span>
                 {i.message}
+                {onFix && <button className="fixbtn" onClick={() => onFix(i)}>fix with agent</button>}
               </div>
             ))
           )}

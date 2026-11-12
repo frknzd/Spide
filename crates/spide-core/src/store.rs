@@ -485,6 +485,18 @@ impl Store {
     pub fn set_show_pruned(&mut self, on: bool) {
         self.design.settings.show_pruned = on;
     }
+    /// Architecture rules are user-owned: changed directly (undoable), never proposed.
+    pub fn set_rules(&mut self, rules: crate::rules::Rules) -> Result<(), OpError> {
+        if rules == self.design.rules {
+            return Ok(());
+        }
+        let summary = format!("rules: {} preset, {} custom", rules.preset.as_str(), rules.forbidden.len() + rules.forbidden_types.len());
+        self.mutate("user", summary, move |d| {
+            d.rules = rules;
+            Ok(())
+        })
+    }
+
     pub fn set_partner(&mut self, mode: PartnerMode) {
         self.design.settings.partner = mode;
     }

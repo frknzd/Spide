@@ -7,6 +7,7 @@ pub mod model;
 pub mod ops;
 pub mod plantuml;
 pub mod png;
+pub mod rules;
 pub mod store;
 pub mod tools;
 

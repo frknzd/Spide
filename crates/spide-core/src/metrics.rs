@@ -1,6 +1,7 @@
 //! Architecture health metrics, recomputed on every change.
 
 use crate::model::*;
+use crate::rules::{self, Preset};
 use petgraph::algo::tarjan_scc;
 use petgraph::graph::{DiGraph, NodeIndex};
 use serde::Serialize;
@@ -61,6 +62,36 @@ pub struct Issue {
     pub severity: f64,
     pub message: String,
     pub targets: Vec<String>,
+    /// The architecture rule that is broken (if any).
+    pub rule: Option<String>,
+    /// Why this is a problem.
+    pub explain: String,
+    /// How it could be fixed.
+    pub fix_hint: Option<String>,
+}
+
+impl Issue {
+    pub fn new(kind: &'static str, severity: f64, message: String, targets: Vec<String>) -> Self {
+        let (explain, fix_hint) = default_explanation(kind);
+        Issue { kind, severity, message, targets, rule: None, explain: explain.into(), fix_hint: fix_hint.map(String::from) }
+    }
+    fn with_rule(mut self, rule: impl Into<String>, explain: impl Into<String>, fix: impl Into<String>) -> Self {
+        self.rule = Some(rule.into());
+        self.explain = explain.into();
+        self.fix_hint = Some(fix.into());
+        self
+    }
+}
+
+fn default_explanation(kind: &str) -> (&'static str, Option<&'static str>) {
+    match kind {
+        "cycle" => ("Classes in a cycle can only be understood, tested and changed together.", Some("break the cycle: invert one dependency via an interface, or move the shared part into its own class")),
+        "god" => ("A class with too many members, responsibilities or dependencies changes for many reasons.", Some("split it along its responsibilities (look at the method groups)")),
+        "cohesion" => ("Its methods form unrelated groups (LCOM4 > 1): it really is several classes.", Some("extract each method group with the attributes it uses into its own class")),
+        "orphan" => ("An unconnected class contributes nothing to any collaboration.", Some("connect it to the classes that use it, or prune it")),
+        "coupling" => ("High fan-out makes the class fragile: any of its dependencies can break it.", Some("introduce a facade or move behaviour closer to the data it needs")),
+        _ => ("", None),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -72,8 +103,10 @@ pub struct Metrics {
     /// Relation ids that are part of a dependency cycle.
     pub cycle_edges: Vec<String>,
     pub package_cycles: Vec<Vec<String>>,
-    /// Relation ids that break the layering rule.
+    /// Relation ids that break an architecture rule (layering, module boundary, forbidden dependency).
     pub layer_violations: Vec<String>,
+    /// Short label per rule-breaking relation id (`layer ↑`, `module`, `forbidden`).
+    pub edge_rules: BTreeMap<String, String>,
     pub implicit_edges: Vec<ImplicitEdge>,
     pub issues: Vec<Issue>,
     /// 0..100
@@ -82,9 +115,6 @@ pub struct Metrics {
     pub tension: f64,
 }
 
-pub const GOD_MEMBERS: usize = 16;
-pub const GOD_RESPONSIBILITIES: usize = 4;
-pub const HIGH_FAN_OUT: usize = 6;
 
 struct Dep {
     from: String,
@@ -104,6 +134,9 @@ fn type_refs<'a>(ty: &'a str, names: &'a BTreeSet<&str>) -> impl Iterator<Item =
 
 /// Compute metrics. `ghosts` = also count proposed elements (for previews).
 pub fn compute(d: &Design, ghosts: bool) -> Metrics {
+    let th = d.rules.thresholds;
+    let (god_members, god_responsibilities, high_fan_out) = (th.god_members, th.god_responsibilities, th.high_fan_out.max(1));
+    let preset = d.rules.preset;
     let classes: Vec<&Class> = d.classes.iter().filter(|c| counts(c.status, ghosts)).collect();
     let names: BTreeSet<&str> = classes.iter().map(|c| c.name.as_str()).collect();
     let rels: Vec<&Relation> = d
@@ -200,22 +233,96 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         pkg_of(n).and_then(|p| d.packages.iter().find(|x| x.name == p && counts(x.status, ghosts)).and_then(|x| x.layer))
     };
 
-    // ---- layering
+    // ---- architecture rules on every dependency (explicit + implicit)
+    let mut out = Metrics::default();
+    let mut issues: Vec<Issue> = vec![];
     let mut layer_violations: BTreeSet<String> = BTreeSet::new();
     let mut viol_count: HashMap<String, usize> = HashMap::new();
+    let mut rule_penalty = 0.0;
+    let edge_label = |e: &Dep| e.rel.clone().unwrap_or_else(|| format!("{} → {} (implicit)", e.from, e.to));
+    let mut seen_rule_edges: BTreeSet<(String, String, String)> = BTreeSet::new();
     for e in &deps {
+        let (pa, pb) = (pkg_of(&e.from), pkg_of(&e.to));
+        let mut broken: Vec<(&'static str, rules::Violation)> = vec![];
         if let (Some(a), Some(b)) = (layer_of(&e.from), layer_of(&e.to)) {
-            if a.rank() > b.rank() {
-                if let Some(r) = &e.rel {
-                    layer_violations.insert(r.clone());
+            if let Err(v) = rules::allowed(a, b, preset) {
+                broken.push(("layer", v));
+            }
+        }
+        if preset == Preset::ModularMonolith {
+            if let (Some(a), Some(b)) = (&pa, &pb) {
+                if let Some(v) = rules::module_violation(a, b) {
+                    broken.push(("module_boundary", v));
                 }
-                *viol_count.entry(e.from.clone()).or_default() += 1;
+            }
+        }
+        for r in rules::forbidden_by(&d.rules, &e.from, pa.as_deref(), &e.to, pb.as_deref()) {
+            broken.push((
+                "forbidden_dep",
+                rules::Violation {
+                    rule: r.id(),
+                    explain: r.reason.clone().unwrap_or_else(|| format!("the rules forbid {} depending on {}", r.from, r.to)),
+                    fix_hint: "remove the dependency or route it through an allowed intermediary".into(),
+                },
+            ));
+        }
+        for (kind, v) in broken {
+            // one issue per edge and rule (bidirectional associations yield two deps)
+            if !seen_rule_edges.insert((e.from.clone(), e.to.clone(), v.rule.clone())) {
+                continue;
+            }
+            if let Some(r) = &e.rel {
+                layer_violations.insert(r.clone());
+                let label = match kind {
+                    "layer" => "layer ↑",
+                    "module_boundary" => "module",
+                    _ => "forbidden",
+                };
+                out.edge_rules.entry(r.clone()).or_insert_with(|| label.into());
+            }
+            *viol_count.entry(e.from.clone()).or_default() += 1;
+            rule_penalty += if e.rel.is_some() { 5.0 } else { 3.0 };
+            let what = match kind {
+                "layer" => "layer violation",
+                "module_boundary" => "module boundary",
+                _ => "forbidden dependency",
+            };
+            issues.push(
+                Issue::new(kind, 0.6, format!("{what}: {} — {}", edge_label(e), v.explain), vec![e.rel.clone().unwrap_or(e.from.clone())])
+                    .with_rule(v.rule, v.explain.clone(), v.fix_hint),
+            );
+        }
+    }
+    // forbidden types per layer (e.g. no Http* in domain)
+    for c in &classes {
+        let Some(layer) = layer_of(&c.name) else { continue };
+        let mut tys: Vec<(String, &str)> = vec![];
+        for a in c.attributes.iter().filter(|a| counts(a.status, ghosts)) {
+            tys.push((format!("attribute {}", a.name), a.ty.as_str()));
+        }
+        for m in c.methods.iter().filter(|m| counts(m.status, ghosts)) {
+            for p in &m.params {
+                tys.push((format!("{}() parameter {}", m.name, p.name), p.ty.as_str()));
+            }
+            if let Some(r) = &m.returns {
+                tys.push((format!("{}() return", m.name), r.as_str()));
+            }
+        }
+        for tr in d.rules.forbidden_types.iter().filter(|t| t.layer == layer && !t.pattern.is_empty()) {
+            for (where_, ty) in &tys {
+                if let Some(tok) = rules::type_tokens(ty).find(|tok| rules::glob(&tr.pattern, tok) || rules::glob(&tr.pattern, tok.rsplit('.').next().unwrap_or(tok))) {
+                    let explain = tr.reason.clone().unwrap_or_else(|| format!("{} must stay free of {} types", c.package.as_deref().unwrap_or("this layer"), tr.pattern));
+                    issues.push(
+                        Issue::new("forbidden_type", 0.5, format!("{}: {where_} uses {tok} — {explain}", c.name), vec![c.name.clone()])
+                            .with_rule(tr.id(), explain, format!("wrap {tok} behind an interface owned by this layer, or move this code outward")),
+                    );
+                    *viol_count.entry(c.name.clone()).or_default() += 1;
+                    rule_penalty += 4.0;
+                }
             }
         }
     }
 
-    let mut out = Metrics::default();
-    let mut issues: Vec<Issue> = vec![];
     let many = classes.len() >= 3;
     for c in &classes {
         let n = c.name.as_str();
@@ -232,15 +339,15 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
 
         let mut cm_issues = vec![];
         let mut god_signals = 0;
-        if members > GOD_MEMBERS {
+        if members > god_members {
             god_signals += 1;
-            cm_issues.push(format!("{members} members (> {GOD_MEMBERS})"));
+            cm_issues.push(format!("{members} members (> {god_members})"));
         }
-        if c.responsibilities.len() > GOD_RESPONSIBILITIES {
+        if c.responsibilities.len() > god_responsibilities {
             god_signals += 1;
             cm_issues.push(format!("{} responsibilities", c.responsibilities.len()));
         }
-        if fan_out >= HIGH_FAN_OUT {
+        if fan_out >= high_fan_out {
             god_signals += 1;
             cm_issues.push(format!("depends on {fan_out} classes"));
         }
@@ -248,12 +355,12 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
             god_signals += 1;
             cm_issues.push(format!("LCOM4 = {l}: methods split into {l} unrelated groups"));
         }
-        let god = god_signals >= 2 || members > GOD_MEMBERS + 8;
+        let god = god_signals >= 2 || members > god_members + 8;
         if cyc {
             cm_issues.push("part of a dependency cycle".into());
         }
         if lv > 0 {
-            cm_issues.push(format!("{lv} dependency(ies) point outward across layers"));
+            cm_issues.push(format!("{lv} dependency(ies) break architecture rules"));
         }
         if orphan {
             cm_issues.push("not connected to anything".into());
@@ -268,35 +375,15 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         .min(1.0);
 
         if god {
-            issues.push(Issue {
-                kind: "god",
-                severity: 0.8,
-                message: format!("{n} looks like a god class: {}", cm_issues.join(", ")),
-                targets: vec![n.into()],
-            });
+            issues.push(Issue::new("god", 0.8, format!("{n} looks like a god class: {}", cm_issues.join(", ")), vec![n.into()]));
         } else if let Some(l) = lcom.filter(|l| *l >= 2) {
-            issues.push(Issue {
-                kind: "cohesion",
-                severity: 0.4,
-                message: format!("{n} has low cohesion (LCOM4 = {l}); consider splitting it"),
-                targets: vec![n.into()],
-            });
+            issues.push(Issue::new("cohesion", 0.4, format!("{n} has low cohesion (LCOM4 = {l}); consider splitting it"), vec![n.into()]));
         }
         if orphan {
-            issues.push(Issue {
-                kind: "orphan",
-                severity: 0.3,
-                message: format!("{n} is not connected to anything"),
-                targets: vec![n.into()],
-            });
+            issues.push(Issue::new("orphan", 0.3, format!("{n} is not connected to anything"), vec![n.into()]));
         }
-        if fan_out >= HIGH_FAN_OUT && !god {
-            issues.push(Issue {
-                kind: "coupling",
-                severity: 0.4,
-                message: format!("{n} depends on {fan_out} classes"),
-                targets: vec![n.into()],
-            });
+        if fan_out >= high_fan_out && !god {
+            issues.push(Issue::new("coupling", 0.4, format!("{n} depends on {fan_out} classes"), vec![n.into()]));
         }
         out.classes.insert(
             n.to_string(),
@@ -316,20 +403,7 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         );
     }
     for cyc in &cycles {
-        issues.push(Issue {
-            kind: "cycle",
-            severity: 0.9,
-            message: format!("dependency cycle: {}", cyc.join(" ⇄ ")),
-            targets: cyc.clone(),
-        });
-    }
-    for r in &layer_violations {
-        issues.push(Issue {
-            kind: "layer",
-            severity: 0.6,
-            message: format!("layer violation: {r} points from an inner layer outward"),
-            targets: vec![r.clone()],
-        });
+        issues.push(Issue::new("cycle", 0.9, format!("dependency cycle: {}", cyc.join(" ⇄ ")), cyc.clone()));
     }
 
     // ---- packages
@@ -384,7 +458,8 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         });
     }
     for ((a, b), n) in &pdeps {
-        let lv = matches!((player(a), player(b)), (Some(x), Some(y)) if x.rank() > y.rank());
+        let lv = matches!((player(a), player(b)), (Some(x), Some(y)) if rules::allowed(x, y, preset).is_err())
+            || (preset == Preset::ModularMonolith && rules::module_violation(a, b).is_some());
         out.package_deps.push(PackageDep {
             from: a.clone(),
             to: b.clone(),
@@ -394,12 +469,7 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         });
     }
     for pc in &package_cycles {
-        issues.push(Issue {
-            kind: "cycle",
-            severity: 0.7,
-            message: format!("package cycle: {}", pc.join(" ⇄ ")),
-            targets: pc.clone(),
-        });
+        issues.push(Issue::new("cycle", 0.7, format!("package cycle: {}", pc.join(" ⇄ ")), pc.clone()));
     }
 
     // ---- implicit edges for drawing
@@ -414,7 +484,7 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         penalty += 6.0 + 2.0 * c.len() as f64;
     }
     penalty += 5.0 * package_cycles.len() as f64;
-    penalty += 5.0 * layer_violations.len() as f64;
+    penalty += rule_penalty;
     for (_, m) in &out.classes {
         if m.god {
             penalty += 8.0;
@@ -424,8 +494,8 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         if m.orphan {
             penalty += 3.0;
         }
-        if m.fan_out > HIGH_FAN_OUT - 1 {
-            penalty += 2.0 * (m.fan_out + 1 - HIGH_FAN_OUT) as f64;
+        if m.fan_out + 1 > high_fan_out {
+            penalty += 2.0 * (m.fan_out + 1 - high_fan_out) as f64;
         }
     }
     let health = (100.0 - penalty).clamp(0.0, 100.0);

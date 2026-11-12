@@ -69,7 +69,17 @@ fn on_change(st: &AppState, path: &Path) {
         let ops = diff(&s.store.design, &ext);
         // remember this content so we don't re-propose it
         s.last_written = Some(text);
+        // rules are user-owned configuration: an edit in the file is applied directly
+        let rules_changed = ext.rules != s.store.design.rules;
+        if rules_changed {
+            let _ = s.store.set_rules(ext.rules.clone());
+        }
         if ops.is_empty() {
+            if rules_changed {
+                drop(s);
+                st.toast("info", "architecture rules updated from design.json");
+                st.changed();
+            }
             return;
         }
         match s.store.propose_ops(ops.clone(), Some("edited design.json".into()), "file") {

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Op, Pos, Snapshot, Tab, Target } from "./types";
+import type { Issue, Op, Pos, Rules, Snapshot, Tab, Target } from "./types";
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const DEV_URL = "http://127.0.0.1:47800/dev/snapshot";
@@ -36,6 +36,8 @@ export const api = {
   setName: (name: string) => call("set_name", { name }),
   userOps: (ops: Op[]) => call("apply_user_ops", { ops }),
   setPartner: (mode: string) => call("set_partner", { mode }),
+  setRules: (rules: Rules) => call("set_rules", { rules }),
+  fixIssue: (i: Issue) => call("fix_issue", { message: i.message, rule: i.rule, fix_hint: i.fix_hint }),
   setBriefSkipped: (on: boolean) => call("set_brief_skipped", { on }),
   regenerate: (view: "usecase" | "sequence", scenario?: string) => call("regenerate", { view, scenario: scenario ?? null }),
   newDesign: (dir: string) => call("new_design", { dir }),

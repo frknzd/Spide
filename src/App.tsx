@@ -14,6 +14,7 @@ import { DecisionPanel } from "./ui/DecisionCard";
 import { FeedbackPopover, type PruneState } from "./ui/FeedbackPopover";
 import { HoverCard } from "./ui/HoverCard";
 import { PromptBar } from "./ui/PromptBar";
+import { PRESETS, RulesSection } from "./ui/RulesSection";
 import { PackageView } from "./views/PackageView";
 import { SequenceView } from "./views/SequenceView";
 import { UseCaseView } from "./views/UseCaseView";
@@ -134,6 +135,12 @@ export default function App() {
       case "/lenient": return run(api.setExaminer(false).then(() => toast("info", "examiner: lenient — you may overrule")));
       case "/history": return setHistory((h) => !h);
       case "/brief": return setBrief((b) => !b);
+      case "/rules": {
+        if (!arg) return setBrief(true);
+        const p = PRESETS.find((x) => x.preset === arg.replace(/[- ]/g, "_") || x.label === arg);
+        if (!p) return toast("error", `presets: ${PRESETS.map((x) => x.preset).join(" | ")}`);
+        return run(api.setRules({ ...view!.rules, preset: p.preset }).then(() => toast("info", `rules: ${p.label} — ${p.help}`)));
+      }
       case "/mode": {
         if (!arg) return toast("info", `mode: ${view?.settings.partner} — ${MODES.map((m) => m.mode).join(" | ")}`);
         return run(api.setPartner(arg).then(() => toast("info", `partner mode: ${arg}`)));
@@ -305,7 +312,11 @@ export default function App() {
         </>
       )}
 
-      {brief && <BriefPanel design={view} onClose={() => setBrief(false)} run={run} />}
+      {brief && (
+        <BriefPanel design={view} onClose={() => setBrief(false)} run={run}>
+          <RulesSection rules={view.rules} run={run} />
+        </BriefPanel>
+      )}
       {pending.length > 0 && <DecisionPanel decisions={pending} snap={snap} onPreview={setPreview} toast={toast} />}
 
       <div className="bottom">
@@ -313,7 +324,7 @@ export default function App() {
           onReject={() => run(Promise.all(view.proposals.map((p) => api.reject(p.id))))} />
         <AnswerBubble entries={entries} history={history} onCloseHistory={() => setHistory(false)} />
         <div className="prompt-row">
-          {hasClasses && <HealthRing metrics={metrics} ghost={snap.ghost_health} />}
+          {hasClasses && <HealthRing metrics={metrics} ghost={snap.ghost_health} onFix={(i) => run(api.fixIssue(i))} />}
           <PromptBar onSubmit={submit} status={snap.pi_status} activity={activity} placeholder={placeholder} focusKey={focusKey} />
           {hasClasses && <div className="health-spacer" />}
         </div>

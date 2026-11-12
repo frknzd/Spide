@@ -109,3 +109,77 @@ fn metrics_are_fast() {
     assert_eq!(m.classes.len(), 120);
     assert!(t.elapsed().as_millis() < 50, "took {:?}", t.elapsed());
 }
+
+mod rules_in_metrics {
+    use super::design;
+    use spide_core::metrics::compute;
+    use spide_core::rules::*;
+    use spide_core::Layer;
+
+    fn layered() -> spide_core::Design {
+        design(
+            r#"[{"op":"add_package","name":"ui","layer":"ui"},{"op":"add_package","name":"domain","layer":"domain"},
+                {"op":"add_package","name":"db","layer":"infrastructure"},
+                {"op":"add_class","name":"OrderController","package":"ui"},
+                {"op":"add_class","name":"Order","package":"domain","attributes":[{"name":"req","type":"HttpRequest"}]},
+                {"op":"add_class","name":"OrderRepository","package":"db"},
+                {"op":"add_relation","from":"OrderController","to":"Order","kind":"dependency"},
+                {"op":"add_relation","from":"Order","to":"OrderRepository","kind":"dependency"},
+                {"op":"add_relation","from":"OrderController","to":"OrderRepository","kind":"dependency"}]"#,
+        )
+    }
+
+    #[test]
+    fn preset_changes_what_counts_as_a_violation() {
+        let mut d = layered();
+        // clean: domain → infrastructure points outward
+        let m = compute(&d, false);
+        assert_eq!(m.layer_violations, vec!["Order->OrderRepository:dependency".to_string()]);
+        let i = m.issues.iter().find(|i| i.kind == "layer").unwrap();
+        assert_eq!(i.rule.as_deref(), Some("clean: inward only"));
+        assert!(i.fix_hint.as_deref().unwrap().contains("interface"));
+        // layered: domain → infrastructure is downward = fine
+        d.rules.preset = Preset::Layered;
+        assert!(compute(&d, false).layer_violations.is_empty());
+        // hexagonal: ui → infrastructure adapter-to-adapter
+        d.rules.preset = Preset::Hexagonal;
+        let m = compute(&d, false);
+        assert!(m.layer_violations.contains(&"OrderController->OrderRepository:dependency".to_string()));
+        d.rules.preset = Preset::None;
+        assert_eq!(compute(&d, false).health, 100);
+    }
+
+    #[test]
+    fn custom_rules_types_and_thresholds() {
+        let mut d = layered();
+        d.rules.preset = Preset::None;
+        d.rules.forbidden.push(DepRule { from: "*Controller".into(), to: "*Repository".into(), reason: Some("go through a service".into()) });
+        d.rules.forbidden_types.push(TypeRule { layer: Layer::Domain, pattern: "Http*".into(), reason: None });
+        let m = compute(&d, false);
+        let fd = m.issues.iter().find(|i| i.kind == "forbidden_dep").expect("forbidden dep");
+        assert!(fd.message.contains("go through a service"));
+        assert!(m.issues.iter().any(|i| i.kind == "forbidden_type" && i.message.contains("HttpRequest")));
+        assert!(m.health < 100);
+        // thresholds
+        d.rules.forbidden.clear();
+        d.rules.forbidden_types.clear();
+        d.rules.thresholds.high_fan_out = 2;
+        assert!(compute(&d, false).issues.iter().any(|i| i.kind == "coupling" && i.targets == vec!["OrderController".to_string()]));
+    }
+
+    #[test]
+    fn modular_monolith_boundaries() {
+        let mut d = design(
+            r#"[{"op":"add_class","name":"Order","package":"orders.domain"},
+                {"op":"add_class","name":"Invoice","package":"billing.domain"},
+                {"op":"add_class","name":"BillingApi","package":"billing.api"},
+                {"op":"add_relation","from":"Order","to":"Invoice","kind":"dependency"},
+                {"op":"add_relation","from":"Order","to":"BillingApi","kind":"dependency"}]"#,
+        );
+        d.rules.preset = Preset::ModularMonolith;
+        let m = compute(&d, false);
+        let mb: Vec<_> = m.issues.iter().filter(|i| i.kind == "module_boundary").collect();
+        assert_eq!(mb.len(), 1);
+        assert!(mb[0].message.contains("Order->Invoice"));
+    }
+}

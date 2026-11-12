@@ -186,6 +186,19 @@ pub fn apply_user_ops(st: State<'_, AppState>, ops: Vec<Op>) -> R {
 }
 
 #[tauri::command]
+pub fn set_rules(st: State<'_, AppState>, rules: spide_core::rules::Rules) -> R {
+    st.lock().store.set_rules(rules).map_err(|e| e.0)?;
+    done(&st)
+}
+
+/// "fix with agent" on a health issue.
+#[tauri::command]
+pub fn fix_issue(st: State<'_, AppState>, pi: State<'_, PiBridge>, message: String, rule: Option<String>, fix_hint: Option<String>) -> R {
+    let msg = prompts::fix_issue(&message, rule.as_deref(), fix_hint.as_deref());
+    pi.prompt(&st, msg, Some(format!("🔧 {message}")))
+}
+
+#[tauri::command]
 pub fn set_partner(st: State<'_, AppState>, mode: String) -> R {
     let m = PartnerMode::parse(&mode).ok_or_else(|| format!("unknown mode {mode} (examiner | socratic | devils_advocate | sketch)"))?;
     st.lock().store.set_partner(m);
@@ -367,6 +380,8 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "set_examiner" => set_examiner(s, a.get("strict").and_then(Value::as_bool).unwrap_or(false)),
         "apply_user_ops" => apply_user_ops(s, serde_json::from_value(de("ops")).map_err(|e| e.to_string())?),
         "set_partner" => set_partner(s, req("mode")?),
+        "set_rules" => set_rules(s, serde_json::from_value(de("rules")).map_err(|e| e.to_string())?),
+        "fix_issue" => fix_issue(s, pi, req("message")?, str_("rule"), str_("fix_hint")),
         "set_brief_skipped" => set_brief_skipped(s, a.get("on").and_then(Value::as_bool).unwrap_or(false)),
         "set_show_pruned" => set_show_pruned(s, a.get("on").and_then(Value::as_bool).unwrap_or(false)),
         "set_name" => set_name(s, req("name")?),

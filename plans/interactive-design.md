@@ -153,9 +153,9 @@ real code. Goal: make Spide a complete loop: **brief → decide → see conseque
 - [x] A3 MCP: forces in `get_design`, `tradeoffs` in `propose_decision` schema, stage hint
 - [x] A4 UI: BriefPanel, trade-off chips on options, `/mode`, `/brief`, `/skip`
 **F — rules**
-- [ ] F1 `rules.rs` + presets + tests per preset (allowed/forbidden matrices)
-- [ ] F2 metrics read rules; issue `rule`/`explain`/`fix_hint`; new issue kinds; existing metric tests still green
-- [ ] F3 rules UI in BriefPanel, `/rules`, "fix with agent"
+- [x] F1 `rules.rs` + presets + tests per preset (allowed/forbidden matrices)
+- [x] F2 metrics read rules; issue `rule`/`explain`/`fix_hint`; new issue kinds; existing metric tests still green
+- [x] F3 rules UI in BriefPanel, `/rules`, "fix with agent"
 **B — impact**
 - [ ] B1 `impact.rs` (+ move `health_delta`), tests (cycle introduced/resolved, flipped dep, rule break)
 - [ ] B2 impact in snapshot previews + proposals + MCP replies

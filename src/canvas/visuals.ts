@@ -188,7 +188,7 @@ export function badges(m: ClassMetrics | undefined): { text: string; color: stri
   if (m.in_cycle) out.push({ text: "cycle", color: C.cycle, title: "Part of a dependency cycle" });
   if (m.god) out.push({ text: "god class", color: C.cycle, title: m.issues.join("; ") });
   else if (m.lcom !== null && m.lcom >= 2) out.push({ text: `LCOM ${m.lcom}`, color: C.warn, title: "Low cohesion: unrelated method groups" });
-  if (m.layer_violations > 0) out.push({ text: "layer ↑", color: C.warn, title: "Depends outward across layers" });
+  if (m.layer_violations > 0) out.push({ text: "rule ✗", color: C.warn, title: "Breaks an architecture rule (layering, module boundary, forbidden dependency or type)" });
   if (m.orphan) out.push({ text: "orphan", color: C.faint, title: "Not connected" });
   return out;
 }

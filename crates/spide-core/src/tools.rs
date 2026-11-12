@@ -473,6 +473,12 @@ pub fn design_digest(store: &Store) -> String {
         "stage": st,
         "stage_hint": stage_hint(st),
         "forces": forces,
+        "rules": {
+            "preset": d.rules.preset.as_str(),
+            "meaning": d.rules.preset.describe(),
+            "forbidden": d.rules.forbidden.iter().map(|r| json!({"from": r.from, "to": r.to, "reason": r.reason})).collect::<Vec<_>>(),
+            "forbidden_types": d.rules.forbidden_types.iter().map(|r| json!({"layer": r.layer, "pattern": r.pattern})).collect::<Vec<_>>(),
+        },
         "health": m.health,
         "top_issues": m.issues.iter().take(6).map(|i| &i.message).collect::<Vec<_>>(),
         "packages": packages,
