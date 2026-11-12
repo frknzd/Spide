@@ -322,6 +322,7 @@ impl Store {
             _ => vec![],
         };
         let verdict = if accept { "accept" } else { "reject" };
+        let consequences = if accept { crate::impact::impact_of_ops(&self.design, &ops).ok() } else { None };
         self.mutate("examiner", format!("{verdict}ed defence for {id}"), |d| {
             let mut next = if accept { apply_all(d, &ops, Mode::Commit(Status::Accepted, Some(id)))? } else { d.clone() };
             let dec = next.decisions.iter_mut().find(|x| x.id == id).unwrap();
@@ -332,6 +333,8 @@ impl Store {
             if accept {
                 dec.state = DecisionState::Accepted;
                 dec.applied_ops = ops.clone();
+                dec.consequences = consequences.clone();
+                dec.decided_at = Some(now_ms());
             } else {
                 dec.state = DecisionState::Rejected;
                 // remember ops for a possible overrule of a custom answer
@@ -360,11 +363,14 @@ impl Store {
         if ops.is_empty() {
             return Err(OpError("nothing concrete to apply: the examiner gave no ops for your custom answer".into()));
         }
+        let consequences = crate::impact::impact_of_ops(&self.design, &ops).ok();
         self.mutate("user", format!("overruled examiner on {id}"), |d| {
             let mut next = apply_all(d, &ops, Mode::Commit(Status::Overruled, Some(id)))?;
             let dec = next.decisions.iter_mut().find(|x| x.id == id).unwrap();
             dec.state = DecisionState::Overruled;
             dec.applied_ops = ops.clone();
+            dec.consequences = consequences.clone();
+            dec.decided_at = Some(now_ms());
             *d = next;
             Ok(())
         })
@@ -538,6 +544,9 @@ impl Store {
 
     pub fn set_partner(&mut self, mode: PartnerMode) {
         self.design.settings.partner = mode;
+    }
+    pub fn set_code_root(&mut self, root: Option<String>) {
+        self.design.settings.code_root = root.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
     }
     pub fn set_brief_skipped(&mut self, on: bool) {
         self.design.settings.brief_skipped = on;

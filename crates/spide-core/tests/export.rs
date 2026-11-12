@@ -1,3 +1,5 @@
+mod common;
+use common::golden;
 use spide_core::metrics::compute;
 use spide_core::*;
 use std::path::PathBuf;
@@ -30,17 +32,6 @@ fn fixture() -> Design {
     }
     d.layout.insert("class".into(), lay);
     d
-}
-
-fn golden(name: &str, text: &str) {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(name);
-    if std::env::var("UPDATE_GOLDEN").is_ok() || !path.exists() {
-        std::fs::write(&path, text).unwrap();
-    }
-    let want = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(text, want, "golden {name} differs (UPDATE_GOLDEN=1 to accept)");
 }
 
 /// If PlantUML is installed, make sure it accepts the output.

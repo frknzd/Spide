@@ -116,6 +116,11 @@ export default function App() {
     await run(api.exportPlantUml(tab, path).then(() => toast("info", `exported ${path}`)));
   };
 
+  const exportFolder = async (title: string, f: (dir: string) => Promise<string[]>, what: string) => {
+    const dir = await openDialog({ directory: true, multiple: false, title, defaultPath: snap?.project_dir });
+    if (typeof dir !== "string") return;
+    await run(f(dir).then((files) => toast("info", `wrote ${files.length} ${what}${files.length === 1 ? "" : "s"} to ${dir}`)));
+  };
   const exportAll = async () => {
     const dir = await openDialog({ directory: true, multiple: false, title: "Folder for the PlantUML files" });
     if (typeof dir !== "string") return;
@@ -201,11 +206,19 @@ export default function App() {
       case "/stop": return run(api.abort());
       case "/agent": return run(api.restartAgent().then(() => toast("info", "agent restarted")));
       case "/folder": return run(api.reveal());
+      case "/coderoot": return run(api.setCodeRoot(arg || null).then(() => toast("info", arg ? `code root: ${arg}` : "code root cleared")));
       case "/name": return arg ? run(api.setName(arg)) : toast("error", "usage: /name <title>");
       case "/export":
+        if (arg.startsWith("ar")) {
+          if (!view?.settings.code_root) toast("info", "tip: /coderoot org.your.app makes the rules match your Java packages exactly");
+          const path = await saveDialog({ defaultPath: "ArchitectureTest.java", filters: [{ name: "Java", extensions: ["java"] }] });
+          if (path) await run(api.exportArchUnit(path).then(() => toast("info", `exported ${path} — needs com.tngtech.archunit:archunit-junit5 as a test dependency`)));
+          return;
+        }
+        if (arg.startsWith("ad")) return exportFolder("Folder for the ADRs (e.g. docs/adr)", api.exportAdr, "ADR");
         if (arg.startsWith("a")) return exportAll();
         if (arg.startsWith("p")) return arg.startsWith("png") ? exportPng() : exportPuml();
-        return toast("error", "usage: /export png | /export puml | /export all");
+        return toast("error", "usage: /export png | puml | all | adr | archunit");
       case "/save": {
         const path = await saveDialog({ defaultPath: `${slug(view?.name)}.json`, filters: [{ name: "Spide design", extensions: ["json"] }] });
         if (path) await run(api.saveAs(path).then(() => toast("info", `saved ${path}`)));

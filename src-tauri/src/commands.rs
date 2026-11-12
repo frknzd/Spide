@@ -326,6 +326,43 @@ pub fn export_plantuml(st: State<'_, AppState>, view: String, path: String) -> R
     std::fs::write(path, text).map_err(|e| e.to_string())
 }
 
+#[tauri::command(async)]
+pub fn export_archunit(st: State<'_, AppState>, path: String) -> R {
+    let java = spide_core::archunit::archunit_test(&st.lock().store.design);
+    std::fs::write(path, java).map_err(|e| e.to_string())
+}
+
+/// Java root package of the real code (`org.acme.library`).
+#[tauri::command]
+pub fn set_code_root(st: State<'_, AppState>, root: Option<String>) -> R {
+    if let Some(r) = root.as_deref().filter(|r| !r.trim().is_empty()) {
+        let ok = r.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+        if !ok {
+            return Err(format!("not a Java package name: {r}"));
+        }
+    }
+    st.lock().store.set_code_root(root);
+    done(&st)
+}
+
+/// ADRs (one markdown file per accepted/overruled decision) into `dir`.
+#[tauri::command(async)]
+pub fn export_adr(st: State<'_, AppState>, dir: String) -> R<Vec<String>> {
+    let files = spide_core::adr::adrs(&st.lock().store.design);
+    if files.is_empty() {
+        return Err("no decided decisions yet".into());
+    }
+    let dir = PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut out = vec![];
+    for (name, text) in files {
+        let p = dir.join(name);
+        std::fs::write(&p, text).map_err(|e| format!("{}: {e}", p.display()))?;
+        out.push(p.display().to_string());
+    }
+    Ok(out)
+}
+
 /// PlantUML for every diagram into `dir`; returns the written file paths.
 #[tauri::command(async)]
 pub fn export_plantuml_all(st: State<'_, AppState>, dir: String) -> R<Vec<String>> {
@@ -606,6 +643,9 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "save_as" => save_as(s, req("path")?),
         "export_png" => export_png(req("svg")?, req("path")?, a.get("scale").and_then(Value::as_f64).unwrap_or(2.0) as f32),
         "export_plantuml" => export_plantuml(s, req("view")?, req("path")?),
+        "export_archunit" => export_archunit(s, req("path")?),
+        "set_code_root" => set_code_root(s, str_("root")),
+        "export_adr" => return export_adr(s, req("dir")?).map(|v| serde_json::json!(v)),
         "export_plantuml_all" => return export_plantuml_all(s, req("dir")?).map(|v| serde_json::json!(v)),
         _ => Err(format!("unknown command {cmd}")),
     }?;

@@ -5,10 +5,11 @@ use crate::diff::diff;
 use crate::metrics::{compute, Metrics};
 use crate::model::*;
 use crate::ops::{apply_all, Mode, Op, OpError};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
 pub struct ClassDelta {
     pub class: String,
     pub fan_in: i64,
@@ -17,7 +18,8 @@ pub struct ClassDelta {
     pub heat: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
 pub struct Impact {
     pub added: Vec<String>,
     pub changed: Vec<String>,

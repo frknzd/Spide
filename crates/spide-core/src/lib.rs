@@ -1,5 +1,7 @@
 //! Spide core: design model, operations, store, metrics, derivations and exporters.
 
+pub mod adr;
+pub mod archunit;
 pub mod derive;
 pub mod diff;
 pub mod impact;

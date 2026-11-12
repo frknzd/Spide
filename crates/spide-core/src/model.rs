@@ -368,6 +368,10 @@ pub struct Decision {
     pub attempts: Vec<Attempt>,
     /// Ops actually applied (option ops, or examiner-provided ops for a custom answer).
     pub applied_ops: Vec<crate::ops::Op>,
+    /// What applying it did to the design (recorded when it was applied).
+    pub consequences: Option<crate::impact::Impact>,
+    /// When it was accepted / overruled (ms since epoch).
+    pub decided_at: Option<u64>,
 }
 
 impl Decision {
@@ -509,6 +513,8 @@ pub struct Settings {
     pub partner: PartnerMode,
     /// The user skipped the brief (forces) — don't nag about it.
     pub brief_skipped: bool,
+    /// Java root package of the real code (ArchUnit export, code import), e.g. `org.acme.library`.
+    pub code_root: Option<String>,
 }
 
 /// How the AI partner behaves.

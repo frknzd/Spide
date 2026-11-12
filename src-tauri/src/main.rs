@@ -86,6 +86,9 @@ fn main() {
             commands::export_png,
             commands::export_plantuml,
             commands::export_plantuml_all,
+            commands::export_adr,
+            commands::export_archunit,
+            commands::set_code_root,
             commands::reveal_project,
         ])
         .build(tauri::generate_context!())

@@ -169,8 +169,8 @@ real code. Goal: make Spide a complete loop: **brief → decide → see conseque
 - [x] D2 `.spide/history.jsonl` append + `history_at`; Timeline UI (preview, fork, restore)
 - [x] D3 branches (create/switch/list/delete/compare/merge) + commands + UI
 **H — reality loop**
-- [ ] H1 `adr.rs` + `/export adr` + golden
-- [ ] H2 `archunit.rs` + `settings.code_root` + `/export archunit` + golden
+- [x] H1 `adr.rs` + `/export adr` + golden
+- [x] H2 `archunit.rs` + `settings.code_root` + `/export archunit` + golden
 - [ ] H3 `crates/spide-import` (tree-sitter-java) + fixture project tests
 - [ ] H4 `drift.rs` + `/drift` overlay/report + adopt-as-proposals
 **E — levels**
