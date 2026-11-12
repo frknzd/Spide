@@ -479,6 +479,45 @@ impl Store {
         Ok(problems)
     }
 
+    /// Agent analysis of a change scenario (upsert). Unknown classes are dropped with a warning.
+    pub fn set_change_impact(&mut self, name: String, description: Option<String>, impacted: Vec<ImpactedClass>) -> Result<Vec<String>, OpError> {
+        if name.trim().is_empty() {
+            return Err(OpError("change scenario needs a name".into()));
+        }
+        let mut warnings = vec![];
+        let impacted: Vec<ImpactedClass> = impacted
+            .into_iter()
+            .filter(|i| {
+                let ok = self.design.live_class(&i.class).is_some();
+                if !ok {
+                    warnings.push(format!("unknown class {} dropped", i.class));
+                }
+                ok
+            })
+            .collect();
+        let rev = self.design.model_rev;
+        self.mutate("agent", format!("change scenario \"{name}\" analysed"), move |d| {
+            match d.change_scenarios.iter_mut().find(|c| c.name == name && c.status != Status::Pruned) {
+                Some(c) => {
+                    c.impacted = impacted;
+                    c.generated_rev = Some(rev);
+                    if description.is_some() {
+                        c.description = description;
+                    }
+                }
+                None => d.change_scenarios.push(ChangeScenario {
+                    name,
+                    description,
+                    impacted,
+                    generated_rev: Some(rev),
+                    ..Default::default()
+                }),
+            }
+            Ok(())
+        })?;
+        Ok(warnings)
+    }
+
     pub fn set_examiner(&mut self, mode: ExaminerMode) {
         self.design.settings.examiner = mode;
     }
@@ -521,6 +560,7 @@ fn strip_pruned(d: &mut Design) {
     d.relations.retain(|r| r.status != Status::Pruned && names.contains(&r.from) && names.contains(&r.to));
     d.packages.retain(|p| p.status != Status::Pruned);
     d.forces.retain(|f| f.status != Status::Pruned);
+    d.change_scenarios.retain(|c| c.status != Status::Pruned);
 }
 
 fn set_status(d: &mut Design, t: &Target, st: Status, fb: Option<String>) -> Result<(), OpError> {

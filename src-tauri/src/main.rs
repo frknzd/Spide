@@ -64,6 +64,7 @@ fn main() {
             commands::set_partner,
             commands::set_rules,
             commands::fix_issue,
+            commands::analyse_change,
             commands::set_brief_skipped,
             commands::set_name,
             commands::regenerate,

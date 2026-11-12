@@ -1,7 +1,7 @@
 import { NodeDefs } from "../canvas/ClassNode";
 import { C, F, FONT_MONO, FONT_SANS, textWidth } from "../canvas/visuals";
 import { Viewport, type WorldRect } from "../canvas/Viewport";
-import type { Message, Sequence, Target } from "../state/types";
+import type { Message, ScenarioScore, Sequence, Target } from "../state/types";
 import type { ViewProps } from "./PackageView";
 import { Banner } from "./UseCaseView";
 
@@ -15,6 +15,25 @@ export function msgLabel(m: Message, i: number, all?: Message[]) {
   const n = all ? all.slice(0, i + 1).filter((x) => x.kind !== "return").length : i + 1;
   const call = /\(/.test(m.method) ? m.method : `${m.method}(${m.args ?? ""})`;
   return `${n}: ${call}${m.returns ? ` : ${m.returns}` : ""}`;
+}
+
+/** How well the scenario fits the design: hops, depth, boundary crossings, aggregates. */
+function ScoreBar({ s, max }: { s?: ScenarioScore; max: number }) {
+  if (!s) return null;
+  const chip = (text: string, bad: boolean, title: string) => <span className={bad ? "sc-bad" : ""} title={title}>{text}</span>;
+  return (
+    <div className="score-bar">
+      <div className="ss-h">fit of “{s.name}”</div>
+      {chip(`${s.hops} calls`, s.hops > max, `calls in this scenario (chatty above ${max})`)}
+      {chip(`depth ${s.max_depth}`, s.max_depth > 4, "deepest nesting of synchronous calls")}
+      {chip(`${s.package_crossings} package crossings`, false, "calls between packages")}
+      {chip(`${s.layer_crossings} layer crossings`, false, "calls between layers")}
+      {s.container_crossings > 0 && chip(`${s.container_crossings} container crossings`, s.sync_container_calls > 1, `${s.sync_container_calls} of them synchronous`)}
+      {chip(`${s.aggregates_touched.length} aggregate${s.aggregates_touched.length === 1 ? "" : "s"}`, s.aggregates_touched.length > 1,
+        s.aggregates_touched.length ? `touches ${s.aggregates_touched.join(", ")} — more than one aggregate per transaction weakens consistency` : "no aggregates touched")}
+      {s.unknown_calls > 0 && chip(`${s.unknown_calls} unknown`, true, "calls to methods that don't exist")}
+    </div>
+  );
 }
 
 export function sequenceLayout(s: Sequence, isActor: (n: string) => boolean) {
@@ -68,6 +87,7 @@ export function SequenceView(p: ViewProps & { selected: string | null; onSelect:
           <div key={s} className="ss-item sugg" onClick={() => (p.onSelect(s), p.onGenerate(s))}>＋ {s}</div>
         ))}
         <div className="faint small ss-hint">or ask in the prompt: “sequence for …”</div>
+        {!wantScenario && sel && <ScoreBar s={snap.metrics.scenarios.find((x) => x.name === sel.name)} max={snap.view.rules.thresholds.max_scenario_hops} />}
       </div>
       {wantScenario && <Banner show busy={snap.pi_status === "busy"} empty text={`No sequence for “${wantScenario}” yet.`} onRegenerate={() => p.onGenerate(wantScenario)} />}
       {!wantScenario && !sel && <Banner show busy={snap.pi_status === "busy"} empty text="No sequence diagrams yet." onRegenerate={() => p.onGenerate(null)} />}

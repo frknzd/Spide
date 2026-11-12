@@ -9,6 +9,7 @@ pub mod ops;
 pub mod plantuml;
 pub mod png;
 pub mod rules;
+pub mod scenarios;
 pub mod store;
 pub mod tools;
 

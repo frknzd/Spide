@@ -11,6 +11,8 @@ export interface ClassNodeProps {
   m?: ClassMetrics;
   dim?: boolean;
   focus?: boolean;
+  /** outline colour (stress test) */
+  ring?: string | null;
   showMethods?: boolean;
   /** static rendering (previews/export): no animation classes */
   still?: boolean;
@@ -56,6 +58,7 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
             filter={`url(#halo${hb})`} className={p.still ? undefined : heat > 0.55 ? "halo-pulse" : undefined} pointerEvents="none" />
         )}
         {p.focus && <rect x={-5} y={-5} width={w + 10} height={h + 10} rx={12} fill="none" stroke={C.accent} strokeWidth={1.5} opacity={0.7} pointerEvents="none" />}
+        {p.ring && <rect x={-7} y={-7} width={w + 14} height={h + 14} rx={13} fill="none" stroke={p.ring} strokeWidth={2.2} opacity={0.9} pointerEvents="none" className="halo-pulse" />}
         <rect width={w} height={h} rx={8} fill={C.node} stroke={border} strokeWidth={ghost ? 1.5 : 1.2 + heat * 1.6}
           strokeDasharray={ghost || removing ? "6 4" : undefined}
           data-target={T(target)} data-node={cls.name} data-hover={`class:${cls.name}`} style={{ cursor: ghost ? "pointer" : "grab" }} />
@@ -94,6 +97,7 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
         {ghost && <Chip x={w - 4} y={-23} text="+ proposed" color={C.ghost} anchor="end" />}
         {removing && <Chip x={w - 4} y={-23} text="− proposed removal" color={C.removing} anchor="end" />}
         {st === "overruled" && <Chip x={w - 4} y={-23} text="⚠ overruled" color={C.warn} anchor="end" />}
+        {cls.aggregate_root && st !== "pruned" && <Chip x={4} y={-23} text="◆ aggregate" color={C.dim} />}
         {pruned && (
           <>
             <line x1={-6} y1={h / 2} x2={w + 6} y2={h / 2} stroke={C.cycle} strokeWidth={2} />

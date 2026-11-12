@@ -161,8 +161,8 @@ real code. Goal: make Spide a complete loop: **brief → decide → see conseque
 - [x] B2 impact in snapshot previews + proposals + MCP replies
 - [x] B3 DecisionCard impact line; ComparePanel
 **C — scenarios**
-- [ ] C1 `scenarios.rs` scoring + `chatty_scenario`; SequenceView header
-- [ ] C2 change scenarios model/ops/MCP `set_change_impact`, ripple/locality, staleness, `/stress`
+- [x] C1 `scenarios.rs` scoring + `chatty_scenario`; SequenceView header
+- [x] C2 change scenarios model/ops/MCP `set_change_impact`, ripple/locality, staleness, `/stress`
 - [ ] C3 QA annotations + `sync_chain`/`spof`/`multi_aggregate_write` checks
 **D — history & branches**
 - [ ] D1 `Origin` in `Mode::Commit`, stamping, HoverCard provenance

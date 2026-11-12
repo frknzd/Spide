@@ -10,6 +10,7 @@ import type { Design, Tab, Target } from "./state/types";
 import { AnswerBubble } from "./ui/AnswerBubble";
 import { BriefPanel, MODES } from "./ui/BriefPanel";
 import { HealthRing, ProposalBar, Tabs, Toasts, type Toast } from "./ui/Chrome";
+import { ChangeSection } from "./ui/ChangeSection";
 import { ComparePanel } from "./ui/ComparePanel";
 import { DecisionPanel } from "./ui/DecisionCard";
 import { FeedbackPopover, type PruneState } from "./ui/FeedbackPopover";
@@ -34,6 +35,7 @@ export default function App() {
   const [history, setHistory] = useState(false);
   const [brief, setBrief] = useState(false);
   const [compare, setCompare] = useState<string | null>(null);
+  const [stress, setStress] = useState<string | null>(null);
   const [preview, setPreview] = useState<Design | null>(null);
   const [focusKey, setFocusKey] = useState(0);
   const [scenario, setScenario] = useState<string | null>(null);
@@ -137,6 +139,14 @@ export default function App() {
       case "/lenient": return run(api.setExaminer(false).then(() => toast("info", "examiner: lenient — you may overrule")));
       case "/history": return setHistory((h) => !h);
       case "/brief": return setBrief((b) => !b);
+      case "/stress": {
+        if (!arg) return setStress(null);
+        const c = metrics?.changes.find((x) => x.name.toLowerCase().includes(arg.toLowerCase()));
+        if (!c) return toast("error", `no change scenario matches “${arg}”`);
+        if (!c.analysed) return toast("error", `“${c.name}” isn't analysed yet`);
+        setTab("class");
+        return setStress(c.name);
+      }
       case "/compare": {
         const d = view?.decisions.find((x) => (x.state === "open" || x.state === "rejected") && x.options.length > 1);
         return d ? setCompare(d.id) : toast("error", "no open decision with several options");
@@ -241,6 +251,7 @@ export default function App() {
         if (!inField) {
           canvasRef.current?.focus(null);
           setBrief(false);
+          setStress(null);
         }
         setPrune(null);
         setHistory(false);
@@ -263,7 +274,7 @@ export default function App() {
     if (!snap) return null;
     const dm = snap.derived.domain;
     return {
-      classes: dm.classes.map((c) => ({ ...c, package: null, is_abstract: false, methods: [], responsibilities: [], rationale: null, proposal: null, feedback: null })),
+      classes: dm.classes.map((c) => ({ ...c, package: null, is_abstract: false, methods: [], responsibilities: [], rationale: null, aggregate_root: false, proposal: null, feedback: null })),
       relations: dm.relations,
       packages: [],
       metrics: null,
@@ -275,6 +286,11 @@ export default function App() {
   useEffect(() => {
     if (ghostForces) setBrief(true);
   }, [ghostForces]);
+
+  const stressSets = useMemo(() => {
+    const c = stress ? metrics?.changes.find((x) => x.name === stress) : null;
+    return c ? { impacted: new Set(c.impacted), ripple: new Set(c.ripple) } : null;
+  }, [stress, metrics]);
 
   const pendingCount = view?.decisions.filter((d) => d.state === "open" || d.state === "evaluating" || d.state === "rejected").length ?? 0;
   useEffect(() => {
@@ -293,7 +309,8 @@ export default function App() {
       <div className="stage">
         {tab === "class" && classData && (
           <Canvas ref={canvasRef} key="class" viewKey="class" data={classData} saved={view.layout["class"]} tension={preview ? 0 : metrics.tension}
-            onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} insetRight={pendingCount ? 450 : 0} />
+            onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} insetRight={pendingCount ? 450 : 0}
+            stress={stressSets} />
         )}
         {tab === "domain" && domainData && (
           <Canvas ref={canvasRef} key="domain" viewKey="domain" data={domainData} saved={view.layout["domain"] ?? view.layout["class"]} showMethods={false} tension={0}
@@ -313,6 +330,7 @@ export default function App() {
             <span className="design-name">{view.name}</span>
             {view.settings.partner !== "examiner" && <span className="preview-tag mode-tag">{MODES.find((m) => m.mode === view.settings.partner)?.label}</span>}
             {preview && <span className="preview-tag">previewing option</span>}
+            {stressSets && <span className="preview-tag stress-tag">what if: {stress} · <span style={{ color: "#ff5c6c" }}>impacted</span> · <span style={{ color: "#ffb454" }}>ripple</span></span>}
           </div>
           <Tabs tab={tab} onTab={setTab} stale={stale} />
         </>
@@ -320,6 +338,11 @@ export default function App() {
 
       {brief && (
         <BriefPanel design={view} onClose={() => setBrief(false)} run={run}>
+          <ChangeSection design={view} metrics={metrics} stress={stress} run={run}
+            onStress={(n) => {
+              setStress(n);
+              if (n) setTab("class");
+            }} />
           <RulesSection rules={view.rules} run={run} />
         </BriefPanel>
       )}

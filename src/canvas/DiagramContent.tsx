@@ -67,6 +67,8 @@ interface Props extends DiagramData {
   focusClass?: string | null;
   /** classes to highlight (e.g. preview focus) */
   highlight?: Set<string>;
+  /** change-scenario stress test: impacted (red) + ripple (amber); everything else dims */
+  stress?: { impacted: Set<string>; ripple: Set<string> } | null;
   showPackages?: boolean;
 }
 
@@ -91,6 +93,7 @@ export function DiagramContent(p: Props) {
     }
   }
   const bendMap = bends(p.relations);
+  const inStress = (n: string) => !!p.stress && (p.stress.impacted.has(n) || p.stress.ripple.has(n));
 
   // packages
   const pkgEls = [];
@@ -136,6 +139,7 @@ export function DiagramContent(p: Props) {
     if (!a || !b) continue;
     const { style, warn } = relationStyle(r, p.metrics);
     if (focus && !(r.from === focus || r.to === focus)) style.opacity *= 0.15;
+    if (p.stress && !(inStress(r.from) && inStress(r.to))) style.opacity *= 0.15;
     const tgt: Target = r.status === "proposed" && r.proposal ? { kind: "proposal", id: r.proposal } : { kind: "relation", id: r.id };
     if (r.from === r.to) {
       const x = a.x + a.w / 2;
@@ -149,7 +153,8 @@ export function DiagramContent(p: Props) {
       continue;
     }
     edgeEls.push(
-      <Edge key={r.id} from={a} to={b} kind={r.kind} directed={r.directed} label={r.label} fromMult={r.from_mult} toMult={r.to_mult}
+      <Edge key={r.id} from={a} to={b} kind={r.kind} directed={r.directed} fromMult={r.from_mult} toMult={r.to_mult}
+        label={r.interaction && r.interaction !== "sync" ? `«${r.interaction}»${r.label ? " " + r.label : ""}` : r.label}
         bend={bendMap.get(r.id) ?? 0} style={style} warn={warn} target={T(tgt)} hoverKey={`relation:${r.id}`} />,
     );
   }
@@ -166,7 +171,8 @@ export function DiagramContent(p: Props) {
           const pk = c.package ? p.packages.find((x) => x.name === c.package) : undefined;
           return (
             <ClassNode key={c.name} cls={c} box={box} x={pos.x} y={pos.y} scale={nodeScale(cm?.[c.name])} m={cm?.[c.name]}
-              dim={!!focus && !neighbours.has(c.name)} focus={focus === c.name || p.highlight?.has(c.name)} showMethods={p.showMethods}
+              dim={(!!focus && !neighbours.has(c.name)) || (!!p.stress && !inStress(c.name))} focus={focus === c.name || p.highlight?.has(c.name)} showMethods={p.showMethods}
+              ring={p.stress?.impacted.has(c.name) ? C.cycle : p.stress?.ripple.has(c.name) ? C.warn : null}
               still={p.still} layerColor={pk?.layer ? LAYER_COLOR[pk.layer] : null} />
           );
         })}

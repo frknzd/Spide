@@ -23,6 +23,8 @@ pub enum Op {
         responsibilities: Vec<String>,
         #[serde(default)]
         rationale: Option<String>,
+        #[serde(default)]
+        aggregate_root: bool,
     },
     UpdateClass {
         name: String,
@@ -36,6 +38,8 @@ pub enum Op {
         responsibilities: Option<Vec<String>>,
         #[serde(default)]
         rationale: Option<String>,
+        #[serde(default)]
+        aggregate_root: Option<bool>,
     },
     RenameClass { from: String, to: String },
     RemoveClass { name: String },
@@ -59,6 +63,8 @@ pub enum Op {
         directed: Option<bool>,
         #[serde(default)]
         rationale: Option<String>,
+        #[serde(default)]
+        interaction: Option<Interaction>,
     },
     UpdateRelation {
         from: String,
@@ -72,6 +78,8 @@ pub enum Op {
         to_mult: Option<String>,
         #[serde(default)]
         directed: Option<bool>,
+        #[serde(default)]
+        interaction: Option<Interaction>,
     },
     RemoveRelation {
         from: String,
@@ -110,6 +118,12 @@ pub enum Op {
         priority: Option<u8>,
     },
     RemoveForce { name: String },
+    AddChangeScenario {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+    },
+    RemoveChangeScenario { name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -181,6 +195,8 @@ impl Op {
             Op::AddForce { name, kind, .. } => format!("add {} \"{name}\"", kind.as_str()),
             Op::UpdateForce { name, .. } => format!("update force \"{name}\""),
             Op::RemoveForce { name } => format!("remove force \"{name}\""),
+            Op::AddChangeScenario { name, .. } => format!("add change scenario \"{name}\""),
+            Op::RemoveChangeScenario { name } => format!("remove change scenario \"{name}\""),
         }
     }
 
@@ -201,6 +217,7 @@ impl Op {
             }
             Op::AddPackage { .. } | Op::SetLayer { .. } | Op::RemovePackage { .. } => vec![],
             Op::AddForce { .. } | Op::UpdateForce { .. } | Op::RemoveForce { .. } => vec![],
+            Op::AddChangeScenario { .. } | Op::RemoveChangeScenario { .. } => vec![],
         }
     }
 
@@ -208,7 +225,7 @@ impl Op {
         let st = mode.status();
         let prop = mode.proposal();
         match self {
-            Op::AddClass { name, stereotype, package, is_abstract, attributes, methods, responsibilities, rationale } => {
+            Op::AddClass { name, stereotype, package, is_abstract, attributes, methods, responsibilities, rationale, aggregate_root } => {
                 if !valid_ident(name) {
                     return err(format!("invalid class name {name:?}"));
                 }
@@ -232,12 +249,13 @@ impl Op {
                     methods: methods.iter().map(mark_m).collect(),
                     responsibilities: responsibilities.clone(),
                     rationale: rationale.clone(),
+                    aggregate_root: *aggregate_root,
                     status: st,
                     proposal: prop,
                     feedback: None,
                 });
             }
-            Op::UpdateClass { name, stereotype, package, is_abstract, responsibilities, rationale } => {
+            Op::UpdateClass { name, stereotype, package, is_abstract, responsibilities, rationale, aggregate_root } => {
                 if let Some(p) = package {
                     if !present(d, name) {
                         return err(format!("unknown class {name}"));
@@ -259,6 +277,9 @@ impl Op {
                 }
                 if let Some(r) = rationale {
                     c.rationale = Some(r.clone());
+                }
+                if let Some(a) = aggregate_root {
+                    c.aggregate_root = *a;
                 }
                 mark_changed(c, mode);
             }
@@ -367,7 +388,7 @@ impl Op {
                     c.methods.remove(idx);
                 }
             }
-            Op::AddRelation { from, to, kind, label, from_mult, to_mult, directed, rationale } => {
+            Op::AddRelation { from, to, kind, label, from_mult, to_mult, directed, rationale, interaction } => {
                 for n in [from, to] {
                     if !present(d, n) {
                         return err(format!("unknown class {n} (add it first, in the same batch is fine)"));
@@ -390,13 +411,14 @@ impl Op {
                     from_mult: from_mult.clone().filter(|s| !s.is_empty()),
                     to_mult: to_mult.clone().filter(|s| !s.is_empty()),
                     directed: directed.unwrap_or(true),
+                    interaction: interaction.unwrap_or_default(),
                     rationale: rationale.clone(),
                     status: st,
                     proposal: prop,
                     feedback: None,
                 });
             }
-            Op::UpdateRelation { from, to, kind, label, from_mult, to_mult, directed } => {
+            Op::UpdateRelation { from, to, kind, label, from_mult, to_mult, directed, interaction } => {
                 let id = relation_id(from, to, *kind);
                 let r = d
                     .relations
@@ -414,6 +436,9 @@ impl Op {
                 }
                 if let Some(dir) = directed {
                     r.directed = *dir;
+                }
+                if let Some(i) = interaction {
+                    r.interaction = *i;
                 }
                 if mode.is_ghost() {
                     r.status = Status::Proposed;
@@ -450,6 +475,7 @@ impl Op {
                     name: name.clone(),
                     layer: *layer,
                     description: description.clone(),
+                    container: None,
                     status: st,
                     proposal: prop,
                 });
@@ -544,6 +570,35 @@ impl Op {
                     }
                 }
             }
+            Op::AddChangeScenario { name, description } => {
+                if !valid_ident(name) {
+                    return err("change scenario needs a name");
+                }
+                if d.change_scenarios.iter().any(|c| c.name == *name && c.status != Status::Pruned) {
+                    return err(format!("change scenario \"{name}\" already exists"));
+                }
+                d.change_scenarios.retain(|c| c.name != *name);
+                d.change_scenarios.push(ChangeScenario {
+                    name: name.clone(),
+                    description: description.clone().filter(|s| !s.is_empty()),
+                    status: st,
+                    proposal: prop,
+                    ..Default::default()
+                });
+            }
+            Op::RemoveChangeScenario { name } => {
+                let idx = d
+                    .change_scenarios
+                    .iter()
+                    .position(|c| c.name == *name && c.status != Status::Pruned)
+                    .ok_or_else(|| OpError(format!("unknown change scenario \"{name}\"")))?;
+                if mode.is_ghost() {
+                    d.change_scenarios[idx].status = Status::Removing;
+                    d.change_scenarios[idx].proposal = prop;
+                } else {
+                    d.change_scenarios.remove(idx);
+                }
+            }
             Op::RemoveForce { name } => {
                 let idx = d
                     .forces
@@ -597,6 +652,7 @@ fn ensure_package(d: &mut Design, name: &str, mode: Mode) {
         name: name.to_string(),
         layer: guess_layer(name),
         description: None,
+        container: None,
         status: mode.status(),
         proposal: mode.proposal(),
     });

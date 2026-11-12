@@ -89,6 +89,11 @@ fn default_explanation(kind: &str) -> (&'static str, Option<&'static str>) {
         "god" => ("A class with too many members, responsibilities or dependencies changes for many reasons.", Some("split it along its responsibilities (look at the method groups)")),
         "cohesion" => ("Its methods form unrelated groups (LCOM4 > 1): it really is several classes.", Some("extract each method group with the attributes it uses into its own class")),
         "orphan" => ("An unconnected class contributes nothing to any collaboration.", Some("connect it to the classes that use it, or prune it")),
+        "sync_chain" => ("Synchronous calls across containers multiply latency and failure: if one is down, the whole scenario fails.", Some("make some of the calls asynchronous (queue/event), or move the data to where it is needed")),
+        "multi_aggregate_write" => ("Each aggregate is a consistency boundary; changing several in one transaction couples them and causes contention.", Some("change one aggregate per transaction and propagate to the others with domain events (eventual consistency)")),
+        "spof" => ("A single instance that several containers depend on takes all of them down when it fails.", Some("run more replicas, or let dependents degrade gracefully (cache, queue, circuit breaker)")),
+        "change_ripple" => ("An expected change touches much of the design: the variation point isn't encapsulated.", Some("hide what varies behind an interface (Protected Variations) so the change stays in one place")),
+        "chatty_scenario" => ("Many calls for one scenario mean responsibilities are scattered: the behaviour lives far from the data.", Some("move behaviour to the class that owns the data (Information Expert), or add a facade for the scenario")),
         "coupling" => ("High fan-out makes the class fragile: any of its dependencies can break it.", Some("introduce a facade or move behaviour closer to the data it needs")),
         _ => ("", None),
     }
@@ -109,6 +114,10 @@ pub struct Metrics {
     pub edge_rules: BTreeMap<String, String>,
     pub implicit_edges: Vec<ImplicitEdge>,
     pub issues: Vec<Issue>,
+    /// Behavioural scores per live sequence.
+    pub scenarios: Vec<crate::scenarios::ScenarioScore>,
+    /// Footprint of each change scenario.
+    pub changes: Vec<crate::scenarios::ChangeFootprint>,
     /// 0..100
     pub health: u8,
     /// 0..1 — drives the canvas jitter.
@@ -476,6 +485,78 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
     for ((from, to), via) in implicit {
         let cyc = in_cycle(&from, &to);
         out.implicit_edges.push(ImplicitEdge { from, to, via, in_cycle: cyc });
+    }
+
+    // ---- scenarios (sequences)
+    let has_aggregate_roots = classes.iter().any(|c| c.aggregate_root);
+    for s in d.sequences.iter().filter(|s| s.status.is_live()) {
+        let sc = crate::scenarios::score(s, d);
+        if sc.sync_container_calls >= 2 {
+            issues.push(Issue::new(
+                "sync_chain",
+                0.45,
+                format!("scenario \"{}\" makes {} synchronous calls across containers", s.name, sc.sync_container_calls),
+                vec![format!("sequence:{}", s.name)],
+            ));
+            rule_penalty += 3.0;
+        }
+        if has_aggregate_roots && sc.aggregates_touched.len() > 1 {
+            issues.push(Issue::new(
+                "multi_aggregate_write",
+                0.4,
+                format!("scenario \"{}\" changes {} aggregates ({}) in one go", s.name, sc.aggregates_touched.len(), sc.aggregates_touched.join(", ")),
+                sc.aggregates_touched.clone(),
+            ));
+            rule_penalty += 2.0;
+        }
+        if sc.hops > th.max_scenario_hops {
+            issues.push(Issue::new(
+                "chatty_scenario",
+                0.35,
+                format!("scenario \"{}\" needs {} calls (> {})", s.name, sc.hops, th.max_scenario_hops),
+                vec![format!("sequence:{}", s.name)],
+            ));
+            rule_penalty += 2.0;
+        }
+        out.scenarios.push(sc);
+    }
+
+    // ---- single points of failure: a single-instance container that several others depend on
+    let mut dependents: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for e in &deps {
+        if let (Some(a), Some(b)) = (crate::scenarios::container_of(d, &e.from), crate::scenarios::container_of(d, &e.to)) {
+            if a != b {
+                dependents.entry(b).or_default().insert(a);
+            }
+        }
+    }
+    for k in d.containers.iter().filter(|k| counts(k.status, ghosts)) {
+        let users = dependents.get(k.name.as_str()).map_or(0, |s| s.len());
+        if k.replicas <= 1 && users >= 2 {
+            issues.push(Issue::new(
+                "spof",
+                0.5,
+                format!("container {} runs once but {users} containers depend on it (single point of failure)", k.name),
+                vec![k.name.clone()],
+            ));
+            rule_penalty += 3.0;
+        }
+    }
+
+    // ---- change scenarios: how local is each expected change?
+    let dep_set: BTreeSet<(String, String)> = deps.iter().map(|e| (e.from.clone(), e.to.clone())).collect();
+    for cs in d.change_scenarios.iter().filter(|c| c.status.is_live()) {
+        let fp = crate::scenarios::footprint(cs, d, &dep_set);
+        if fp.analysed && classes.len() >= 4 && fp.locality < 0.5 {
+            issues.push(Issue::new(
+                "change_ripple",
+                0.35,
+                format!("change \"{}\" ripples through {:.0}% of the classes", cs.name, (1.0 - fp.locality) * 100.0),
+                fp.impacted.clone(),
+            ));
+            rule_penalty += 2.0;
+        }
+        out.changes.push(fp);
     }
 
     // ---- health

@@ -191,6 +191,22 @@ pub fn set_rules(st: State<'_, AppState>, rules: spide_core::rules::Rules) -> R 
     done(&st)
 }
 
+/// Ask the agent which classes an expected change would touch.
+#[tauri::command]
+pub fn analyse_change(st: State<'_, AppState>, pi: State<'_, PiBridge>, name: String) -> R {
+    let desc = {
+        let s = st.lock();
+        let d = &s.store.design;
+        d.change_scenarios
+            .iter()
+            .find(|c| c.name == name)
+            .and_then(|c| c.description.clone())
+            .or_else(|| d.force(&name).and_then(|f| f.description.clone()))
+    };
+    let msg = prompts::analyse_change(&name, desc.as_deref());
+    pi.prompt(&st, msg, Some(format!("⇄ what if: {name}")))
+}
+
 /// "fix with agent" on a health issue.
 #[tauri::command]
 pub fn fix_issue(st: State<'_, AppState>, pi: State<'_, PiBridge>, message: String, rule: Option<String>, fix_hint: Option<String>) -> R {
@@ -381,6 +397,7 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "apply_user_ops" => apply_user_ops(s, serde_json::from_value(de("ops")).map_err(|e| e.to_string())?),
         "set_partner" => set_partner(s, req("mode")?),
         "set_rules" => set_rules(s, serde_json::from_value(de("rules")).map_err(|e| e.to_string())?),
+        "analyse_change" => analyse_change(s, pi, req("name")?),
         "fix_issue" => fix_issue(s, pi, req("message")?, str_("rule"), str_("fix_hint")),
         "set_brief_skipped" => set_brief_skipped(s, a.get("on").and_then(Value::as_bool).unwrap_or(false)),
         "set_show_pruned" => set_show_pruned(s, a.get("on").and_then(Value::as_bool).unwrap_or(false)),

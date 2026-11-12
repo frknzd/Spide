@@ -13,23 +13,25 @@ you change the design exclusively through these tools. Everything you add is a P
 (propose_ops) or a DECISION the user must choose and defend (propose_decision). Read get_design first.";
 
 const OPS_DOC: &str = r#"Each op is an object with an "op" field:
-- {"op":"add_class","name":"Order","stereotype?":"entity|value|enum|interface|abstract|service|controller|repository|…","package?":"domain","is_abstract?":false,
+- {"op":"add_class","name":"Order","stereotype?":"entity|value|enum|interface|abstract|service|controller|repository|…","package?":"domain","is_abstract?":false,"aggregate_root?":false,
    "attributes?":[ATTR…],"methods?":[METHOD…],"responsibilities?":["…"],"rationale?":"why it exists"}
-- {"op":"update_class","name":"Order", any of "stereotype","package","is_abstract","responsibilities","rationale"}
+- {"op":"update_class","name":"Order", any of "stereotype","package","is_abstract","responsibilities","rationale","aggregate_root"}
+   aggregate_root = consistency boundary (one transaction changes one aggregate; Spide flags scenarios that change several).
 - {"op":"rename_class","from":"A","to":"B"}            - {"op":"remove_class","name":"A"}
 - {"op":"add_attribute","class":"Order","attribute":ATTR}   - {"op":"update_attribute","class":"Order","name":"total","attribute":ATTR}
 - {"op":"remove_attribute","class":"Order","name":"total"}
 - {"op":"add_method","class":"Order","method":METHOD}       - {"op":"update_method","class":"Order","name":"pay","method":METHOD}
 - {"op":"remove_method","class":"Order","name":"pay"}
 - {"op":"add_relation","from":"Order","to":"OrderLine","kind":"association|aggregation|composition|inheritance|realization|dependency",
-   "label?":"contains","from_mult?":"1","to_mult?":"1..*","directed?":true,"rationale?":"…"}
+   "label?":"contains","from_mult?":"1","to_mult?":"1..*","directed?":true,"interaction?":"sync|async|event","rationale?":"…"}
    Direction: composition/aggregation from=WHOLE to=PART; inheritance/realization from=CHILD to=PARENT; association/dependency from=CLIENT to=SUPPLIER.
-- {"op":"update_relation","from","to","kind", any of "label","from_mult","to_mult","directed"}
+- {"op":"update_relation","from","to","kind", any of "label","from_mult","to_mult","directed","interaction"}
 - {"op":"remove_relation","from":"A","to":"B","kind?":"…"}
 - {"op":"add_package","name":"domain","layer?":"ui|application|domain|infrastructure"}  - {"op":"set_layer","package":"…","layer":"…"|null}
 - {"op":"move_to_package","class":"Order","package":"domain"}   - {"op":"remove_package","name":"…"}
 - {"op":"add_force","name":"Evolvability","kind":"goal|quality|constraint|change","priority?":1|2|3,"description?":"…"}  (the brief)
 - {"op":"update_force","name":"…", any of "rename","kind","priority","description"}   - {"op":"remove_force","name":"…"}
+- {"op":"add_change_scenario","name":"Support e-books","description?":"…"}   - {"op":"remove_change_scenario","name":"…"}
 ATTR   = {"name":"total","type":"Money","visibility?":"public|private|protected|package","is_static?":false,"multiplicity?":"0..1"}
 METHOD = {"name":"addLine","params":[{"name":"p","type":"Product"},{"name":"qty","type":"int"}],"returns?":"OrderLine","visibility?":"public",
           "is_abstract?":false,"uses?":["lines"] (attributes of the same class it touches — drives the cohesion metric),
@@ -86,6 +88,13 @@ pub fn tool_list() -> Value {
                 "classes":{"type":"array","items":{"type":"string"},"description":"Classes that realise it"},
                 "description":{"type":"string"}},"required":["name","actors"]}}},
           "required":["actors","use_cases"]}},
+        {"name":"set_change_impact","description":"Record your analysis of a CHANGE SCENARIO (\"what if we must support X?\"): the classes that \
+           would have to change, each with a short why. Spide computes the ripple (classes depending on them) and a locality score, \
+           and lets the user stress-test the design. Creates the scenario if it doesn't exist. Be honest: list every class that must change.",
+         "inputSchema":{"type":"object","properties":{
+            "name":{"type":"string"},"description":{"type":"string"},
+            "impacted":{"type":"array","items":{"type":"object","properties":{"class":{"type":"string"},"why":{"type":"string"}},"required":["class"]}}},
+          "required":["name","impacted"]}},
         {"name":"set_sequence","description":"Create/replace one sequence diagram. Participants: classes or actors. Each sync/async/create message's \
            `method` must be an existing method name on the `to` class (validated; problems are reported back and highlighted). \
            Use kind=return for replies.",
@@ -315,6 +324,35 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
                 true,
             )
         }
+        "set_change_impact" => {
+            #[derive(Deserialize)]
+            struct A {
+                name: String,
+                description: Option<String>,
+                impacted: Vec<ImpactedClass>,
+            }
+            let a: A = parse(args)?;
+            let name = a.name.clone();
+            let warnings = store.set_change_impact(a.name, a.description, a.impacted).map_err(|e| e.0)?;
+            let m = compute(&store.view(), false);
+            let fp = m.changes.iter().find(|c| c.name == name);
+            let mut text = match fp {
+                Some(fp) => format!(
+                    "Change scenario \"{name}\" stored: {} impacted, {} more depend on them, locality {:.0}%.",
+                    fp.impacted.len(),
+                    fp.ripple.len(),
+                    fp.locality * 100.0
+                ),
+                None => format!("Change scenario \"{name}\" stored."),
+            };
+            if !warnings.is_empty() {
+                text.push_str(&format!(" Warnings: {}.", warnings.join("; ")));
+            }
+            if fp.is_some_and(|fp| fp.locality < 0.5) {
+                text.push_str(" Poor locality: consider raising a decision that encapsulates this variation point.");
+            }
+            ok(text, true)
+        }
         "set_sequence" => {
             let s: Sequence = parse(args)?;
             let problems = store.set_sequence(s).map_err(|e| e.0)?;
@@ -495,6 +533,8 @@ pub fn design_digest(store: &Store) -> String {
         "use_cases": d.use_cases.use_cases.iter().filter(|u| live(u.status)).map(|u| &u.name).collect::<Vec<_>>(),
         "actors": d.use_cases.actors.iter().filter(|a| live(a.status)).map(|a| &a.name).collect::<Vec<_>>(),
         "sequences": d.sequences.iter().filter(|s| live(s.status)).map(|s| &s.name).collect::<Vec<_>>(),
+        "change_scenarios": m.changes.iter().map(|c| json!({"name": c.name, "analysed": c.analysed, "stale": c.stale,
+            "impacted": c.impacted, "locality": (c.locality * 100.0).round()})).collect::<Vec<_>>(),
         "settings": {"examiner": d.settings.examiner},
     }))
     .unwrap()

@@ -37,6 +37,7 @@ export interface Class {
   methods: Method[];
   responsibilities: string[];
   rationale: string | null;
+  aggregate_root: boolean;
   status: Status;
   proposal: string | null;
   feedback: string | null;
@@ -50,12 +51,13 @@ export interface Relation {
   from_mult: string | null;
   to_mult: string | null;
   directed: boolean;
+  interaction: "sync" | "async" | "event";
   rationale: string | null;
   status: Status;
   proposal: string | null;
   feedback: string | null;
 }
-export interface Package { name: string; layer: Layer | null; description: string | null; status: Status; proposal: string | null }
+export interface Package { name: string; layer: Layer | null; description: string | null; container: string | null; status: Status; proposal: string | null }
 export type Op = { op: string; [k: string]: unknown };
 export interface Proposal { id: string; ops: Op[]; rationale: string | null; source: string }
 export interface Tradeoff { force: string; effect: string; note: string | null }
@@ -129,6 +131,7 @@ export interface Design {
   decisions: Decision[];
   use_cases: UseCaseModel;
   sequences: Sequence[];
+  change_scenarios: ChangeScenario[];
   feedback: { target: string; text: string; at: number }[];
   log: { rev: number; at: number; actor: string; summary: string }[];
   layout: Record<string, Record<string, Pos>>;
@@ -174,9 +177,33 @@ export interface Metrics {
   edge_rules: Record<string, string>;
   implicit_edges: ImplicitEdge[];
   issues: Issue[];
+  scenarios: ScenarioScore[];
+  changes: ChangeFootprint[];
   health: number;
   tension: number;
 }
+export interface ScenarioScore {
+  name: string;
+  hops: number;
+  max_depth: number;
+  package_crossings: number;
+  layer_crossings: number;
+  container_crossings: number;
+  aggregates_touched: string[];
+  unknown_calls: number;
+  sync_container_calls: number;
+}
+export interface ChangeFootprint {
+  name: string;
+  impacted: string[];
+  ripple: string[];
+  locality: number;
+  packages: string[];
+  containers: string[];
+  stale: boolean;
+  analysed: boolean;
+}
+export interface ChangeScenario { name: string; description: string | null; impacted: { class: string; why: string | null }[]; generated_rev: number | null; status: Status; proposal: string | null }
 export interface OptionPreview {
   decision: string;
   option: string;

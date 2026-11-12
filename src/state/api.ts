@@ -37,6 +37,7 @@ export const api = {
   userOps: (ops: Op[]) => call("apply_user_ops", { ops }),
   setPartner: (mode: string) => call("set_partner", { mode }),
   setRules: (rules: Rules) => call("set_rules", { rules }),
+  analyseChange: (name: string) => call("analyse_change", { name }),
   fixIssue: (i: Issue) => call("fix_issue", { message: i.message, rule: i.rule, fix_hint: i.fix_hint }),
   setBriefSkipped: (on: boolean) => call("set_brief_skipped", { on }),
   regenerate: (view: "usecase" | "sequence", scenario?: string) => call("regenerate", { view, scenario: scenario ?? null }),

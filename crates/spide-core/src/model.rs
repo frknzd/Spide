@@ -104,6 +104,8 @@ pub struct Class {
     pub methods: Vec<Method>,
     pub responsibilities: Vec<String>,
     pub rationale: Option<String>,
+    /// Consistency boundary: one transaction should change at most one aggregate.
+    pub aggregate_root: bool,
     pub status: Status,
     pub proposal: Option<String>,
     pub feedback: Option<String>,
@@ -157,10 +159,45 @@ pub struct Relation {
     pub to_mult: Option<String>,
     /// For associations: navigable from→to only (true) or bidirectional (false).
     pub directed: bool,
+    pub interaction: Interaction,
     pub rationale: Option<String>,
     pub status: Status,
     pub proposal: Option<String>,
     pub feedback: Option<String>,
+}
+
+/// How a dependency is exercised at runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Interaction {
+    /// Caller waits for the callee.
+    #[default]
+    Sync,
+    /// Fire-and-forget call / queue.
+    Async,
+    /// Publish/subscribe event.
+    Event,
+}
+
+/// A deployable/runnable unit (C4 container): web app, API, database, worker…
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Container {
+    pub name: String,
+    pub technology: Option<String>,
+    pub description: Option<String>,
+    /// Running instances; 1 = single point of failure when others depend on it.
+    pub replicas: u32,
+    /// Datastores hold state (databases, queues, caches).
+    pub datastore: bool,
+    pub status: Status,
+    pub proposal: Option<String>,
+}
+
+impl Default for Container {
+    fn default() -> Self {
+        Container { name: String::new(), technology: None, description: None, replicas: 1, datastore: false, status: Status::Accepted, proposal: None }
+    }
 }
 
 pub fn relation_id(from: &str, to: &str, kind: RelationKind) -> String {
@@ -193,6 +230,8 @@ pub struct Package {
     pub name: String,
     pub layer: Option<Layer>,
     pub description: Option<String>,
+    /// Container (deployable unit) this package runs in.
+    pub container: Option<String>,
     pub status: Status,
     pub proposal: Option<String>,
 }
@@ -399,6 +438,28 @@ pub struct Sequence {
     pub feedback: Option<String>,
 }
 
+/// A class an expected change would touch, and why.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ImpactedClass {
+    pub class: String,
+    pub why: Option<String>,
+}
+
+/// "What would change if …?" — a change scenario used to stress-test modularity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ChangeScenario {
+    pub name: String,
+    pub description: Option<String>,
+    /// Classes that must change (filled by the agent's analysis).
+    pub impacted: Vec<ImpactedClass>,
+    /// Class-model revision the analysis was made for.
+    pub generated_rev: Option<u64>,
+    pub status: Status,
+    pub proposal: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Feedback {
@@ -494,10 +555,13 @@ pub struct Design {
     pub classes: Vec<Class>,
     pub relations: Vec<Relation>,
     pub packages: Vec<Package>,
+    /// Deployable units (C4 containers); packages are assigned to them.
+    pub containers: Vec<Container>,
     pub proposals: Vec<Proposal>,
     pub decisions: Vec<Decision>,
     pub use_cases: UseCaseModel,
     pub sequences: Vec<Sequence>,
+    pub change_scenarios: Vec<ChangeScenario>,
     pub feedback: Vec<Feedback>,
     pub log: Vec<LogEntry>,
     /// Canvas positions per view and element (e.g. `class` → `Order` → pos).
@@ -519,10 +583,12 @@ impl Default for Design {
             classes: vec![],
             relations: vec![],
             packages: vec![],
+            containers: vec![],
             proposals: vec![],
             decisions: vec![],
             use_cases: UseCaseModel::default(),
             sequences: vec![],
+            change_scenarios: vec![],
             feedback: vec![],
             log: vec![],
             layout: BTreeMap::new(),

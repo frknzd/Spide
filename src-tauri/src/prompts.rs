@@ -111,6 +111,15 @@ pub fn fix_issue(message: &str, rule: Option<&str>, fix_hint: Option<&str>) -> S
     )
 }
 
+pub fn analyse_change(name: &str, description: Option<&str>) -> String {
+    format!(
+        "[spide · analyse change scenario]\nChange scenario: \"{name}\"{}\nRead get_design. Which classes would have to change to support it? \
+         Call set_change_impact once with every class that must change and a short why. Don't propose design changes in this turn; \
+         if locality is poor, say so in one sentence and offer to raise a decision.",
+        description.map(|d| format!(" — {d}")).unwrap_or_default()
+    )
+}
+
 pub fn gen_use_cases() -> String {
     "[spide · generate use case diagram]\nRead the current class model with get_design and derive a use case diagram for it: \
      actors (human roles and external systems), use cases (verb phrases, user goals) with the classes that realise them, \

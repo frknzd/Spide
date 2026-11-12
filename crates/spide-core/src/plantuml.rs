@@ -206,10 +206,14 @@ fn relation_line(r: &Relation, m: Option<&Metrics>, layout: Option<&BTreeMap<Str
     let fm = r.from_mult.as_ref().map(|m| format!(" \"{m}\"")).unwrap_or_default();
     let tm = r.to_mult.as_ref().map(|m| format!("\"{m}\" ")).unwrap_or_default();
     let mut label = r.label.clone().map(|l| esc(&l)).unwrap_or_default();
+    if r.interaction != Interaction::Sync {
+        let tag = if r.interaction == Interaction::Async { "<<async>>" } else { "<<event>>" };
+        label = if label.is_empty() { tag.into() } else { format!("{tag} {label}") };
+    }
     if cyc {
         label = if label.is_empty() { "<color:#FF5C6C>⟲ cycle</color>".into() } else { format!("{label} <color:#FF5C6C>⟲</color>") };
     } else if lv {
-        label = if label.is_empty() { "<color:#FFB454>⚠ layer</color>".into() } else { format!("{label} <color:#FFB454>⚠</color>") };
+        label = if label.is_empty() { "<color:#FFB454>⚠ rule</color>".into() } else { format!("{label} <color:#FFB454>⚠</color>") };
     }
     let label = if label.is_empty() { String::new() } else { format!(" : {label}") };
     format!("{}{fm} {arrow} {tm}{}{label}", id(&r.from), id(&r.to))

@@ -43,6 +43,7 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
                 methods: c.methods.iter().filter(|m| m.status.is_live()).map(strip_method).collect(),
                 responsibilities: c.responsibilities.clone(),
                 rationale: c.rationale.clone(),
+                aggregate_root: c.aggregate_root,
             }),
             Some(o) => {
                 if o.stereotype != c.stereotype
@@ -50,6 +51,7 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
                     || o.is_abstract != c.is_abstract
                     || o.responsibilities != c.responsibilities
                     || (o.rationale != c.rationale && c.rationale.is_some())
+                    || o.aggregate_root != c.aggregate_root
                 {
                     members.push(Op::UpdateClass {
                         name: c.name.clone(),
@@ -58,6 +60,7 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
                         is_abstract: (o.is_abstract != c.is_abstract).then_some(c.is_abstract),
                         responsibilities: (o.responsibilities != c.responsibilities).then(|| c.responsibilities.clone()),
                         rationale: if o.rationale != c.rationale { c.rationale.clone() } else { None },
+                        aggregate_root: (o.aggregate_root != c.aggregate_root).then_some(c.aggregate_root),
                     });
                 }
                 let oa: Vec<&Attribute> = o.attributes.iter().filter(|a| a.status.is_live()).collect();
@@ -110,8 +113,15 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
                 to_mult: r.to_mult.clone(),
                 directed: Some(r.directed),
                 rationale: r.rationale.clone(),
+                interaction: Some(r.interaction),
             }),
-            Some(o) if o.label != r.label || o.from_mult != r.from_mult || o.to_mult != r.to_mult || o.directed != r.directed => {
+            Some(o)
+                if o.label != r.label
+                    || o.from_mult != r.from_mult
+                    || o.to_mult != r.to_mult
+                    || o.directed != r.directed
+                    || o.interaction != r.interaction =>
+            {
                 adds_rel.push(Op::UpdateRelation {
                     from: r.from.clone(),
                     to: r.to.clone(),
@@ -120,6 +130,7 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
                     from_mult: Some(r.from_mult.clone().unwrap_or_default()),
                     to_mult: Some(r.to_mult.clone().unwrap_or_default()),
                     directed: Some(r.directed),
+                    interaction: Some(r.interaction),
                 })
             }
             _ => {}
@@ -169,6 +180,17 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
     for o in &of {
         if new.force(&o.name).is_none_or(|f| !f.status.is_live()) {
             forces.push(Op::RemoveForce { name: o.name.clone() });
+        }
+    }
+
+    for c in new.change_scenarios.iter().filter(|c| c.status.is_live()) {
+        if !old.change_scenarios.iter().any(|o| o.name == c.name && o.status.is_live()) {
+            forces.push(Op::AddChangeScenario { name: c.name.clone(), description: c.description.clone() });
+        }
+    }
+    for o in old.change_scenarios.iter().filter(|c| c.status.is_live()) {
+        if !new.change_scenarios.iter().any(|c| c.name == o.name && c.status.is_live()) {
+            forces.push(Op::RemoveChangeScenario { name: o.name.clone() });
         }
     }
 
