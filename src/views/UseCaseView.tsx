@@ -32,15 +32,27 @@ export function layoutUseCases(actors: Actor[], ucs: UseCase[]): UcLayout {
     const v = u.actors.map((a) => order.get(a) ?? 0);
     return v.length ? v.reduce((x, y) => x + y, 0) / v.length : 99;
   }
-  const cols = sorted.length > 9 ? 2 : 1;
-  const perCol = Math.ceil(sorted.length / cols);
-  const widths = sorted.map((u) => Math.max(150, textWidth(u.name, UC_FONT) + 56));
-  const colW = Math.max(200, ...widths) + 30;
+  // included / extending use cases go into their own column so their arrows don't cross the main ones
+  const targets = new Set(ucs.flatMap((u) => [...u.includes, ...u.extends]));
+  const extenders = new Set(ucs.filter((u) => u.extends.length > 0).map((u) => u.name));
+  const isSecondary = (u: UseCase) => (targets.has(u.name) || extenders.has(u.name)) && u.actors.length === 0;
+  const main = sorted.filter((u) => !isSecondary(u));
+  const second = sorted.filter(isSecondary);
+  const mainCols = main.length > 9 ? 2 : 1;
+  const columns: UseCase[][] = [];
+  const per = Math.ceil(main.length / mainCols) || 1;
+  for (let c = 0; c < mainCols; c++) columns.push(main.slice(c * per, (c + 1) * per));
+  if (second.length) columns.push(second);
+  const cols = columns.length;
+  const widthOf = (u: UseCase) => Math.max(150, textWidth(u.name, UC_FONT) + 56);
+  const colW = Math.max(200, ...sorted.map(widthOf)) + 60;
+  const perCol = Math.max(...columns.map((c) => c.length), 1);
   const ucMap = new Map<string, Rect>();
-  sorted.forEach((u, i) => {
-    const col = Math.floor(i / perCol);
-    const row = i % perCol;
-    ucMap.set(u.name, { x: col * colW + colW / 2 + (row % 2 && cols === 1 ? 24 : 0), y: row * rowH + 70, w: widths[i], h: 46 });
+  columns.forEach((col, ci) => {
+    const offset = ((perCol - col.length) * rowH) / 2;
+    col.forEach((u, row) => {
+      ucMap.set(u.name, { x: ci * colW + colW / 2 + (row % 2 && cols === 1 ? 24 : 0), y: offset + row * rowH + 70, w: widthOf(u), h: 46 });
+    });
   });
   const bw = cols * colW + 40;
   const bh = Math.max(perCol * rowH + 50, 160);

@@ -121,7 +121,7 @@ Spide/
 - [x] 7. Pi bridge: spawn `pi --mode rpc`, write `.pi/mcp.json` + skill/system prompt, stream answers into bubble.
 - [x] 8. Decision flow: decision cards, option preview mini-canvases, custom option, defence → examiner verdict, overrule (lenient/strict setting).
 - [x] 9. `design.json` file watcher → diff → proposals.
-- [ ] 10. Derived tabs: Domain + Package (deterministic), Use Case + Sequence (agent, with validation + stale marker); prune/feedback in tabs.
+- [x] 10. Derived tabs: Domain + Package (deterministic), Use Case + Sequence (agent, with validation + stale marker); prune/feedback in tabs.
 - [ ] 11. Export: JSON save/load, PlantUML per diagram (+ golden tests rendered with PlantUML if available), PNG via resvg.
 - [ ] 12. README with run instructions; polish pass on visuals.
 
