@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { BranchCompare, BranchInfo, Design, HistoryEntry, Issue, Op, Pos, Rules, Snapshot, Tab, Target } from "./types";
+import type { BranchCompare, BranchInfo, Design, DriftReport, ImportSummary, HistoryEntry, Issue, Op, Pos, Rules, Snapshot, Tab, Target } from "./types";
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const DEV_URL = "http://127.0.0.1:47800/dev/snapshot";
@@ -58,6 +58,9 @@ export const api = {
   exportPlantUml: (view: string, path: string) => call("export_plantuml", { view, path }),
   exportArchUnit: (path: string) => call("export_archunit", { path }),
   setCodeRoot: (root: string | null) => call("set_code_root", { root }),
+  importCode: (dir: string) => call<ImportSummary>("import_code", { dir }),
+  drift: () => call<DriftReport>("drift"),
+  driftAdopt: () => call("drift_adopt"),
   exportAdr: (dir: string) => call<string[]>("export_adr", { dir }),
   exportPlantUmlAll: (dir: string) => call<string[]>("export_plantuml_all", { dir }),
   reveal: () => call("reveal_project"),

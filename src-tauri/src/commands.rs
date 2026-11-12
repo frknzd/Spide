@@ -583,6 +583,89 @@ pub fn branch_merge(st: State<'_, AppState>, name: String) -> R {
     done(&st)
 }
 
+// ---------------------------------------------------------------- reality (code import)
+
+fn reality_path(project: &std::path::Path) -> PathBuf {
+    project.join(".spide").join("reality.json")
+}
+
+pub fn load_reality(project: &std::path::Path) -> Option<Design> {
+    std::fs::read_to_string(reality_path(project)).ok().and_then(|t| Design::from_json(&t).ok())
+}
+
+#[derive(serde::Serialize)]
+pub struct ImportSummary {
+    pub files: usize,
+    pub classes: usize,
+    pub relations: usize,
+    pub skipped: Vec<String>,
+    pub code_root: Option<String>,
+}
+
+/// Import Java sources under `dir` as the read-only "reality" model (`.spide/reality.json`).
+#[tauri::command(async)]
+pub fn import_code(st: State<'_, AppState>, dir: String) -> R<ImportSummary> {
+    let (project, root) = {
+        let s = st.lock();
+        (s.project_dir.clone(), s.store.design.settings.code_root.clone())
+    };
+    let r = spide_import::import_java(std::path::Path::new(&dir), root.as_deref())?;
+    crate::state::write_atomic(&reality_path(&project), &r.design.to_json()).map_err(|e| e.to_string())?;
+    let summary = ImportSummary {
+        files: r.files,
+        classes: r.design.classes.len(),
+        relations: r.design.relations.len(),
+        skipped: r.skipped,
+        code_root: r.design.settings.code_root.clone(),
+    };
+    {
+        let mut s = st.lock();
+        if s.store.design.settings.code_root.is_none() {
+            s.store.set_code_root(summary.code_root.clone());
+        }
+        s.store.design.settings.code_dir = Some(dir);
+    }
+    st.changed();
+    Ok(summary)
+}
+
+#[derive(serde::Serialize)]
+pub struct DriftReport {
+    pub drift: spide_core::drift::Drift,
+    /// The imported code with the design's rules applied (for drawing code-only classes).
+    pub reality: Design,
+    pub checklist: String,
+    pub code_dir: Option<String>,
+}
+
+#[tauri::command(async)]
+pub fn drift(st: State<'_, AppState>) -> R<DriftReport> {
+    let (project, design) = {
+        let s = st.lock();
+        (s.project_dir.clone(), s.store.design.clone())
+    };
+    let reality = load_reality(&project).ok_or("no code imported yet — /import a source folder first")?;
+    let drift = spide_core::drift::drift(&design, &reality);
+    let checklist = spide_core::drift::checklist(&drift);
+    Ok(DriftReport { reality: spide_core::drift::with_design_rules(&design, &reality), drift, checklist, code_dir: design.settings.code_dir.clone() })
+}
+
+/// What exists only in the code becomes a proposal (never removes anything from the design).
+#[tauri::command(async)]
+pub fn drift_adopt(st: State<'_, AppState>) -> R {
+    let project = st.lock().project_dir.clone();
+    let reality = load_reality(&project).ok_or("no code imported yet")?;
+    {
+        let mut s = st.lock();
+        let ops = spide_core::drift::adopt_ops(&s.store.design, &reality);
+        if ops.is_empty() {
+            return Err("the code has nothing the design lacks".into());
+        }
+        s.store.propose_ops(ops, Some("adopt what exists only in the code".into()), "code").map_err(|e| e.0)?;
+    }
+    done(&st)
+}
+
 #[tauri::command]
 pub fn reveal_project(st: State<'_, AppState>) -> R {
     let dir = st.lock().project_dir.clone();
@@ -645,6 +728,9 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "export_plantuml" => export_plantuml(s, req("view")?, req("path")?),
         "export_archunit" => export_archunit(s, req("path")?),
         "set_code_root" => set_code_root(s, str_("root")),
+        "drift" => return drift(s).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+        "drift_adopt" => drift_adopt(s),
+        "import_code" => return import_code(s, req("dir")?).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "export_adr" => return export_adr(s, req("dir")?).map(|v| serde_json::json!(v)),
         "export_plantuml_all" => return export_plantuml_all(s, req("dir")?).map(|v| serde_json::json!(v)),
         _ => Err(format!("unknown command {cmd}")),

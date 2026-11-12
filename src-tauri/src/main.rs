@@ -89,6 +89,9 @@ fn main() {
             commands::export_adr,
             commands::export_archunit,
             commands::set_code_root,
+            commands::import_code,
+            commands::drift,
+            commands::drift_adopt,
             commands::reveal_project,
         ])
         .build(tauri::generate_context!())

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/spide-core", "src-tauri"]
+members = ["crates/spide-core", "crates/spide-import", "src-tauri"]
 
 [workspace.package]
 edition = "2021"

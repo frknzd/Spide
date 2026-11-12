@@ -26,6 +26,8 @@ export const COMMANDS: { cmd: string; help: string }[] = [
   { cmd: "/export png", help: "export current diagram as PNG" },
   { cmd: "/export puml", help: "export current diagram as PlantUML" },
   { cmd: "/export archunit", help: "export the rules as an ArchUnit test (Java)" },
+  { cmd: "/import", help: "import a Java source folder to compare the design with the code" },
+  { cmd: "/drift", help: "design ↔ code: what's missing, extra, or breaking rules" },
   { cmd: "/coderoot", help: "/coderoot org.acme.app — Java root package (ArchUnit, code import)" },
   { cmd: "/export adr", help: "export decided decisions as ADRs (markdown)" },
   { cmd: "/export all", help: "export every diagram as PlantUML into a folder" },

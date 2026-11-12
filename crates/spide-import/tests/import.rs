@@ -1,0 +1,125 @@
+use spide_core::metrics::compute;
+use spide_core::*;
+use std::path::PathBuf;
+
+fn fixture() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library")
+}
+
+#[test]
+fn imports_structure_from_java() {
+    let r = spide_import::import_java(&fixture(), None).unwrap();
+    assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+    assert_eq!(r.files, 9, "test sources are skipped");
+    let d = &r.design;
+    let names: Vec<&str> = d.classes.iter().map(|c| c.name.as_str()).collect();
+    for n in ["Book", "Member", "Loan", "LoanPolicy", "StandardPolicy", "LoanType", "LendingService", "LoanRepository", "AuditLog"] {
+        assert!(names.contains(&n), "missing {n}: {names:?}");
+    }
+    assert!(!names.contains(&"LoanTest"));
+    assert_eq!(d.settings.code_root.as_deref(), Some("org.acme.library"));
+
+    let c = |n: &str| d.class(n).unwrap();
+    assert_eq!(c("Loan").package.as_deref(), Some("domain"));
+    assert_eq!(c("LoanPolicy").stereotype.as_deref(), Some("interface"));
+    assert_eq!(c("LoanType").stereotype.as_deref(), Some("enum"));
+    assert_eq!(c("AuditLog").stereotype.as_deref(), Some("value"), "records are values");
+    assert!(c("LoanRepository").is_abstract);
+    assert!(c("LoanRepository").methods[0].is_abstract);
+    assert!(c("LoanPolicy").methods.iter().find(|m| m.name == "fineFor").unwrap().is_abstract);
+    assert!(!c("LoanPolicy").methods.iter().find(|m| m.name == "allowsRenewal").unwrap().is_abstract, "default method");
+    assert_eq!(c("Loan").origin.as_deref(), Some("import"));
+
+    // fields → attributes, methods with signatures
+    let lend = c("LendingService").methods.iter().find(|m| m.name == "lend").unwrap();
+    assert_eq!(lend.params.len(), 2);
+    assert_eq!(lend.returns.as_deref(), Some("Loan"));
+    // calls resolved through field and parameter types
+    assert!(lend.calls.contains(&"LoanRepository.save".to_string()), "{:?}", lend.calls);
+    assert!(lend.calls.contains(&"Member.canBorrow".to_string()), "{:?}", lend.calls);
+    assert!(lend.uses.contains(&"loans".to_string()));
+    let fine = c("Loan").methods.iter().find(|m| m.name == "fine").unwrap();
+    assert!(fine.calls.contains(&"LoanPolicy.fineFor".to_string()) && fine.calls.contains(&"AuditLog.record".to_string()), "{:?}", fine.calls);
+
+    // relations
+    let has = |from: &str, to: &str, kind: RelationKind| d.relations.iter().any(|r| r.from == from && r.to == to && r.kind == kind);
+    assert!(has("StandardPolicy", "LoanPolicy", RelationKind::Realization));
+    assert!(has("Member", "Loan", RelationKind::Association));
+    assert_eq!(d.relations.iter().find(|r| r.from == "Member" && r.to == "Loan").unwrap().to_mult.as_deref(), Some("*"));
+    assert!(has("Loan", "Member", RelationKind::Association));
+    assert!(has("LendingService", "LoanRepository", RelationKind::Association));
+
+    // the metrics see the cycle and the layer violation (domain → infra)
+    let m = compute(d, false);
+    assert!(m.cycles.iter().any(|c| c.contains(&"Loan".to_string()) && c.contains(&"Member".to_string())));
+    assert!(m.issues.iter().any(|i| i.kind == "layer" && i.message.contains("Loan->AuditLog")), "{:?}", m.issues.iter().map(|i| &i.message).collect::<Vec<_>>());
+}
+
+#[test]
+fn explicit_code_root_and_errors() {
+    let r = spide_import::import_java(&fixture(), Some("org.acme")).unwrap();
+    assert_eq!(r.design.class("Loan").unwrap().package.as_deref(), Some("library.domain"));
+    assert!(spide_import::import_java(&std::env::temp_dir().join("spide-nothing-here"), None).is_err());
+}
+
+/// Read-only smoke test on a real project when available (zap-extensions next to this repo).
+#[test]
+fn smoke_on_zap_addon_if_present() {
+    let addon = std::env::var("SPIDE_SMOKE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../zap-extensions/addOns/callhome"));
+    if !addon.exists() {
+        return;
+    }
+    let t = std::time::Instant::now();
+    let r = spide_import::import_java(&addon, None).unwrap();
+    let ms = t.elapsed().as_millis();
+    eprintln!("{}: {} files, {} classes, {} relations, {} skipped, {ms} ms", addon.display(), r.files, r.design.classes.len(), r.design.relations.len(), r.skipped.len());
+    assert!(r.design.classes.len() > 3);
+    assert!(ms < 2000, "import too slow: {ms} ms");
+}
+
+#[test]
+fn drift_between_design_and_code() {
+    use spide_core::drift::{adopt_ops, checklist, drift};
+    let reality = spide_import::import_java(&fixture(), None).unwrap().design;
+    // the intended design: like the code, but planned differently
+    let ops: Vec<Op> = serde_json::from_str(
+        r#"[{"op":"remove_class","name":"AuditLog"},
+            {"op":"add_class","name":"Reservation","package":"domain"},
+            {"op":"add_method","class":"Member","method":{"name":"reserve","params":[{"name":"b","type":"Book"}]}},
+            {"op":"move_to_package","class":"LoanType","package":"app"},
+            {"op":"add_relation","from":"Book","to":"Member","kind":"dependency"},
+            {"op":"remove_relation","from":"Member","to":"Loan"}]"#,
+    )
+    .unwrap();
+    let intended = ops::apply_all(&reality, &ops, ops::Mode::Commit(Status::Accepted, None)).unwrap();
+    let d = drift(&intended, &reality);
+    assert_eq!(d.missing_in_code, vec!["Reservation".to_string()]);
+    assert_eq!(d.extra_in_code, vec!["AuditLog".to_string()]);
+    let member = d.members.iter().find(|m| m.class == "Member").unwrap();
+    assert_eq!(member.missing_in_code, vec!["reserve()".to_string()]);
+    assert_eq!(d.packages.len(), 1);
+    assert_eq!(d.packages[0].class, "LoanType");
+    assert!(d.relations_missing_in_code.iter().any(|r| r.from == "Book" && r.to == "Member"));
+    assert!(d.relations_extra_in_code.iter().any(|r| r.from == "Member" && r.to == "Loan"));
+    assert!(d.rule_violations_in_code.iter().any(|v| v.contains("cycle")), "{:?}", d.rule_violations_in_code);
+    assert!(d.conformance > 0.7 && d.conformance < 1.0, "{}", d.conformance);
+
+    // adopting the code's extras applies cleanly to the design and removes those drifts
+    let adopt = adopt_ops(&intended, &reality);
+    let after = ops::apply_all(&intended, &adopt, ops::Mode::Commit(Status::Accepted, None)).expect("adopt ops apply");
+    let d2 = drift(&after, &reality);
+    assert!(d2.extra_in_code.is_empty());
+    assert!(d2.relations_extra_in_code.is_empty(), "{:?}", d2.relations_extra_in_code);
+
+    let todo = checklist(&d);
+    assert!(todo.contains("- [ ] create class `Reservation`"));
+    assert!(todo.contains("- [ ] add `Member.reserve()`"));
+    assert!(todo.contains("- [ ] move `LoanType` to package `app`"));
+
+    // identical design ⇒ no drift
+    let same = drift(&reality, &reality);
+    assert!(same.missing_in_code.is_empty() && same.members.is_empty() && same.relations_missing_in_code.is_empty());
+    assert!((same.conformance - 1.0).abs() < 1e-9);
+}

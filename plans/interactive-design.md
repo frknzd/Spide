@@ -171,8 +171,8 @@ real code. Goal: make Spide a complete loop: **brief → decide → see conseque
 **H — reality loop**
 - [x] H1 `adr.rs` + `/export adr` + golden
 - [x] H2 `archunit.rs` + `settings.code_root` + `/export archunit` + golden
-- [ ] H3 `crates/spide-import` (tree-sitter-java) + fixture project tests
-- [ ] H4 `drift.rs` + `/drift` overlay/report + adopt-as-proposals
+- [x] H3 `crates/spide-import` (tree-sitter-java) + fixture project tests
+- [x] H4 `drift.rs` + `/drift` overlay/report + adopt-as-proposals
 **E — levels**
 - [ ] E1 systems/containers/links model + ops + MCP docs
 - [ ] E2 `derive::system_view`, consistency issues

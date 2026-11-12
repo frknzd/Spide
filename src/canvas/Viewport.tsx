@@ -71,7 +71,8 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
     const from = tRef.current;
     const t0 = performance.now();
     const step = (now: number) => {
-      const u = Math.min(1, (now - t0) / ms);
+      // rAF timestamps can precede t0 (frame start) — clamp, or the easing extrapolates (even to k < 0)
+      const u = Math.max(0, Math.min(1, (now - t0) / ms));
       const e = 1 - Math.pow(1 - u, 3);
       setT({ x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, k: from.k + (to.k - from.k) * e });
       if (u < 1) anim.current = requestAnimationFrame(step);

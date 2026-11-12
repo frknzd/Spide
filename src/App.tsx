@@ -6,7 +6,7 @@ import type { ViewportApi } from "./canvas/Viewport";
 import { standaloneSvg } from "./export/svg";
 import { api } from "./state/api";
 import { on, useAgentFeed, useSnapshot } from "./state/store";
-import type { Design, Tab, Target } from "./state/types";
+import type { Design, DriftReport, Tab, Target } from "./state/types";
 import { AnswerBubble } from "./ui/AnswerBubble";
 import { BriefPanel, MODES } from "./ui/BriefPanel";
 import { HealthRing, ProposalBar, Tabs, Toasts, type Toast } from "./ui/Chrome";
@@ -14,6 +14,7 @@ import { ChangeSection } from "./ui/ChangeSection";
 import { ComparePanel, decisionCols, type CompareCol } from "./ui/ComparePanel";
 import { DecisionPanel } from "./ui/DecisionCard";
 import { DecisionHistory } from "./ui/DecisionHistory";
+import { DriftPanel } from "./ui/DriftPanel";
 import { FeedbackPopover, type PruneState } from "./ui/FeedbackPopover";
 import { HoverCard } from "./ui/HoverCard";
 import { PromptBar } from "./ui/PromptBar";
@@ -41,6 +42,7 @@ export default function App() {
   const [stress, setStress] = useState<string | null>(null);
   const [shownDecision, setShownDecision] = useState<string | null>(null);
   const [timeline, setTimeline] = useState(false);
+  const [drift, setDrift] = useState<DriftReport | null>(null);
   const [preview, setPreview] = useState<Design | null>(null);
   const [focusKey, setFocusKey] = useState(0);
   const [scenario, setScenario] = useState<string | null>(null);
@@ -65,13 +67,14 @@ export default function App() {
   const doPrune = useCallback(
     (targets: Target[], at: { x: number; y: number }) => {
       const proposals = targets.filter((t) => t.kind === "proposal") as { kind: "proposal"; id: string }[];
-      const rest = targets.filter((t) => t.kind !== "proposal");
+      // phantoms (code-only classes in the drift view) can't be pruned
+      const rest = targets.filter((t) => t.kind !== "proposal" && !(t.kind === "class" && drift?.drift.extra_in_code.includes(t.name)));
       Promise.all([...proposals.map((p) => api.reject(p.id)), rest.length ? api.prune(rest) : Promise.resolve()])
         .then(() => setPrune({ targets, at }))
         .catch((e) => toast("error", String(e)));
       setHover(null);
     },
-    [toast],
+    [toast, drift],
   );
 
   const onClickTarget = useCallback(
@@ -116,6 +119,19 @@ export default function App() {
     await run(api.exportPlantUml(tab, path).then(() => toast("info", `exported ${path}`)));
   };
 
+  const importCode = async () => {
+    const dir = await openDialog({ directory: true, multiple: false, title: "Java source folder to compare with the design", defaultPath: view?.settings.code_dir ?? undefined });
+    if (typeof dir !== "string") return;
+    try {
+      const s = await api.importCode(dir);
+      toast("info", `imported ${s.classes} classes, ${s.relations} relations from ${s.files} files${s.skipped.length ? ` (${s.skipped.length} skipped)` : ""}`);
+      setDrift(await api.drift());
+      setTab("class");
+      setBrief(false);
+    } catch (e) {
+      toast("error", String(e));
+    }
+  };
   const exportFolder = async (title: string, f: (dir: string) => Promise<string[]>, what: string) => {
     const dir = await openDialog({ directory: true, multiple: false, title, defaultPath: snap?.project_dir });
     if (typeof dir !== "string") return;
@@ -206,6 +222,17 @@ export default function App() {
       case "/stop": return run(api.abort());
       case "/agent": return run(api.restartAgent().then(() => toast("info", "agent restarted")));
       case "/folder": return run(api.reveal());
+      case "/import": return importCode();
+      case "/drift": {
+        if (drift) return setDrift(null);
+        const r = await api.drift().catch((e) => (toast("error", String(e)), null));
+        if (r) {
+          setTab("class");
+          setBrief(false);
+          setDrift(r);
+        }
+        return;
+      }
       case "/coderoot": return run(api.setCodeRoot(arg || null).then(() => toast("info", arg ? `code root: ${arg}` : "code root cleared")));
       case "/name": return arg ? run(api.setName(arg)) : toast("error", "usage: /name <title>");
       case "/export":
@@ -322,8 +349,16 @@ export default function App() {
   const classData: DiagramData | null = useMemo(() => {
     if (!view || !metrics) return null;
     const d = preview ?? view;
+    if (drift && !preview) {
+      // code-only classes join the canvas as phantoms
+      const phantom = new Set(drift.drift.extra_in_code);
+      const extra = drift.reality.classes.filter((c) => phantom.has(c.name));
+      const names = new Set([...d.classes.map((c) => c.name), ...extra.map((c) => c.name)]);
+      const rels = drift.reality.relations.filter((r) => (phantom.has(r.from) || phantom.has(r.to)) && names.has(r.from) && names.has(r.to));
+      return { classes: [...d.classes, ...extra], relations: [...d.relations, ...rels], packages: d.packages, metrics, implicit: metrics.implicit_edges };
+    }
     return { classes: d.classes, relations: d.relations, packages: d.packages, metrics, implicit: preview ? [] : metrics.implicit_edges };
-  }, [view, metrics, preview]);
+  }, [view, metrics, preview, drift]);
 
   const domainData: DiagramData | null = useMemo(() => {
     if (!snap) return null;
@@ -341,6 +376,20 @@ export default function App() {
   useEffect(() => {
     if (ghostForces) setBrief(true);
   }, [ghostForces]);
+
+  // keep the drift report current while it's open
+  useEffect(() => {
+    if (drift) api.drift().then(setDrift).catch(() => {});
+  }, [snap?.rev]); // eslint-disable-line react-hooks/exhaustive-deps
+  const driftSets = useMemo(() => {
+    if (!drift) return null;
+    const d = drift.drift;
+    return {
+      missing: new Set(d.missing_in_code),
+      drifted: new Set([...d.members.map((m) => m.class), ...d.packages.map((p) => p.class)]),
+      phantom: new Set(d.extra_in_code),
+    };
+  }, [drift]);
 
   const stressSets = useMemo(() => {
     const c = stress ? metrics?.changes.find((x) => x.name === stress) : null;
@@ -365,7 +414,7 @@ export default function App() {
         {tab === "class" && classData && (
           <Canvas ref={canvasRef} key="class" viewKey="class" data={classData} saved={view.layout["class"]} tension={preview ? 0 : metrics.tension}
             onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} insetRight={pendingCount ? 450 : 0}
-            stress={stressSets} />
+            stress={stressSets} drift={driftSets} />
         )}
         {tab === "domain" && domainData && (
           <Canvas ref={canvasRef} key="domain" viewKey="domain" data={domainData} saved={view.layout["domain"] ?? view.layout["class"]} showMethods={false} tension={0}
@@ -392,7 +441,11 @@ export default function App() {
         </>
       )}
 
-      {brief && (
+      {drift && (
+        <DriftPanel report={drift} onClose={() => setDrift(null)} onReimport={() => view.settings.code_dir && run(api.importCode(view.settings.code_dir).then(() => api.drift()).then(setDrift))}
+          onFind={(c) => canvasRef.current?.focus(c)} run={run} toast={toast} />
+      )}
+      {brief && !drift && (
         <BriefPanel design={view} onClose={() => setBrief(false)} run={run}>
           <ChangeSection design={view} metrics={metrics} stress={stress} run={run}
             onStress={(n) => {

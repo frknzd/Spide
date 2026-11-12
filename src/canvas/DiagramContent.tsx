@@ -69,6 +69,8 @@ interface Props extends DiagramData {
   highlight?: Set<string>;
   /** change-scenario stress test: impacted (red) + ripple (amber); everything else dims */
   stress?: { impacted: Set<string>; ripple: Set<string> } | null;
+  /** design vs code: missing in code (red dashed), drifted (amber), only in code (phantom) */
+  drift?: { missing: Set<string>; drifted: Set<string>; phantom: Set<string> } | null;
   showPackages?: boolean;
 }
 
@@ -172,7 +174,9 @@ export function DiagramContent(p: Props) {
           return (
             <ClassNode key={c.name} cls={c} box={box} x={pos.x} y={pos.y} scale={nodeScale(cm?.[c.name])} m={cm?.[c.name]}
               dim={(!!focus && !neighbours.has(c.name)) || (!!p.stress && !inStress(c.name))} focus={focus === c.name || p.highlight?.has(c.name)} showMethods={p.showMethods}
-              ring={p.stress?.impacted.has(c.name) ? C.cycle : p.stress?.ripple.has(c.name) ? C.warn : null}
+              ring={p.stress?.impacted.has(c.name) ? C.cycle : p.stress?.ripple.has(c.name) ? C.warn
+                : p.drift?.missing.has(c.name) ? C.cycle : p.drift?.drifted.has(c.name) ? C.warn : null}
+              ringDashed={!!p.drift?.missing.has(c.name)} phantom={!!p.drift?.phantom.has(c.name)}
               still={p.still} layerColor={pk?.layer ? LAYER_COLOR[pk.layer] : null} />
           );
         })}

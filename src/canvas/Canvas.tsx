@@ -28,6 +28,7 @@ interface Props {
   hoverKey: string | null;
   insetRight?: number;
   stress?: { impacted: Set<string>; ripple: Set<string> } | null;
+  drift?: { missing: Set<string>; drifted: Set<string>; phantom: Set<string> } | null;
 }
 
 const LAYER_RANK: Record<Layer, number> = { ui: 0, infrastructure: 0, application: 1, domain: 2 };
@@ -174,7 +175,7 @@ export const Canvas = forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
         dragging.current = null;
       }}
     >
-      <DiagramContent {...p.data} pos={pos} boxes={boxes} showMethods={p.showMethods} focusClass={focusClass} stress={p.stress} />
+      <DiagramContent {...p.data} pos={pos} boxes={boxes} showMethods={p.showMethods} focusClass={focusClass} stress={p.stress} drift={p.drift} />
     </Viewport>
   );
 });

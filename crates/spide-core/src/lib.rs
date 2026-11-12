@@ -4,6 +4,7 @@ pub mod adr;
 pub mod archunit;
 pub mod derive;
 pub mod diff;
+pub mod drift;
 pub mod impact;
 pub mod metrics;
 pub mod model;

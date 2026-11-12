@@ -515,6 +515,8 @@ pub struct Settings {
     pub brief_skipped: bool,
     /// Java root package of the real code (ArchUnit export, code import), e.g. `org.acme.library`.
     pub code_root: Option<String>,
+    /// Source folder last imported (re-import with /import).
+    pub code_dir: Option<String>,
 }
 
 /// How the AI partner behaves.

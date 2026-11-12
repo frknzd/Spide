@@ -139,7 +139,7 @@ export interface Design {
   feedback: { target: string; text: string; at: number }[];
   log: { rev: number; at: number; actor: string; summary: string }[];
   layout: Record<string, Record<string, Pos>>;
-  settings: { examiner: "lenient" | "strict"; show_pruned: boolean; partner: PartnerMode; brief_skipped: boolean; code_root: string | null };
+  settings: { examiner: "lenient" | "strict"; show_pruned: boolean; partner: PartnerMode; brief_skipped: boolean; code_root: string | null; code_dir: string | null };
   rules: Rules;
 }
 
@@ -239,6 +239,18 @@ export interface Derived {
   stale_sequences: string[];
   suggested_scenarios: string[];
 }
+export interface Drift {
+  missing_in_code: string[];
+  extra_in_code: string[];
+  members: { class: string; missing_in_code: string[]; extra_in_code: string[] }[];
+  relations_missing_in_code: { from: string; to: string; kind: RelationKind }[];
+  relations_extra_in_code: { from: string; to: string; kind: RelationKind }[];
+  packages: { class: string; design: string | null; code: string | null }[];
+  rule_violations_in_code: string[];
+  conformance: number;
+}
+export interface DriftReport { drift: Drift; reality: Design; checklist: string; code_dir: string | null }
+export interface ImportSummary { files: number; classes: number; relations: number; skipped: string[]; code_root: string | null }
 export interface HistoryEntry { rev: number; at: number; actor: string; summary: string }
 export type PiStatus = "starting" | "idle" | "busy" | "offline";
 export interface Snapshot {
