@@ -102,3 +102,27 @@ fn png_render_works() {
     let w = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
     assert_eq!(w, 400);
 }
+
+#[test]
+fn c4_export_is_valid() {
+    let mut d = fixture();
+    let ops: Vec<Op> = serde_json::from_str(
+        r#"[{"op":"add_container","name":"Web UI","technology":"JavaFX"},{"op":"add_container","name":"Lending API","technology":"Spring Boot"},
+            {"op":"add_container","name":"DB","technology":"Postgres","datastore":true},
+            {"op":"add_system","name":"Mail","description":"sends reminders"},
+            {"op":"assign_container","package":"ui","container":"Web UI"},{"op":"assign_container","package":"application","container":"Lending API"},
+            {"op":"assign_container","package":"domain","container":"Lending API"},{"op":"assign_container","package":"infrastructure","container":"Lending API"},
+            {"op":"add_link","from":"Lending API","to":"DB","protocol":"JDBC"},
+            {"op":"add_link","from":"Lending API","to":"Mail","protocol":"SMTP","interaction":"async","description":"reminders"},
+            {"op":"add_link","from":"Member","to":"Web UI","protocol":"desktop"}]"#,
+    )
+    .unwrap();
+    d = ops::apply_all(&d, &ops, ops::Mode::Commit(Status::Accepted, None)).unwrap();
+    let m = compute(&d, false);
+    let text = plantuml::export("system", &d, &m, &d.layout).unwrap();
+    assert!(text.contains("ContainerDb(DB"));
+    assert!(text.contains("Rel(Web_UI, Lending_API"), "derived container dependency");
+    assert!(text.contains("Rel(Library_system, Mail"), "context collapses containers into the system");
+    golden("library-system.puml", &text);
+    plantuml_accepts("library-system.puml", &text);
+}

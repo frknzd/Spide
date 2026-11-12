@@ -194,12 +194,78 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
         }
     }
 
+    // C4: systems, containers, links, package → container
+    let mut c4_adds = vec![];
+    let mut c4_after_pkgs = vec![];
+    let mut c4_removes = vec![];
+    for x in new.systems.iter().filter(|x| x.status.is_live()) {
+        if !old.systems.iter().any(|o| o.name == x.name && o.status.is_live()) {
+            c4_adds.push(Op::AddSystem { name: x.name.clone(), description: x.description.clone() });
+        }
+    }
+    for o in old.systems.iter().filter(|x| x.status.is_live()) {
+        if !new.systems.iter().any(|x| x.name == o.name && x.status.is_live()) {
+            c4_removes.push(Op::RemoveSystem { name: o.name.clone() });
+        }
+    }
+    for k in new.containers.iter().filter(|x| x.status.is_live()) {
+        match old.containers.iter().find(|o| o.name == k.name && o.status.is_live()) {
+            None => c4_adds.push(Op::AddContainer {
+                name: k.name.clone(),
+                technology: k.technology.clone(),
+                description: k.description.clone(),
+                replicas: Some(k.replicas),
+                datastore: k.datastore,
+            }),
+            Some(o) if o.technology != k.technology || o.description != k.description || o.replicas != k.replicas || o.datastore != k.datastore => {
+                c4_adds.push(Op::UpdateContainer {
+                    name: k.name.clone(),
+                    technology: Some(k.technology.clone().unwrap_or_default()),
+                    description: Some(k.description.clone().unwrap_or_default()),
+                    replicas: Some(k.replicas),
+                    datastore: Some(k.datastore),
+                })
+            }
+            _ => {}
+        }
+    }
+    for o in old.containers.iter().filter(|x| x.status.is_live()) {
+        if !new.containers.iter().any(|x| x.name == o.name && x.status.is_live()) {
+            c4_removes.push(Op::RemoveContainer { name: o.name.clone() });
+        }
+    }
+    for p in new.packages.iter().filter(|p| p.status.is_live()) {
+        let before = old.packages.iter().find(|o| o.name == p.name && o.status.is_live()).and_then(|o| o.container.clone());
+        if before != p.container {
+            c4_after_pkgs.push(Op::AssignContainer { package: p.name.clone(), container: p.container.clone() });
+        }
+    }
+    for l in new.links.iter().filter(|x| x.status.is_live()) {
+        if !old.links.iter().any(|o| o.from == l.from && o.to == l.to && o.status.is_live()) {
+            c4_after_pkgs.push(Op::AddLink {
+                from: l.from.clone(),
+                to: l.to.clone(),
+                interaction: Some(l.interaction),
+                protocol: l.protocol.clone(),
+                description: l.description.clone(),
+            });
+        }
+    }
+    for o in old.links.iter().filter(|x| x.status.is_live()) {
+        if !new.links.iter().any(|l| l.from == o.from && l.to == o.to && l.status.is_live()) {
+            c4_removes.insert(0, Op::RemoveLink { from: o.from.clone(), to: o.to.clone() });
+        }
+    }
+
     let mut out = forces;
+    out.extend(c4_adds);
     out.extend(adds_pkg);
+    out.extend(c4_after_pkgs);
     out.extend(rel_removes);
     out.extend(adds_cls);
     out.extend(members);
     out.extend(adds_rel);
     out.extend(removes);
+    out.extend(c4_removes);
     out
 }

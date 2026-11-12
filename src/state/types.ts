@@ -136,6 +136,9 @@ export interface Design {
   use_cases: UseCaseModel;
   sequences: Sequence[];
   change_scenarios: ChangeScenario[];
+  containers: Container[];
+  systems: ExternalSystem[];
+  links: Link[];
   feedback: { target: string; text: string; at: number }[];
   log: { rev: number; at: number; actor: string; summary: string }[];
   layout: Record<string, Record<string, Pos>>;
@@ -232,7 +235,20 @@ export interface Impact {
   class_deltas: ClassDelta[];
 }
 export interface DomainClass { name: string; stereotype: string | null; attributes: Attribute[]; status: Status }
+export interface ExternalSystem { name: string; description: string | null; status: Status; proposal: string | null }
+export interface Link { from: string; to: string; interaction: "sync" | "async" | "event"; protocol: string | null; description: string | null; status: Status; proposal: string | null }
+export interface Container { name: string; technology: string | null; description: string | null; replicas: number; datastore: boolean; status: Status; proposal: string | null }
+export interface SystemViewData {
+  system: string;
+  actors: string[];
+  systems: ExternalSystem[];
+  containers: (Omit<Container, "status" | "proposal"> & { packages: string[]; classes: number; status: Status; proposal: string | null })[];
+  container_deps: { from: string; to: string; count: number; sync: boolean }[];
+  links: Link[];
+  context_edges: { from: string; to: string; label: string | null }[];
+}
 export interface Derived {
+  system: SystemViewData;
   domain: { classes: DomainClass[]; relations: Relation[]; excluded: string[] };
   packages: { packages: { name: string; layer: Layer | null; classes: string[]; status: Status }[] };
   use_cases_stale: boolean;
@@ -284,9 +300,12 @@ export type Target =
   | { kind: "sequence"; name: string }
   | { kind: "message"; sequence: string; index: number }
   | { kind: "proposal"; id: string }
-  | { kind: "force"; name: string };
+  | { kind: "force"; name: string }
+  | { kind: "system"; name: string }
+  | { kind: "container"; name: string }
+  | { kind: "link"; id: string };
 
-export type Tab = "class" | "domain" | "package" | "usecase" | "sequence";
+export type Tab = "system" | "class" | "domain" | "package" | "usecase" | "sequence";
 
 export type AgentEvent =
   | { kind: "user"; text: string }
@@ -314,6 +333,9 @@ export function targetLabel(t: Target): string {
     case "message": return `message #${t.index + 1}`;
     case "proposal": return `proposal ${t.id}`;
     case "force": return `force ${t.name}`;
+    case "system": return `system ${t.name}`;
+    case "container": return `container ${t.name}`;
+    case "link": return `link ${t.id}`;
   }
 }
 

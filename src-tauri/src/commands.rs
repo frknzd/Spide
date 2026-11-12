@@ -371,8 +371,9 @@ pub fn export_plantuml_all(st: State<'_, AppState>, dir: String) -> R<Vec<String
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let base = slug(&snap.view.name);
     let mut written = vec![];
-    for view in ["class", "domain", "package", "usecase", "sequence"] {
+    for view in ["system", "class", "domain", "package", "usecase", "sequence"] {
         let empty = match view {
+            "system" => snap.view.containers.is_empty() && snap.view.systems.is_empty(),
             "usecase" => snap.view.use_cases.use_cases.is_empty(),
             "sequence" => snap.view.sequences.is_empty(),
             _ => snap.view.classes.is_empty(),

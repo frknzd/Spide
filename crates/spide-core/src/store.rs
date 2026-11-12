@@ -26,6 +26,9 @@ pub enum Target {
     Message { sequence: String, index: usize },
     Proposal { id: String },
     Force { name: String },
+    System { name: String },
+    Container { name: String },
+    Link { id: String },
 }
 
 impl Target {
@@ -42,6 +45,9 @@ impl Target {
             Target::Message { sequence, index } => format!("message #{} in \"{sequence}\"", index + 1),
             Target::Proposal { id } => format!("proposal {id}"),
             Target::Force { name } => format!("force \"{name}\""),
+            Target::System { name } => format!("external system {name}"),
+            Target::Container { name } => format!("container {name}"),
+            Target::Link { id } => format!("link {id}"),
         }
     }
 }
@@ -570,6 +576,16 @@ fn strip_pruned(d: &mut Design) {
     d.packages.retain(|p| p.status != Status::Pruned);
     d.forces.retain(|f| f.status != Status::Pruned);
     d.change_scenarios.retain(|c| c.status != Status::Pruned);
+    d.systems.retain(|x| x.status != Status::Pruned);
+    d.containers.retain(|x| x.status != Status::Pruned);
+    let nodes: Vec<String> = d
+        .systems
+        .iter()
+        .map(|x| x.name.clone())
+        .chain(d.containers.iter().map(|x| x.name.clone()))
+        .chain(d.use_cases.actors.iter().filter(|a| a.status != Status::Pruned).map(|a| a.name.clone()))
+        .collect();
+    d.links.retain(|l| l.status != Status::Pruned && nodes.contains(&l.from) && nodes.contains(&l.to));
 }
 
 fn set_status(d: &mut Design, t: &Target, st: Status, fb: Option<String>) -> Result<(), OpError> {
@@ -628,6 +644,15 @@ fn set_status(d: &mut Design, t: &Target, st: Status, fb: Option<String>) -> Res
         }
         Target::Force { name } => {
             d.forces.iter_mut().find(|f| &f.name == name).ok_or_else(nf)?.status = st;
+        }
+        Target::System { name } => {
+            d.systems.iter_mut().find(|x| &x.name == name).ok_or_else(nf)?.status = st;
+        }
+        Target::Container { name } => {
+            d.containers.iter_mut().find(|x| &x.name == name).ok_or_else(nf)?.status = st;
+        }
+        Target::Link { id } => {
+            d.links.iter_mut().find(|l| &l.id() == id).ok_or_else(nf)?.status = st;
         }
         Target::Proposal { .. } => {}
     }

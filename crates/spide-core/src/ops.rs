@@ -124,6 +124,48 @@ pub enum Op {
         description: Option<String>,
     },
     RemoveChangeScenario { name: String },
+    AddSystem {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+    },
+    RemoveSystem { name: String },
+    AddContainer {
+        name: String,
+        #[serde(default)]
+        technology: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        replicas: Option<u32>,
+        #[serde(default)]
+        datastore: bool,
+    },
+    UpdateContainer {
+        name: String,
+        #[serde(default)]
+        technology: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        replicas: Option<u32>,
+        #[serde(default)]
+        datastore: Option<bool>,
+    },
+    RemoveContainer { name: String },
+    /// Run a package in a container (`container: null` unassigns).
+    AssignContainer { package: String, container: Option<String> },
+    AddLink {
+        from: String,
+        to: String,
+        #[serde(default)]
+        interaction: Option<Interaction>,
+        #[serde(default)]
+        protocol: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
+    },
+    RemoveLink { from: String, to: String },
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -204,6 +246,14 @@ impl Op {
             Op::RemoveForce { name } => format!("remove force \"{name}\""),
             Op::AddChangeScenario { name, .. } => format!("add change scenario \"{name}\""),
             Op::RemoveChangeScenario { name } => format!("remove change scenario \"{name}\""),
+            Op::AddSystem { name, .. } => format!("add external system {name}"),
+            Op::RemoveSystem { name } => format!("remove external system {name}"),
+            Op::AddContainer { name, .. } => format!("add container {name}"),
+            Op::UpdateContainer { name, .. } => format!("update container {name}"),
+            Op::RemoveContainer { name } => format!("remove container {name}"),
+            Op::AssignContainer { package, container } => format!("run {package} in {}", container.as_deref().unwrap_or("(no container)")),
+            Op::AddLink { from, to, .. } => format!("link {from} → {to}"),
+            Op::RemoveLink { from, to } => format!("remove link {from} → {to}"),
         }
     }
 
@@ -225,6 +275,14 @@ impl Op {
             Op::AddPackage { .. } | Op::SetLayer { .. } | Op::RemovePackage { .. } => vec![],
             Op::AddForce { .. } | Op::UpdateForce { .. } | Op::RemoveForce { .. } => vec![],
             Op::AddChangeScenario { .. } | Op::RemoveChangeScenario { .. } => vec![],
+            Op::AddSystem { .. }
+            | Op::RemoveSystem { .. }
+            | Op::AddContainer { .. }
+            | Op::UpdateContainer { .. }
+            | Op::RemoveContainer { .. }
+            | Op::AssignContainer { .. }
+            | Op::AddLink { .. }
+            | Op::RemoveLink { .. } => vec![],
         }
     }
 
@@ -612,6 +670,139 @@ impl Op {
                     d.change_scenarios.remove(idx);
                 }
             }
+            Op::AddSystem { name, description } => {
+                if !valid_ident(name) {
+                    return err("system needs a name");
+                }
+                if node_exists(d, name) {
+                    return err(format!("{name} already exists (systems, containers and actors share names)"));
+                }
+                d.systems.retain(|x| x.name != *name);
+                d.systems.push(ExternalSystem { name: name.clone(), description: description.clone(), status: st, proposal: prop });
+            }
+            Op::RemoveSystem { name } => {
+                let idx = d
+                    .systems
+                    .iter()
+                    .position(|x| x.name == *name && x.status != Status::Pruned)
+                    .ok_or_else(|| OpError(format!("unknown system {name}")))?;
+                if mode.is_ghost() {
+                    d.systems[idx].status = Status::Removing;
+                    d.systems[idx].proposal = prop;
+                } else {
+                    d.systems.remove(idx);
+                    d.links.retain(|l| l.from != *name && l.to != *name);
+                }
+            }
+            Op::AddContainer { name, technology, description, replicas, datastore } => {
+                if !valid_ident(name) {
+                    return err("container needs a name");
+                }
+                if node_exists(d, name) {
+                    return err(format!("{name} already exists (systems, containers and actors share names)"));
+                }
+                d.containers.retain(|x| x.name != *name);
+                d.containers.push(Container {
+                    name: name.clone(),
+                    technology: technology.clone(),
+                    description: description.clone(),
+                    replicas: replicas.unwrap_or(1).max(1),
+                    datastore: *datastore,
+                    status: st,
+                    proposal: prop,
+                });
+            }
+            Op::UpdateContainer { name, technology, description, replicas, datastore } => {
+                let k = d
+                    .containers
+                    .iter_mut()
+                    .find(|x| x.name == *name && x.status != Status::Pruned)
+                    .ok_or_else(|| OpError(format!("unknown container {name}")))?;
+                if let Some(t) = technology {
+                    k.technology = Some(t.clone()).filter(|s| !s.is_empty());
+                }
+                if let Some(t) = description {
+                    k.description = Some(t.clone()).filter(|s| !s.is_empty());
+                }
+                if let Some(r) = replicas {
+                    k.replicas = (*r).max(1);
+                }
+                if let Some(x) = datastore {
+                    k.datastore = *x;
+                }
+                if mode.is_ghost() {
+                    k.proposal = prop;
+                }
+            }
+            Op::RemoveContainer { name } => {
+                let idx = d
+                    .containers
+                    .iter()
+                    .position(|x| x.name == *name && x.status != Status::Pruned)
+                    .ok_or_else(|| OpError(format!("unknown container {name}")))?;
+                if mode.is_ghost() {
+                    d.containers[idx].status = Status::Removing;
+                    d.containers[idx].proposal = prop;
+                } else {
+                    d.containers.remove(idx);
+                    d.links.retain(|l| l.from != *name && l.to != *name);
+                    for p in d.packages.iter_mut().filter(|p| p.container.as_deref() == Some(name.as_str())) {
+                        p.container = None;
+                    }
+                }
+            }
+            Op::AssignContainer { package, container } => {
+                if let Some(c) = container {
+                    if !d.containers.iter().any(|x| x.name == *c && x.status != Status::Pruned) {
+                        return err(format!("unknown container {c} (add_container first, in the same batch is fine)"));
+                    }
+                }
+                let p = d
+                    .packages
+                    .iter_mut()
+                    .find(|p| p.name == *package && p.status != Status::Pruned)
+                    .ok_or_else(|| OpError(format!("unknown package {package}")))?;
+                p.container = container.clone().filter(|c| !c.is_empty());
+                if mode.is_ghost() {
+                    p.proposal = prop;
+                }
+            }
+            Op::AddLink { from, to, interaction, protocol, description } => {
+                for n in [from, to] {
+                    if !node_exists(d, n) {
+                        return err(format!("unknown endpoint {n} (a container, external system or actor)"));
+                    }
+                }
+                if from == to {
+                    return err("a link needs two different ends");
+                }
+                if d.links.iter().any(|l| l.from == *from && l.to == *to && l.status != Status::Pruned) {
+                    return err(format!("link {from} → {to} already exists"));
+                }
+                d.links.retain(|l| !(l.from == *from && l.to == *to));
+                d.links.push(Link {
+                    from: from.clone(),
+                    to: to.clone(),
+                    interaction: interaction.unwrap_or_default(),
+                    protocol: protocol.clone().filter(|s| !s.is_empty()),
+                    description: description.clone(),
+                    status: st,
+                    proposal: prop,
+                });
+            }
+            Op::RemoveLink { from, to } => {
+                let idx = d
+                    .links
+                    .iter()
+                    .position(|l| l.from == *from && l.to == *to && l.status != Status::Pruned)
+                    .ok_or_else(|| OpError(format!("no link {from} → {to}")))?;
+                if mode.is_ghost() {
+                    d.links[idx].status = Status::Removing;
+                    d.links[idx].proposal = prop;
+                } else {
+                    d.links.remove(idx);
+                }
+            }
             Op::RemoveForce { name } => {
                 let idx = d
                     .forces
@@ -628,6 +819,13 @@ impl Op {
         }
         Ok(())
     }
+}
+
+/// Containers, external systems and actors share one name space (they are the C4 nodes).
+fn node_exists(d: &Design, name: &str) -> bool {
+    d.containers.iter().any(|x| x.name == name && x.status != Status::Pruned)
+        || d.systems.iter().any(|x| x.name == name && x.status != Status::Pruned)
+        || d.use_cases.actors.iter().any(|a| a.name == name && a.status != Status::Pruned)
 }
 
 fn check_unique<T: PartialEq + std::fmt::Debug>(items: impl Iterator<Item = T>, what: &str) -> Result<(), OpError> {

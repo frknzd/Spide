@@ -22,11 +22,12 @@ import { Timeline } from "./ui/Timeline";
 import { PRESETS, RulesSection } from "./ui/RulesSection";
 import { PackageView } from "./views/PackageView";
 import { SequenceView } from "./views/SequenceView";
+import { SystemView } from "./views/SystemView";
 import { UseCaseView } from "./views/UseCaseView";
 
 const DEV_QUERY = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
-const TAB_ORDER: Tab[] = ["class", "domain", "package", "usecase", "sequence"];
-const TAB_TITLE: Record<Tab, string> = { class: "Class diagram", domain: "Domain model", package: "Package diagram", usecase: "Use case diagram", sequence: "Sequence diagram" };
+const TAB_ORDER: Tab[] = ["system", "class", "domain", "package", "usecase", "sequence"];
+const TAB_TITLE: Record<Tab, string> = { system: "System (C4)", class: "Class diagram", domain: "Domain model", package: "Package diagram", usecase: "Use case diagram", sequence: "Sequence diagram" };
 
 export default function App() {
   const snap = useSnapshot();
@@ -43,6 +44,7 @@ export default function App() {
   const [shownDecision, setShownDecision] = useState<string | null>(null);
   const [timeline, setTimeline] = useState(false);
   const [drift, setDrift] = useState<DriftReport | null>(null);
+  const [c4Level, setC4Level] = useState<"context" | "container">("container");
   const [preview, setPreview] = useState<Design | null>(null);
   const [focusKey, setFocusKey] = useState(0);
   const [scenario, setScenario] = useState<string | null>(null);
@@ -286,7 +288,7 @@ export default function App() {
       const inField = (e.target as HTMLElement)?.closest?.("textarea, input");
       if (e.metaKey && !e.altKey) {
         const n = Number(e.key);
-        if (n >= 1 && n <= 5) {
+        if (n >= 1 && n <= 6) {
           e.preventDefault();
           setTab(TAB_ORDER[n - 1]);
           return;
@@ -421,6 +423,7 @@ export default function App() {
             onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} />
         )}
         {tab === "package" && <PackageView snap={snap} vpRef={vpRef} onPrune={doPrune} onHover={onHover} onClickTarget={onClickTarget} />}
+        {tab === "system" && <SystemView snap={snap} vpRef={vpRef} onPrune={doPrune} onHover={onHover} onClickTarget={onClickTarget} level={c4Level} onLevel={setC4Level} />}
         {tab === "usecase" && <UseCaseView snap={snap} vpRef={vpRef} onPrune={doPrune} onHover={onHover} onClickTarget={onClickTarget} onRegenerate={() => run(api.regenerate("usecase"))} />}
         {tab === "sequence" && (
           <SequenceView snap={snap} vpRef={vpRef} onPrune={doPrune} onHover={onHover} onClickTarget={onClickTarget}
@@ -513,6 +516,9 @@ function isPruned(d: Design, t: Target): boolean {
       case "use_case": return d.use_cases.use_cases.find((u) => u.name === t.name)?.status;
       case "sequence": return d.sequences.find((s) => s.name === t.name)?.status;
       case "message": return d.sequences.find((s) => s.name === t.sequence)?.messages[t.index]?.status;
+      case "system": return d.systems.find((x) => x.name === t.name)?.status;
+      case "container": return d.containers.find((x) => x.name === t.name)?.status;
+      case "link": return d.links.find((l) => `${l.from}->${l.to}` === t.id)?.status;
       default: return undefined;
     }
   })();

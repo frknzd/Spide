@@ -1,0 +1,37 @@
+@startuml
+' C4 context — exported from Spide
+!include <C4/C4_Context>
+LAYOUT_WITH_LEGEND()
+title Library system — System context
+
+Person(Member, "Member")
+Person(Librarian, "Librarian")
+System(Library_system, "Library system", "3 containers")
+System_Ext(Mail, "Mail", "sends reminders")
+
+Rel(Member, Library_system, "Borrow book")
+Rel(Librarian, Library_system, "Manage catalog")
+Rel(Library_system, Mail, "SMTP")
+@enduml
+
+@startuml
+' C4 containers — exported from Spide
+!include <C4/C4_Container>
+LAYOUT_WITH_LEGEND()
+title Library system — Containers
+
+Person(Member, "Member")
+Person(Librarian, "Librarian")
+System_Boundary(b_Library_system, "Library system") {
+  Container(Web_UI, "Web UI", "JavaFX", "ui")
+  Container(Lending_API, "Lending API", "Spring Boot", "application, domain, infrastructure")
+  ContainerDb(DB, "DB", "Postgres", "")
+}
+System_Ext(Mail, "Mail", "sends reminders")
+
+Rel(Lending_API, Web_UI, "1 dependency")
+Rel(Web_UI, Lending_API, "2 dependencies")
+Rel(Lending_API, DB, "uses", "JDBC")
+Rel(Lending_API, Mail, "reminders (async)", "SMTP")
+Rel(Member, Web_UI, "uses", "desktop")
+@enduml

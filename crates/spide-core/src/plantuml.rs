@@ -411,6 +411,73 @@ fn call_text(m: &Message) -> String {
 }
 
 /// Export the given view (`class`, `domain`, `package`, `usecase`, `sequence`).
+fn c4_id(name: &str) -> String {
+    let s: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    if s.chars().next().is_none_or(|c| c.is_ascii_digit()) { format!("n_{s}") } else { s }
+}
+
+fn c4_str(s: &str) -> String {
+    s.replace('"', "'")
+}
+
+/// C4-PlantUML (stdlib): a context diagram and a container diagram.
+pub fn c4_diagrams(d: &Design, m: &Metrics) -> String {
+    let v = crate::derive::system_view(d, m);
+    let mut o = String::new();
+    let sys = c4_id(&v.system);
+    // ---- context
+    let _ = writeln!(o, "@startuml\n' C4 context — exported from Spide\n!include <C4/C4_Context>\nLAYOUT_WITH_LEGEND()\ntitle {} — System context\n", esc(&v.system));
+    for a in &v.actors {
+        let _ = writeln!(o, "Person({}, \"{}\")", c4_id(a), c4_str(a));
+    }
+    let _ = writeln!(o, "System({sys}, \"{}\", \"{} containers\")", c4_str(&v.system), v.containers.len());
+    for x in &v.systems {
+        let _ = writeln!(o, "System_Ext({}, \"{}\", \"{}\")", c4_id(&x.name), c4_str(&x.name), c4_str(x.description.as_deref().unwrap_or("")));
+    }
+    let _ = writeln!(o);
+    for e in &v.context_edges {
+        let _ = writeln!(o, "Rel({}, {}, \"{}\")", c4_id(&e.from), c4_id(&e.to), c4_str(e.label.as_deref().unwrap_or("uses")));
+    }
+    let _ = writeln!(o, "@enduml\n");
+    // ---- containers
+    let _ = writeln!(o, "@startuml\n' C4 containers — exported from Spide\n!include <C4/C4_Container>\nLAYOUT_WITH_LEGEND()\ntitle {} — Containers\n", esc(&v.system));
+    for a in &v.actors {
+        let _ = writeln!(o, "Person({}, \"{}\")", c4_id(a), c4_str(a));
+    }
+    let _ = writeln!(o, "System_Boundary(b_{sys}, \"{}\") {{", c4_str(&v.system));
+    for k in &v.containers {
+        let macro_ = if k.datastore { "ContainerDb" } else { "Container" };
+        let mut desc = k.packages.join(", ");
+        if k.replicas > 1 {
+            desc = format!("{desc} (×{})", k.replicas);
+        }
+        let spof = m.issues.iter().any(|i| i.kind == "spof" && i.targets.contains(&k.name));
+        if spof {
+            desc = format!("{desc} — single point of failure");
+        }
+        let _ = writeln!(o, "  {macro_}({}, \"{}\", \"{}\", \"{}\")", c4_id(&k.name), c4_str(&k.name), c4_str(k.technology.as_deref().unwrap_or("")), c4_str(&desc));
+    }
+    let _ = writeln!(o, "}}");
+    for x in &v.systems {
+        let _ = writeln!(o, "System_Ext({}, \"{}\", \"{}\")", c4_id(&x.name), c4_str(&x.name), c4_str(x.description.as_deref().unwrap_or("")));
+    }
+    let _ = writeln!(o);
+    for dep in &v.container_deps {
+        let label = format!("{} dependenc{}{}", dep.count, if dep.count == 1 { "y" } else { "ies" }, if dep.sync { "" } else { " (async)" });
+        let _ = writeln!(o, "Rel({}, {}, \"{label}\")", c4_id(&dep.from), c4_id(&dep.to));
+    }
+    for l in &v.links {
+        let mut label = l.description.clone().unwrap_or_else(|| "uses".into());
+        if l.interaction != Interaction::Sync {
+            label = format!("{label} ({})", format!("{:?}", l.interaction).to_lowercase());
+        }
+        let tech = l.protocol.as_deref().map(|p| format!(", \"{}\"", c4_str(p))).unwrap_or_default();
+        let _ = writeln!(o, "Rel({}, {}, \"{}\"{tech})", c4_id(&l.from), c4_id(&l.to), c4_str(&label));
+    }
+    let _ = writeln!(o, "@enduml");
+    o
+}
+
 pub fn export(view: &str, d: &Design, m: &Metrics, layout: &Layout) -> Result<String, String> {
     Ok(match view {
         "class" => class_diagram(d, m, layout),
@@ -418,6 +485,7 @@ pub fn export(view: &str, d: &Design, m: &Metrics, layout: &Layout) -> Result<St
         "package" => package_diagram(d, m),
         "usecase" => use_case_diagram(d),
         "sequence" => sequence_diagrams(d),
+        "system" => c4_diagrams(d, m),
         _ => return Err(format!("unknown view {view}")),
     })
 }

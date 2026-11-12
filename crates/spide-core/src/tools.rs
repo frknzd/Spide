@@ -32,6 +32,14 @@ const OPS_DOC: &str = r#"Each op is an object with an "op" field:
 - {"op":"add_force","name":"Evolvability","kind":"goal|quality|constraint|change","priority?":1|2|3,"description?":"…"}  (the brief)
 - {"op":"update_force","name":"…", any of "rename","kind","priority","description"}   - {"op":"remove_force","name":"…"}
 - {"op":"add_change_scenario","name":"Support e-books","description?":"…"}   - {"op":"remove_change_scenario","name":"…"}
+C4 levels (above classes):
+- {"op":"add_system","name":"PaymentProvider","description?":"…"}  (external system)   - {"op":"remove_system","name":"…"}
+- {"op":"add_container","name":"API","technology?":"Spring Boot","description?":"…","replicas?":2,"datastore?":false}
+- {"op":"update_container","name":"API", any of "technology","description","replicas","datastore"}   - {"op":"remove_container","name":"…"}
+- {"op":"assign_container","package":"domain","container":"API"}   (which container a package runs in; null unassigns)
+- {"op":"add_link","from":"API","to":"PaymentProvider","interaction?":"sync|async|event","protocol?":"HTTPS/JSON"}  (container/system/actor ends)
+- {"op":"remove_link","from":"…","to":"…"}
+Container→container dependencies are DERIVED from class dependencies; only add links for external systems, actors or protocols.
 ATTR   = {"name":"total","type":"Money","visibility?":"public|private|protected|package","is_static?":false,"multiplicity?":"0..1"}
 METHOD = {"name":"addLine","params":[{"name":"p","type":"Product"},{"name":"qty","type":"int"}],"returns?":"OrderLine","visibility?":"public",
           "is_abstract?":false,"uses?":["lines"] (attributes of the same class it touches — drives the cohesion metric),
@@ -533,6 +541,11 @@ pub fn design_digest(store: &Store) -> String {
         "use_cases": d.use_cases.use_cases.iter().filter(|u| live(u.status)).map(|u| &u.name).collect::<Vec<_>>(),
         "actors": d.use_cases.actors.iter().filter(|a| live(a.status)).map(|a| &a.name).collect::<Vec<_>>(),
         "sequences": d.sequences.iter().filter(|s| live(s.status)).map(|s| &s.name).collect::<Vec<_>>(),
+        "containers": d.containers.iter().filter(|k| live(k.status)).map(|k| json!({"name": k.name, "technology": k.technology, "replicas": k.replicas,
+            "datastore": k.datastore, "packages": d.packages.iter().filter(|p| live(p.status) && p.container.as_deref() == Some(&k.name)).map(|p| &p.name).collect::<Vec<_>>()})).collect::<Vec<_>>(),
+        "external_systems": d.systems.iter().filter(|x| live(x.status)).map(|x| &x.name).collect::<Vec<_>>(),
+        "links": d.links.iter().filter(|l| live(l.status)).map(|l| format!("{} -{}-> {}{}", l.from, format!("{:?}", l.interaction).to_lowercase(), l.to,
+            l.protocol.as_ref().map(|p| format!(" [{p}]")).unwrap_or_default())).collect::<Vec<_>>(),
         "change_scenarios": m.changes.iter().map(|c| json!({"name": c.name, "analysed": c.analysed, "stale": c.stale,
             "impacted": c.impacted, "locality": (c.locality * 100.0).round()})).collect::<Vec<_>>(),
         "settings": {"examiner": d.settings.examiner},

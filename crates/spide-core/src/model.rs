@@ -208,6 +208,37 @@ impl Default for Container {
     }
 }
 
+/// An external system our system talks to (C4 context level): payment provider, IdP, mail…
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ExternalSystem {
+    pub name: String,
+    pub description: Option<String>,
+    pub status: Status,
+    pub proposal: Option<String>,
+}
+
+/// A runtime connection that is not derived from class dependencies: container ↔ external system,
+/// actor → container, container → container through a protocol.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Link {
+    pub from: String,
+    pub to: String,
+    pub interaction: Interaction,
+    /// e.g. HTTPS/JSON, AMQP, JDBC
+    pub protocol: Option<String>,
+    pub description: Option<String>,
+    pub status: Status,
+    pub proposal: Option<String>,
+}
+
+impl Link {
+    pub fn id(&self) -> String {
+        format!("{}->{}", self.from, self.to)
+    }
+}
+
 pub fn relation_id(from: &str, to: &str, kind: RelationKind) -> String {
     format!("{from}->{to}:{}", kind.as_str())
 }
@@ -575,6 +606,10 @@ pub struct Design {
     pub packages: Vec<Package>,
     /// Deployable units (C4 containers); packages are assigned to them.
     pub containers: Vec<Container>,
+    /// External systems (C4 context).
+    pub systems: Vec<ExternalSystem>,
+    /// Runtime links between containers, systems and actors.
+    pub links: Vec<Link>,
     pub proposals: Vec<Proposal>,
     pub decisions: Vec<Decision>,
     pub use_cases: UseCaseModel,
@@ -602,6 +637,8 @@ impl Default for Design {
             relations: vec![],
             packages: vec![],
             containers: vec![],
+            systems: vec![],
+            links: vec![],
             proposals: vec![],
             decisions: vec![],
             use_cases: UseCaseModel::default(),

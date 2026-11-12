@@ -174,9 +174,9 @@ real code. Goal: make Spide a complete loop: **brief → decide → see conseque
 - [x] H3 `crates/spide-import` (tree-sitter-java) + fixture project tests
 - [x] H4 `drift.rs` + `/drift` overlay/report + adopt-as-proposals
 **E — levels**
-- [ ] E1 systems/containers/links model + ops + MCP docs
-- [ ] E2 `derive::system_view`, consistency issues
-- [ ] E3 SystemView tab (Context/Container), tab renumbering, C4-PlantUML export + golden
+- [x] E1 systems/containers/links model + ops + MCP docs
+- [x] E2 `derive::system_view`, consistency issues
+- [x] E3 SystemView tab (Context/Container), tab renumbering, C4-PlantUML export + golden
 **G — friction**
 - [ ] G1 `apply_user_ops` command; drag-to-package; inline rename; `/add`
 - [ ] G2 pinning; issue → focus; `/focus <package>`

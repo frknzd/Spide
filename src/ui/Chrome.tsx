@@ -52,6 +52,7 @@ export function HealthRing({ metrics, ghost, onFix }: { metrics: Metrics; ghost:
 }
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "system", label: "System" },
   { id: "class", label: "Class" },
   { id: "domain", label: "Domain" },
   { id: "package", label: "Package" },

@@ -89,6 +89,7 @@ fn default_explanation(kind: &str) -> (&'static str, Option<&'static str>) {
         "god" => ("A class with too many members, responsibilities or dependencies changes for many reasons.", Some("split it along its responsibilities (look at the method groups)")),
         "cohesion" => ("Its methods form unrelated groups (LCOM4 > 1): it really is several classes.", Some("extract each method group with the attributes it uses into its own class")),
         "orphan" => ("An unconnected class contributes nothing to any collaboration.", Some("connect it to the classes that use it, or prune it")),
+        "consistency" => ("The views disagree: something on one level has no counterpart on another.", Some("connect it on the other level, or prune it")),
         "sync_chain" => ("Synchronous calls across containers multiply latency and failure: if one is down, the whole scenario fails.", Some("make some of the calls asynchronous (queue/event), or move the data to where it is needed")),
         "multi_aggregate_write" => ("Each aggregate is a consistency boundary; changing several in one transaction couples them and causes contention.", Some("change one aggregate per transaction and propagate to the others with domain events (eventual consistency)")),
         "spof" => ("A single instance that several containers depend on takes all of them down when it fails.", Some("run more replicas, or let dependents degrade gracefully (cache, queue, circuit breaker)")),
@@ -540,6 +541,34 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
                 vec![k.name.clone()],
             ));
             rule_penalty += 3.0;
+        }
+    }
+
+    // ---- cross-level consistency (C4 ↔ packages ↔ use cases)
+    let live_containers: Vec<&Container> = d.containers.iter().filter(|k| counts(k.status, ghosts)).collect();
+    let mut consistency = |msg: String, target: String| {
+        issues.push(Issue::new("consistency", 0.25, msg, vec![target]));
+    };
+    if !live_containers.is_empty() {
+        for p in d.packages.iter().filter(|p| counts(p.status, ghosts) && p.container.is_none()) {
+            if classes.iter().any(|c| c.package.as_deref() == Some(p.name.as_str())) {
+                consistency(format!("package {} runs in no container", p.name), p.name.clone());
+            }
+        }
+        for k in live_containers.iter().filter(|k| !k.datastore) {
+            if !d.packages.iter().any(|p| counts(p.status, ghosts) && p.container.as_deref() == Some(k.name.as_str())) {
+                consistency(format!("container {} has no packages", k.name), k.name.clone());
+            }
+        }
+    }
+    for x in d.systems.iter().filter(|x| counts(x.status, ghosts)) {
+        if !d.links.iter().any(|l| counts(l.status, ghosts) && (l.from == x.name || l.to == x.name)) {
+            consistency(format!("external system {} is not connected", x.name), x.name.clone());
+        }
+    }
+    for a in d.use_cases.actors.iter().filter(|a| a.status.is_live()) {
+        if !d.use_cases.use_cases.iter().any(|u| u.status.is_live() && u.actors.contains(&a.name)) {
+            consistency(format!("actor {} takes part in no use case", a.name), a.name.clone());
         }
     }
 
