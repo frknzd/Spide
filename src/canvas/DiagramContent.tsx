@@ -51,8 +51,8 @@ export function relationStyle(r: Relation, metrics?: Metrics | null): { style: E
   if (r.status === "pruned") return { style: { color: C.faint, width: 1, opacity: 0.3 }, warn: null };
   const cyc = metrics?.cycle_edges.includes(r.id);
   const lv = metrics?.layer_violations.includes(r.id);
-  if (cyc) return { style: { color: C.cycle, width: 2.4, opacity: 1, strained: true }, warn: lv ? "⚠ layer" : "⟲" };
-  if (lv) return { style: { color: C.warn, width: 2, opacity: 1 }, warn: "⚠ layer" };
+  if (cyc) return { style: { color: C.cycle, width: 2.4, opacity: 1, strained: true }, warn: lv ? "cycle · layer" : "cycle" };
+  if (lv) return { style: { color: C.warn, width: 2, opacity: 1 }, warn: "layer ↑" };
   if (r.status === "overruled") return { style: { color: C.warn, width: 1.5, opacity: 0.9 }, warn: null };
   return { style: { color: C.edge, width: 1.4, opacity: 0.95 }, warn: null };
 }

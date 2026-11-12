@@ -1,0 +1,66 @@
+@startuml
+' sequence diagram — exported from Spide
+title Library system — Borrow book
+skinparam backgroundColor #1D1E22
+skinparam defaultFontName "Helvetica Neue"
+skinparam defaultFontColor #E6E8EE
+skinparam titleFontColor #9AA1B1
+skinparam shadowing false
+skinparam roundCorner 12
+skinparam classAttributeIconSize 0
+hide circle
+skinparam legend {
+  BackgroundColor #25272D
+  BorderColor #4B5263
+  FontColor #9AA1B1
+}
+skinparam ArrowColor #8A93A6
+skinparam ArrowFontColor #9AA1B1
+skinparam ArrowFontSize 11
+skinparam class {
+  BackgroundColor #25272D
+  HeaderBackgroundColor #2B2E35
+  BorderColor #4B5263
+  FontColor #E6E8EE
+  FontStyle bold
+  AttributeFontColor #E6E8EE
+  AttributeFontName Menlo
+  AttributeFontSize 12
+  StereotypeFontColor #9AA1B1
+}
+skinparam package {
+  BackgroundColor transparent
+  FontColor #9AA1B1
+  BorderColor #4B5263
+}
+skinparam note {
+  BackgroundColor #2B2E35
+  BorderColor #FFB454
+  FontColor #E6E8EE
+}
+skinparam sequence {
+  LifeLineBorderColor #5D6474
+  ParticipantBackgroundColor #25272D
+  ParticipantBorderColor #4B5263
+  ParticipantFontColor #E6E8EE
+  ActorBorderColor #E6E8EE
+  ActorBackgroundColor #1D1E22
+  ActorFontColor #E6E8EE
+  LifeLineBackgroundColor #30343D
+  ArrowColor #E6E8EE
+}
+autoactivate on
+
+actor Member
+participant LoanController
+participant LendingService
+participant LoanRepository
+
+Member -> LoanController : 1: borrow(id, isbn)
+LoanController -> LendingService : 2: lend()
+LendingService -> LoanRepository : 3: save()
+LoanRepository --> LendingService : ok
+LendingService -[#FF5C6C]> LoanRepository : 4: explode() <color:#FF5C6C>✗ LoanRepository.explode() does not exist</color>
+LendingService --> LoanController : loan
+@enduml
+

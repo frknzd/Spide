@@ -1,0 +1,72 @@
+@startuml
+' domain model — exported from Spide
+title Library system — Domain model
+skinparam backgroundColor #1D1E22
+skinparam defaultFontName "Helvetica Neue"
+skinparam defaultFontColor #E6E8EE
+skinparam titleFontColor #9AA1B1
+skinparam shadowing false
+skinparam roundCorner 12
+skinparam classAttributeIconSize 0
+hide circle
+skinparam legend {
+  BackgroundColor #25272D
+  BorderColor #4B5263
+  FontColor #9AA1B1
+}
+skinparam ArrowColor #8A93A6
+skinparam ArrowFontColor #9AA1B1
+skinparam ArrowFontSize 11
+skinparam class {
+  BackgroundColor #25272D
+  HeaderBackgroundColor #2B2E35
+  BorderColor #4B5263
+  FontColor #E6E8EE
+  FontStyle bold
+  AttributeFontColor #E6E8EE
+  AttributeFontName Menlo
+  AttributeFontSize 12
+  StereotypeFontColor #9AA1B1
+}
+skinparam package {
+  BackgroundColor transparent
+  FontColor #9AA1B1
+  BorderColor #4B5263
+}
+skinparam note {
+  BackgroundColor #2B2E35
+  BorderColor #FFB454
+  FontColor #E6E8EE
+}
+hide methods
+hide empty members
+
+class Catalog <<entity>> {
+  -books : List<Book>
+}
+class Book <<entity>> {
+  -isbn : String
+  -title : String
+  -author : String
+}
+class BookCopy <<entity>> {
+  -barcode : String
+  -available : boolean
+}
+class Member <<entity>> {
+  -id : String
+  -name : String
+  -loans : List<Loan>
+}
+class Loan <<entity>> {
+  -due : Date
+  -returned : boolean
+}
+class NotificationLog {
+}
+
+Catalog "1" *-left- "*" Book
+Book "1" *-right- "1..*" BookCopy
+Loan -up-> "1" BookCopy : lends
+Member "1" -left- "0..5" Loan : holds
+@enduml

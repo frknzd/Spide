@@ -57,7 +57,7 @@ export function PackageView({ snap, vpRef, onPrune, onHover, onClickTarget }: Vi
         if (!a || !b) return null;
         const color = d.in_cycle ? C.cycle : d.layer_violation ? C.warn : C.edge;
         return (
-          <Edge key={d.from + ">" + d.to} from={a} to={b} kind="dependency" label={`${d.count}`} warn={d.layer_violation ? "⚠ layer" : d.in_cycle ? "⟲" : null}
+          <Edge key={d.from + ">" + d.to} from={a} to={b} kind="dependency" label={`${d.count}`} warn={d.layer_violation ? "layer ↑" : d.in_cycle ? "cycle" : null}
             bend={deps.some((x) => x.from === d.to && x.to === d.from) ? 1 : 0}
             style={{ color, width: d.in_cycle ? 2.4 : 1.5, opacity: 1, strained: d.in_cycle }} />
         );

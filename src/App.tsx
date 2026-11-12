@@ -86,10 +86,13 @@ export default function App() {
     hoverTimer.current = setTimeout(() => setHover({ key, at }), 260);
   }, []);
 
-  const exportPng = async () => {
+  const currentSvg = () => {
     const vp = tab === "class" || tab === "domain" ? canvasRef.current?.viewport() : vpRef.current;
-    if (!vp) return toast("error", "nothing to export");
-    const svg = standaloneSvg(vp, `${view?.name ?? "Design"} — ${TAB_TITLE[tab]}`);
+    return vp ? standaloneSvg(vp, `${view?.name ?? "Design"} — ${TAB_TITLE[tab]}`) : null;
+  };
+  if (import.meta.env.DEV) (window as unknown as { spideSvg: () => string | null }).spideSvg = currentSvg;
+  const exportPng = async () => {
+    const svg = currentSvg();
     if (!svg) return toast("error", "nothing to export");
     const path = await saveDialog({ defaultPath: `${slug(view?.name)}-${tab}.png`, filters: [{ name: "PNG", extensions: ["png"] }] });
     if (!path) return;

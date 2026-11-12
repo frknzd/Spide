@@ -113,10 +113,10 @@ export function Edge(p: EdgeProps) {
               <text y={4} textAnchor="middle" fontFamily={FONT_SANS} fontSize={10.5} fill={C.dim} fontStyle="italic">{p.label}</text>
             </>
           )}
-          {p.warn && <text y={p.label ? -13 : 4} textAnchor="middle" fontFamily={FONT_SANS} fontSize={12} fill={color}>{p.warn}</text>}
+          {p.warn && <text y={p.label ? -13 : 4} textAnchor="middle" fontFamily={FONT_SANS} fontSize={10.5} fontWeight={600} fill={color}>{p.warn}</text>}
         </g>
       )}
-      {st.removing && <text x={lp[0]} y={lp[1] + 4} textAnchor="middle" fontSize={13} fill={C.removing} pointerEvents="none">✕</text>}
+      {st.removing && <text x={lp[0]} y={lp[1] + 4} textAnchor="middle" fontFamily={FONT_SANS} fontSize={13} fill={C.removing} pointerEvents="none">×</text>}
     </g>
   );
 }

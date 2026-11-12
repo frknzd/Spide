@@ -9,10 +9,12 @@ const T = (t: Target) => JSON.stringify(t);
 const ROW = 46;
 const TOP = 70;
 
-export function msgLabel(m: Message, i: number) {
+/** Calls are numbered 1, 2, 3 … (returns are not), like the PlantUML export. */
+export function msgLabel(m: Message, i: number, all?: Message[]) {
   if (m.kind === "return") return m.method || m.returns || "";
+  const n = all ? all.slice(0, i + 1).filter((x) => x.kind !== "return").length : i + 1;
   const call = /\(/.test(m.method) ? m.method : `${m.method}(${m.args ?? ""})`;
-  return `${i + 1}: ${call}${m.returns ? ` : ${m.returns}` : ""}`;
+  return `${n}: ${call}${m.returns ? ` : ${m.returns}` : ""}`;
 }
 
 export function sequenceLayout(s: Sequence, isActor: (n: string) => boolean) {
@@ -27,7 +29,7 @@ export function sequenceLayout(s: Sequence, isActor: (n: string) => boolean) {
       const prev = s.participants[i - 1];
       let need = 190;
       s.messages.forEach((m, k) => {
-        if ((m.from === prev && m.to === p) || (m.from === p && m.to === prev)) need = Math.max(need, textWidth(msgLabel(m, k), F.member) + 40);
+        if ((m.from === prev && m.to === p) || (m.from === p && m.to === prev)) need = Math.max(need, textWidth(msgLabel(m, k, s.messages), F.member) + 40);
       });
       x += Math.max(need, (widths.get(prev)! + w) / 2 + 40);
     }
@@ -145,7 +147,7 @@ export function SequenceDiagram({ s, isActor }: { s: Sequence; isActor: (n: stri
         if (x1 === undefined || x2 === undefined) return null;
         const bad = !!m.problem;
         const color = bad ? C.cycle : m.status === "pruned" ? C.faint : m.kind === "return" ? C.dim : C.text;
-        const label = msgLabel(m, i);
+        const label = msgLabel(m, i, s.messages);
         const tgt = T({ kind: "message", sequence: s.name, index: i });
         const hover = `message:${s.name}#${i}`;
         if (x1 === x2) {

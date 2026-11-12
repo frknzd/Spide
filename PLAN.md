@@ -122,7 +122,7 @@ Spide/
 - [x] 8. Decision flow: decision cards, option preview mini-canvases, custom option, defence → examiner verdict, overrule (lenient/strict setting).
 - [x] 9. `design.json` file watcher → diff → proposals.
 - [x] 10. Derived tabs: Domain + Package (deterministic), Use Case + Sequence (agent, with validation + stale marker); prune/feedback in tabs.
-- [ ] 11. Export: JSON save/load, PlantUML per diagram (+ golden tests rendered with PlantUML if available), PNG via resvg.
+- [x] 11. Export: JSON save/load, PlantUML per diagram (+ golden tests rendered with PlantUML if available), PNG via resvg.
 - [ ] 12. README with run instructions; polish pass on visuals.
 
 ## Verification
