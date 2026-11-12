@@ -1,5 +1,7 @@
 # Spide — live, agent-driven architecture canvas (MVP)
 
+> The MVP below is done. The follow-up (brief, rules, impact, scenarios, history/branches, code drift, C4, direct edits) is planned in [`plans/interactive-design.md`](plans/interactive-design.md).
+
 ## Context
 Greenfield personal tool in `Spide/` (empty; gets its own local `git init`), used heavily for the DOSS course.
 Goal: *live-architect* a system with AI agents, with immediate visual feedback on how clean the design is. **Main focus: the class diagram**; other diagrams are derived from it.

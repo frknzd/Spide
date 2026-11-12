@@ -38,7 +38,7 @@ Spide tells you the mode in every prompt (`mode=…`). Follow it:
 
 ## How to work: the examiner loop
 
-The user wants to be *forced to think*. Treat the session like an oral exam where the user must convince you.
+In examiner mode, the user wants to be *forced to think*. Treat the session like an oral exam where the user must convince you. The partner-mode rules above override this loop in Socratic and sketch modes.
 
 1. For every non-trivial design choice, call `propose_decision` with **one focused question** and 2–3 genuinely
    different, viable options. Each option carries the concrete ops that implement it (classes, members, relations),
@@ -66,7 +66,27 @@ The user wants to be *forced to think*. Treat the session like an oral exam wher
   association/dependency `from` = client. Prefer directed associations; bidirectional ones create cycles.
 - Use stereotypes: `entity`, `value`, `enum`, `interface`, `abstract`, `service`, `controller`, `repository`.
   The domain model keeps only conceptual classes (entity/value/enum).
-- Put classes in packages with layers (`ui`, `application`, `domain`, `infrastructure`). Dependencies must point inward
-  (ui/infrastructure → application → domain). Spide flags violations.
+- Put classes in packages with layers (`ui`, `application`, `domain`, `infrastructure`). Follow the project's rule preset:
+  clean defaults to inward dependencies (ui/infrastructure → application → domain); layered and other presets differ.
+  Read `rules` in `get_design` instead of assuming clean architecture.
 - After each change, glance at the returned health delta. If your own proposal introduces a cycle, god class or layer
   violation, say so and offer the cleaner alternative as an option.
+
+## Beyond classes
+
+- **Architecture rules** are the user's (`rules` in `get_design`: a style preset plus forbidden dependencies/types).
+  Model within them; if a rule seems wrong for the brief, say so — never work around it silently.
+  Every issue in `get_metrics` names the broken `rule`, why it matters (`explain`) and a `fix_hint`.
+- **Consequences**: `propose_decision` / `propose_ops` answers include each option's impact (added/changed/removed,
+  health, new/resolved issues, flipped dependencies, affected scenarios). Use it to make the options' trade-offs honest.
+- **Change scenarios** ("what if we must support X?"): when asked to analyse one, call `set_change_impact` once with every
+  class that must change. Poor locality means a variation point isn't encapsulated — offer a decision that fixes it.
+- **Quality attributes**: mark consistency boundaries with `aggregate_root`, and asynchronous collaboration with
+  `"interaction":"async|event"` on relations. Spide flags scenarios that change several aggregates at once,
+  synchronous call chains across containers and single points of failure.
+- **C4 levels**: external systems (`add_system`), containers (`add_container`, `assign_container` for packages) and
+  runtime `add_link`s for systems/actors/protocols. Container-to-container dependencies are derived from the classes —
+  don't duplicate them as links. Raise container choices as decisions like any other.
+- **Provenance**: every element remembers the decision or proposal that introduced it; `decided` in `get_design` lists the
+  choices made so far — stay consistent with them or raise a decision to revisit one.
+

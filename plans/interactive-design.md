@@ -181,7 +181,7 @@ real code. Goal: make Spide a complete loop: **brief → decide → see conseque
 - [x] G1 `apply_user_ops` command; drag-to-package; inline rename; `/add`
 - [x] G2 pinning; issue → focus; `/focus <package>`
 **Wrap-up**
-- [ ] README (features, commands, files), PLAN.md link, skill review
+- [x] README (features, commands, files), PLAN.md link, skill review
 
 ## Verification
 - Per phase: `cargo test --workspace` (new unit tests per module + goldens), `npm run typecheck`, no warnings.
@@ -197,6 +197,14 @@ real code. Goal: make Spide a complete loop: **brief → decide → see conseque
 - Agent flows (manual, with real pi): brief elicitation on an empty design; each partner mode; examiner cites forces;
   `set_change_impact`; "fix with agent" on a rule violation.
 - UI manual pass: Brief panel, compare overlay, timeline scrub/fork, System tab, drift overlay, drag-to-package, inline rename.
+
+## Notes from implementation
+- Brief stored as one `Design.forces` list with a `kind` (goal | quality | constraint | change) instead of four lists.
+- `Class.aggregate_root`, `Package.container` and `Container` landed with Phase C (needed by the checks); C4 ops came in E1.
+- Consistency checks: package without container, container without packages, unconnected external system, actor without use cases
+  (cross-container sync calls are covered by `sync_chain`).
+- ArchUnit output is checked by golden files only (no ArchUnit jar available locally; nothing was downloaded).
+- Fixed on the way: viewport animation could extrapolate to a negative zoom (rAF timestamp before start time).
 
 ## Risks
 - Scope is large: phases are independent commits so work can stop after any phase with a coherent product.
