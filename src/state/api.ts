@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Issue, Op, Pos, Rules, Snapshot, Tab, Target } from "./types";
+import type { BranchCompare, BranchInfo, Design, HistoryEntry, Issue, Op, Pos, Rules, Snapshot, Tab, Target } from "./types";
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const DEV_URL = "http://127.0.0.1:47800/dev/snapshot";
@@ -37,6 +37,16 @@ export const api = {
   userOps: (ops: Op[]) => call("apply_user_ops", { ops }),
   setPartner: (mode: string) => call("set_partner", { mode }),
   setRules: (rules: Rules) => call("set_rules", { rules }),
+  branches: () => call<BranchInfo[]>("branch_list"),
+  branchCreate: (name: string) => call("branch_create", { name }),
+  branchSwitch: (name: string) => call("branch_switch", { name }),
+  branchDelete: (name: string) => call("branch_delete", { name }),
+  branchCompare: (name: string) => call<BranchCompare>("branch_compare", { name }),
+  branchMerge: (name: string) => call("branch_merge", { name }),
+  historyList: () => call<HistoryEntry[]>("history_list"),
+  historyAt: (rev: number) => call<Design>("history_at", { rev }),
+  historyRestore: (rev: number) => call("history_restore", { rev }),
+  historyFork: (rev: number, name: string) => call("history_fork", { rev, name }),
   analyseChange: (name: string) => call("analyse_change", { name }),
   fixIssue: (i: Issue) => call("fix_issue", { message: i.message, rule: i.rule, fix_hint: i.fix_hint }),
   setBriefSkipped: (on: boolean) => call("set_brief_skipped", { on }),

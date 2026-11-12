@@ -13,10 +13,14 @@ export const COMMANDS: { cmd: string; help: string }[] = [
   { cmd: "/strict", help: "strict examiner: no overruling" },
   { cmd: "/lenient", help: "lenient examiner: you may overrule" },
   { cmd: "/history", help: "conversation history (⌘J)" },
+  { cmd: "/branch", help: "/branch <name> — branch from here and switch · /branch delete <name> · /branches" },
+  { cmd: "/switch", help: "/switch <branch> — work on another branch" },
+  { cmd: "/merge", help: "/merge <branch> — bring a branch's changes in as ghost proposals" },
+  { cmd: "/compare", help: "/compare [branch] — open decision's options, or this design vs a branch" },
+  { cmd: "/timeline", help: "scrub through the design's history; restore or fork (⌘T)" },
   { cmd: "/brief", help: "goals, qualities, constraints, expected changes + partner mode (⌘B)" },
   { cmd: "/mode", help: "/mode examiner | socratic | devils_advocate | sketch" },
   { cmd: "/stress", help: "/stress <change scenario> — highlight what an expected change touches (Esc clears)" },
-  { cmd: "/compare", help: "compare the open decision's options side by side" },
   { cmd: "/rules", help: "/rules [clean | hexagonal | layered | modular_monolith | none] — architecture rules" },
   { cmd: "/skip", help: "skip the brief and start designing" },
   { cmd: "/export png", help: "export current diagram as PNG" },
@@ -68,7 +72,7 @@ export function PromptBar(p: Props) {
       {suggestions.length > 0 && (
         <div className="cmd-list">
           {suggestions.slice(0, 8).map((c) => (
-            <div key={c.cmd} className="cmd" onMouseDown={(e) => { e.preventDefault(); setText(c.cmd + (["/name", "/find", "/mode"].includes(c.cmd) ? " " : "")); ta.current?.focus(); }}>
+            <div key={c.cmd} className="cmd" onMouseDown={(e) => { e.preventDefault(); setText(c.cmd + (["/name", "/find", "/mode", "/branch", "/switch", "/merge", "/stress", "/rules"].includes(c.cmd) ? " " : "")); ta.current?.focus(); }}>
               <span>{c.cmd}</span>
               <em>{c.help}</em>
             </div>

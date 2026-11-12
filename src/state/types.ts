@@ -239,6 +239,7 @@ export interface Derived {
   stale_sequences: string[];
   suggested_scenarios: string[];
 }
+export interface HistoryEntry { rev: number; at: number; actor: string; summary: string }
 export type PiStatus = "starting" | "idle" | "busy" | "offline";
 export interface Snapshot {
   rev: number;
@@ -255,7 +256,10 @@ export interface Snapshot {
   pi_status: PiStatus;
   pi_error: string | null;
   mcp_url: string;
+  branch: string;
 }
+export interface BranchInfo { name: string; active: boolean; classes: number; health: number }
+export interface BranchCompare { name: string; design: Design; health: number; impact: Impact }
 
 export type Target =
   | { kind: "class"; name: string }

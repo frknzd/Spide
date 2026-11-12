@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod branches;
 mod commands;
+mod history;
 mod mcp;
 mod pi_bridge;
 mod prompts;
@@ -65,6 +67,16 @@ fn main() {
             commands::set_rules,
             commands::fix_issue,
             commands::analyse_change,
+            commands::history_list,
+            commands::history_at,
+            commands::history_restore,
+            commands::history_fork,
+            commands::branch_list,
+            commands::branch_create,
+            commands::branch_switch,
+            commands::branch_delete,
+            commands::branch_compare,
+            commands::branch_merge,
             commands::set_brief_skipped,
             commands::set_name,
             commands::regenerate,

@@ -11,12 +11,13 @@ import { AnswerBubble } from "./ui/AnswerBubble";
 import { BriefPanel, MODES } from "./ui/BriefPanel";
 import { HealthRing, ProposalBar, Tabs, Toasts, type Toast } from "./ui/Chrome";
 import { ChangeSection } from "./ui/ChangeSection";
-import { ComparePanel } from "./ui/ComparePanel";
+import { ComparePanel, decisionCols, type CompareCol } from "./ui/ComparePanel";
 import { DecisionPanel } from "./ui/DecisionCard";
 import { DecisionHistory } from "./ui/DecisionHistory";
 import { FeedbackPopover, type PruneState } from "./ui/FeedbackPopover";
 import { HoverCard } from "./ui/HoverCard";
 import { PromptBar } from "./ui/PromptBar";
+import { Timeline } from "./ui/Timeline";
 import { PRESETS, RulesSection } from "./ui/RulesSection";
 import { PackageView } from "./views/PackageView";
 import { SequenceView } from "./views/SequenceView";
@@ -36,8 +37,10 @@ export default function App() {
   const [history, setHistory] = useState(false);
   const [brief, setBrief] = useState(false);
   const [compare, setCompare] = useState<string | null>(null);
+  const [branchCmp, setBranchCmp] = useState<{ name: string; cols: CompareCol[] } | null>(null);
   const [stress, setStress] = useState<string | null>(null);
   const [shownDecision, setShownDecision] = useState<string | null>(null);
+  const [timeline, setTimeline] = useState(false);
   const [preview, setPreview] = useState<Design | null>(null);
   const [focusKey, setFocusKey] = useState(0);
   const [scenario, setScenario] = useState<string | null>(null);
@@ -143,6 +146,9 @@ export default function App() {
       case "/lenient": return run(api.setExaminer(false).then(() => toast("info", "examiner: lenient — you may overrule")));
       case "/history": return setHistory((h) => !h);
       case "/brief": return setBrief((b) => !b);
+      case "/timeline":
+        setTab("class");
+        return setTimeline((t) => !t);
       case "/stress": {
         if (!arg) return setStress(null);
         const c = metrics?.changes.find((x) => x.name.toLowerCase().includes(arg.toLowerCase()));
@@ -151,7 +157,32 @@ export default function App() {
         setTab("class");
         return setStress(c.name);
       }
+      case "/branch":
+      case "/branches": {
+        const [sub, name] = arg.split(/\s+/);
+        if (!arg || cmd === "/branches") {
+          const bs = await api.branches().catch((e) => (toast("error", String(e)), []));
+          return toast("info", "branches: " + bs.map((b) => `${b.active ? "● " : ""}${b.name} (${b.classes} classes, health ${b.health})`).join(" · "));
+        }
+        if (sub === "delete" && name) return run(api.branchDelete(name));
+        return run(api.branchCreate(arg));
+      }
+      case "/switch": return arg ? run(api.branchSwitch(arg)) : toast("error", "usage: /switch <branch>");
+      case "/merge": return arg ? run(api.branchMerge(arg).then(() => toast("info", `changes from ${arg} proposed as ghosts`))) : toast("error", "usage: /merge <branch>");
       case "/compare": {
+        if (arg) {
+          const c = await api.branchCompare(arg).catch((e) => (toast("error", String(e)), null));
+          if (!c || !view || !metrics) return;
+          const focus = [...new Set(c.impact.added.concat(c.impact.changed, c.impact.removed).map((x) => x.replace(/^class /, "").split(/[.\s]/)[0]))];
+          setTab("class");
+          return setBranchCmp({
+            name: arg,
+            cols: [
+              { id: "●", label: `${snap?.branch ?? "current"} (current)`, design: view, health: metrics.health, impact: null, focus },
+              { id: "⎇", label: arg, design: c.design, health: c.health, impact: c.impact, focus },
+            ],
+          });
+        }
         const d = view?.decisions.find((x) => (x.state === "open" || x.state === "rejected") && x.options.length > 1);
         return d ? setCompare(d.id) : toast("error", "no open decision with several options");
       }
@@ -223,6 +254,12 @@ export default function App() {
         if (e.key === "z" && !inField) {
           e.preventDefault();
           run(e.shiftKey ? api.redo() : api.undo());
+          return;
+        }
+        if (e.key === "t") {
+          e.preventDefault();
+          setTab("class");
+          setTimeline((t) => !t);
           return;
         }
         if (e.key === "b") {
@@ -333,8 +370,9 @@ export default function App() {
         <>
           <div className="top-left" data-ui>
             <span className="design-name">{view.name}</span>
+            <span className="branch-tag" title="active branch (/branch, /switch, /compare, /merge)">⎇ {snap.branch}</span>
             {view.settings.partner !== "examiner" && <span className="preview-tag mode-tag">{MODES.find((m) => m.mode === view.settings.partner)?.label}</span>}
-            {preview && <span className="preview-tag">previewing option</span>}
+            {preview && <span className="preview-tag">{timeline ? "past revision (read-only)" : "previewing option"}</span>}
             {stressSets && <span className="preview-tag stress-tag">what if: {stress} · <span style={{ color: "#ff5c6c" }}>impacted</span> · <span style={{ color: "#ffb454" }}>ripple</span></span>}
           </div>
           <Tabs tab={tab} onTab={setTab} stale={stale} />
@@ -353,13 +391,18 @@ export default function App() {
       )}
       {shownDecision && pending.length === 0 && <DecisionHistory design={view} id={shownDecision} onClose={() => setShownDecision(null)} />}
       {pending.length > 0 && <DecisionPanel decisions={pending} snap={snap} onPreview={setPreview} toast={toast} onCompare={setCompare} />}
-      {compare && view.decisions.find((x) => x.id === compare && (x.state === "open" || x.state === "rejected" || x.state === "evaluating")) && (
-        <ComparePanel d={view.decisions.find((x) => x.id === compare)!} snap={snap} onClose={() => setCompare(null)} />
+      {compare && view.decisions.find((x) => x.id === compare && (x.state === "open" || x.state === "rejected" || x.state === "evaluating")) && (() => {
+        const d = view.decisions.find((x) => x.id === compare)!;
+        return <ComparePanel title={d.question} cols={decisionCols(d, snap)} snap={snap} onClose={() => setCompare(null)} />;
+      })()}
+      {branchCmp && (
+        <ComparePanel kicker="compare branches" title={`${snap.branch} ↔ ${branchCmp.name}`} cols={branchCmp.cols} snap={snap} onClose={() => setBranchCmp(null)} />
       )}
 
       <div className="bottom">
         <ProposalBar count={view.proposals.length} onAccept={() => run(api.acceptAll())}
           onReject={() => run(Promise.all(view.proposals.map((p) => api.reject(p.id))))} />
+        {timeline && <Timeline rev={snap.rev} onPreview={setPreview} onClose={() => setTimeline(false)} run={run} toast={toast} />}
         <AnswerBubble entries={entries} history={history} onCloseHistory={() => setHistory(false)} />
         <div className="prompt-row">
           {hasClasses && <HealthRing metrics={metrics} ghost={snap.ghost_health} onFix={(i) => run(api.fixIssue(i))} />}

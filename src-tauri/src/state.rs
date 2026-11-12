@@ -26,6 +26,10 @@ pub struct Shared {
     pub pi_status: PiStatus,
     pub pi_error: Option<String>,
     pub mcp_port: u16,
+    /// Fingerprint of the last history snapshot (dedup).
+    pub last_history: Option<String>,
+    /// Name of the active branch (design.json).
+    pub branch: String,
 }
 
 impl Shared {
@@ -79,6 +83,7 @@ pub struct Snapshot {
     pub pi_status: PiStatus,
     pub pi_error: Option<String>,
     pub mcp_url: String,
+    pub branch: String,
 }
 
 impl AppState {
@@ -98,6 +103,11 @@ impl AppState {
         } else if let Some(name) = project_dir.file_name().and_then(|n| n.to_str()) {
             store.design.name = name.to_string();
         }
+        let branch = crate::branches::active(&project_dir);
+        let mut last_history = None;
+        if let Err(e) = crate::history::append(&project_dir, &store.design, &mut last_history) {
+            eprintln!("spide: history: {e}");
+        }
         AppState {
             inner: Arc::new(Mutex::new(Shared {
                 store,
@@ -106,6 +116,8 @@ impl AppState {
                 pi_status: PiStatus::Starting,
                 pi_error: None,
                 mcp_port: 0,
+                last_history,
+                branch,
             })),
             app,
         }
@@ -152,6 +164,10 @@ pub fn save(s: &mut Shared) {
         return;
     }
     s.last_written = Some(json);
+    let dir = s.project_dir.clone();
+    if let Err(e) = crate::history::append(&dir, &s.store.design, &mut s.last_history) {
+        eprintln!("spide: history: {e}");
+    }
 }
 
 pub fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
@@ -231,6 +247,7 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
         pi_status: s.pi_status.clone(),
         pi_error: s.pi_error.clone(),
         mcp_url: mcp_url(s.mcp_port),
+        branch: s.branch.clone(),
     }
 }
 

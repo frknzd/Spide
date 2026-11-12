@@ -293,6 +293,8 @@ fn switch_project(st: &AppState, pi: &PiBridge, dir: PathBuf, design: Option<Des
         let mut s = st.lock();
         s.project_dir = dir.clone();
         s.last_written = None;
+        s.last_history = None;
+        s.branch = crate::branches::active(&dir);
         let d = match design {
             Some(d) => d,
             None => match std::fs::read_to_string(dir.join("design.json")).ok().and_then(|t| Design::from_json(&t).ok()) {
@@ -358,6 +360,192 @@ fn slug(s: &str) -> String {
     if s.is_empty() { "design".into() } else { s }
 }
 
+// ---------------------------------------------------------------- history
+
+#[tauri::command(async)]
+pub fn history_list(st: State<'_, AppState>) -> Vec<crate::history::Entry> {
+    let dir = st.lock().project_dir.clone();
+    crate::history::list(&dir)
+}
+
+#[tauri::command(async)]
+pub fn history_at(st: State<'_, AppState>, rev: u64) -> R<Design> {
+    let dir = st.lock().project_dir.clone();
+    crate::history::at(&dir, rev).ok_or_else(|| format!("no history at revision {rev}"))
+}
+
+/// Bring the design back to how it was at `rev` — as a proposal the user accepts.
+#[tauri::command(async)]
+pub fn history_restore(st: State<'_, AppState>, rev: u64) -> R {
+    let dir = st.lock().project_dir.clone();
+    let past = crate::history::at(&dir, rev).ok_or_else(|| format!("no history at revision {rev}"))?;
+    {
+        let mut s = st.lock();
+        let ops = spide_core::diff::diff(&s.store.design, &past);
+        if ops.is_empty() {
+            return Err("the design already looks like that".into());
+        }
+        s.store.propose_ops(ops, Some(format!("restore the design as of revision {rev}")), "history").map_err(|e| e.0)?;
+    }
+    done(&st)
+}
+
+/// Start a branch from a past revision.
+#[tauri::command(async)]
+pub fn history_fork(st: State<'_, AppState>, rev: u64, name: String) -> R {
+    let dir = st.lock().project_dir.clone();
+    if crate::branches::exists(&dir, &name) || name == "main" {
+        return Err(format!("branch {name} already exists"));
+    }
+    let mut past = crate::history::at(&dir, rev).ok_or_else(|| format!("no history at revision {rev}"))?;
+    past.name = format!("{} ({name})", st.lock().store.design.name);
+    crate::branches::write(&dir, &name, &past)?;
+    st.toast("info", format!("branch {name} created from revision {rev} — /switch {name}"));
+    Ok(())
+}
+
+// ---------------------------------------------------------------- branches
+
+#[derive(serde::Serialize)]
+pub struct BranchInfo {
+    pub name: String,
+    pub active: bool,
+    pub classes: usize,
+    pub health: u8,
+}
+
+#[tauri::command(async)]
+pub fn branch_list(st: State<'_, AppState>) -> Vec<BranchInfo> {
+    let (dir, active, cur) = {
+        let s = st.lock();
+        (s.project_dir.clone(), s.branch.clone(), s.store.design.clone())
+    };
+    let info = |name: String, d: &Design, active: bool| BranchInfo {
+        name,
+        active,
+        classes: d.live_classes().count(),
+        health: spide_core::metrics::compute(d, false).health,
+    };
+    let mut out = vec![info(active.clone(), &cur, true)];
+    for name in crate::branches::list(&dir).into_iter().filter(|n| *n != active) {
+        if let Ok(d) = crate::branches::read(&dir, &name) {
+            out.push(info(name, &d, false));
+        }
+    }
+    out
+}
+
+/// Create a branch from the current design and switch to it.
+#[tauri::command(async)]
+pub fn branch_create(st: State<'_, AppState>, name: String) -> R {
+    crate::branches::valid_name(&name)?;
+    let (dir, active, cur) = {
+        let s = st.lock();
+        (s.project_dir.clone(), s.branch.clone(), s.store.design.clone())
+    };
+    if name == active || crate::branches::exists(&dir, &name) {
+        return Err(format!("branch {name} already exists"));
+    }
+    crate::branches::write(&dir, &name, &cur)?;
+    switch_branch(&st, &name)
+}
+
+/// Park the current design as its branch and load another one into design.json.
+#[tauri::command(async)]
+pub fn branch_switch(st: State<'_, AppState>, name: String) -> R {
+    switch_branch(&st, &name)
+}
+
+fn switch_branch(st: &AppState, name: &str) -> R {
+    let (dir, active, cur) = {
+        let s = st.lock();
+        (s.project_dir.clone(), s.branch.clone(), s.store.design.clone())
+    };
+    if name == active {
+        return Err(format!("already on {name}"));
+    }
+    let next = crate::branches::read(&dir, name)?;
+    crate::branches::write(&dir, &active, &cur)?;
+    {
+        let mut s = st.lock();
+        s.store.load(next);
+        s.branch = name.to_string();
+    }
+    crate::branches::delete(&dir, name)?;
+    crate::branches::set_active(&dir, name).map_err(|e| e.to_string())?;
+    st.toast("info", format!("on branch {name} (was {active})"));
+    done(st)
+}
+
+#[tauri::command(async)]
+pub fn branch_delete(st: State<'_, AppState>, name: String) -> R {
+    let (dir, active) = {
+        let s = st.lock();
+        (s.project_dir.clone(), s.branch.clone())
+    };
+    if name == active {
+        return Err("can't delete the active branch; switch first".into());
+    }
+    crate::branches::delete(&dir, &name)?;
+    st.toast("info", format!("branch {name} deleted"));
+    st.emit();
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct BranchCompare {
+    pub name: String,
+    pub design: Design,
+    pub health: u8,
+    /// From the active design to the branch.
+    pub impact: spide_core::impact::Impact,
+}
+
+#[tauri::command(async)]
+pub fn branch_compare(st: State<'_, AppState>, name: String) -> R<BranchCompare> {
+    let (dir, cur) = {
+        let s = st.lock();
+        (s.project_dir.clone(), s.store.design.clone())
+    };
+    let other = crate::branches::read(&dir, &name)?;
+    let impact = spide_core::impact::impact(&cur, &other);
+    Ok(BranchCompare { name, health: impact.health_after, design: other, impact })
+}
+
+/// Bring another branch's changes in as proposals: additions/changes and removals separately,
+/// so the user can take one without the other.
+#[tauri::command(async)]
+pub fn branch_merge(st: State<'_, AppState>, name: String) -> R {
+    let dir = st.lock().project_dir.clone();
+    let other = crate::branches::read(&dir, &name)?;
+    {
+        let mut s = st.lock();
+        let ops = spide_core::diff::diff(&s.store.design, &other);
+        if ops.is_empty() {
+            return Err(format!("{name} has nothing this design doesn't"));
+        }
+        let (removes, rest): (Vec<Op>, Vec<Op>) = ops.into_iter().partition(|o| {
+            matches!(
+                o,
+                Op::RemoveClass { .. }
+                    | Op::RemoveAttribute { .. }
+                    | Op::RemoveMethod { .. }
+                    | Op::RemoveRelation { .. }
+                    | Op::RemovePackage { .. }
+                    | Op::RemoveForce { .. }
+                    | Op::RemoveChangeScenario { .. }
+            )
+        });
+        if !rest.is_empty() {
+            s.store.propose_ops(rest, Some(format!("merge from branch {name}: additions and changes")), "branch").map_err(|e| e.0)?;
+        }
+        if !removes.is_empty() {
+            s.store.propose_ops(removes, Some(format!("merge from branch {name}: removals")), "branch").map_err(|e| e.0)?;
+        }
+    }
+    done(&st)
+}
+
 #[tauri::command]
 pub fn reveal_project(st: State<'_, AppState>) -> R {
     let dir = st.lock().project_dir.clone();
@@ -396,6 +584,16 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "set_examiner" => set_examiner(s, a.get("strict").and_then(Value::as_bool).unwrap_or(false)),
         "apply_user_ops" => apply_user_ops(s, serde_json::from_value(de("ops")).map_err(|e| e.to_string())?),
         "set_partner" => set_partner(s, req("mode")?),
+        "branch_list" => return serde_json::to_value(branch_list(s)).map_err(|e| e.to_string()),
+        "branch_create" => branch_create(s, req("name")?),
+        "branch_switch" => branch_switch(s, req("name")?),
+        "branch_delete" => branch_delete(s, req("name")?),
+        "branch_compare" => return branch_compare(s, req("name")?).and_then(|c| serde_json::to_value(c).map_err(|e| e.to_string())),
+        "branch_merge" => branch_merge(s, req("name")?),
+        "history_list" => return serde_json::to_value(history_list(s)).map_err(|e| e.to_string()),
+        "history_at" => return history_at(s, a.get("rev").and_then(Value::as_u64).ok_or("missing rev")?).and_then(|d| serde_json::to_value(d).map_err(|e| e.to_string())),
+        "history_restore" => history_restore(s, a.get("rev").and_then(Value::as_u64).ok_or("missing rev")?),
+        "history_fork" => history_fork(s, a.get("rev").and_then(Value::as_u64).ok_or("missing rev")?, req("name")?),
         "set_rules" => set_rules(s, serde_json::from_value(de("rules")).map_err(|e| e.to_string())?),
         "analyse_change" => analyse_change(s, pi, req("name")?),
         "fix_issue" => fix_issue(s, pi, req("message")?, str_("rule"), str_("fix_hint")),

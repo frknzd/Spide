@@ -4,26 +4,44 @@ import { NodeDefs } from "../canvas/ClassNode";
 import { boxesFor, DiagramContent } from "../canvas/DiagramContent";
 import { elkLayout, type LayoutEdge } from "../canvas/layout";
 import { healthColor } from "../canvas/visuals";
-import type { Class, Decision, Pos, Snapshot } from "../state/types";
+import type { Class, Decision, Design, Impact, Pos, Snapshot } from "../state/types";
 import { ImpactDetails } from "./Impact";
 
-export function ComparePanel({ d, snap, onClose }: { d: Decision; snap: Snapshot; onClose: () => void }) {
-  const cols = d.options.map((o) => ({ o, pv: snap.previews.find((p) => p.decision === d.id && p.option === o.id) }));
+export interface CompareCol {
+  id: string;
+  label: string;
+  design: Design | null;
+  health: number | null;
+  impact: Impact | null;
+  focus: string[];
+  error?: string | null;
+  summary?: string | null;
+}
+
+/** Columns for a decision's options. */
+export function decisionCols(d: Decision, snap: Snapshot): CompareCol[] {
+  return d.options.map((o) => {
+    const pv = snap.previews.find((p) => p.decision === d.id && p.option === o.id);
+    return { id: o.id, label: o.label, design: pv?.design ?? null, health: pv?.health ?? null, impact: pv?.impact ?? null, focus: pv?.focus ?? [], error: pv?.error, summary: o.summary };
+  });
+}
+
+export function ComparePanel({ title, kicker = "compare options", cols, snap, onClose }: { title: string; kicker?: string; cols: CompareCol[]; snap: Snapshot; onClose: () => void }) {
 
   // one layout for the union of all classes → every column shares positions
   const union = useMemo(() => {
     const m = new Map<string, Class>();
     for (const c of snap.view.classes) if (c.status !== "pruned") m.set(c.name, c);
-    for (const { pv } of cols) for (const c of pv?.design?.classes ?? []) if (!m.has(c.name)) m.set(c.name, c);
+    for (const col of cols) for (const c of col.design?.classes ?? []) if (!m.has(c.name) && c.status !== "pruned") m.set(c.name, c);
     return [...m.values()];
-  }, [snap, d.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [snap, cols.map((c) => c.id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
   const boxes = useMemo(() => boxesFor(union, true), [union]);
   const [pos, setPos] = useState<Map<string, Pos> | null>(null);
   useEffect(() => {
     let alive = true;
     const rels = new Map<string, LayoutEdge>();
     for (const r of snap.view.relations) rels.set(r.id, r);
-    for (const { pv } of cols) for (const r of pv?.design?.relations ?? []) rels.set(r.id, r);
+    for (const col of cols) for (const r of col.design?.relations ?? []) rels.set(r.id, r);
     elkLayout(union.map((c) => ({ id: c.name, w: boxes.get(c.name)!.w, h: boxes.get(c.name)!.h })), [...rels.values()])
       .then((p) => alive && setPos(p));
     return () => {
@@ -56,33 +74,33 @@ export function ComparePanel({ d, snap, onClose }: { d: Decision; snap: Snapshot
   return (
     <div className="compare" data-ui>
       <div className="cmp-head">
-        <span className="dp-kicker">compare options</span>
-        <span className="cmp-q">{d.question}</span>
+        <span className="dp-kicker">{kicker}</span>
+        <span className="cmp-q">{title}</span>
         <button className="link" onClick={onClose}>close (Esc)</button>
       </div>
       <div className="cmp-cols" style={{ gridTemplateColumns: `repeat(${cols.length}, 1fr)` }}>
-        {cols.map(({ o, pv }) => {
-          const changed = new Set(pv?.focus ?? []);
+        {cols.map((col) => {
+          const changed = new Set(col.focus);
           return (
-            <div key={o.id} className="cmp-col">
+            <div key={col.id} className="cmp-col">
               <div className="o-head">
-                <span className="o-id">{o.id}</span>
-                <span className="o-label">{o.label}</span>
-                {pv?.health != null && <span className="o-health" style={{ color: healthColor(pv.health) }}>{pv.health}</span>}
+                <span className="o-id">{col.id}</span>
+                <span className="o-label">{col.label}</span>
+                {col.health != null && <span className="o-health" style={{ color: healthColor(col.health) }}>{col.health}</span>}
               </div>
-              {pv?.error ? (
-                <div className="mini err">✗ {pv.error}</div>
+              {col.error ? (
+                <div className="mini err">✗ {col.error}</div>
               ) : (
                 <svg className="cmp-svg" viewBox={vb} preserveAspectRatio="xMidYMid meet">
                   <defs><NodeDefs /></defs>
-                  {pos && pv?.design && (
-                    <DiagramContent classes={pv.design.classes.filter((c) => c.status !== "pruned")} relations={pv.design.relations}
-                      packages={pv.design.packages} pos={pos} boxes={boxes} still highlight={changed} metrics={null} />
+                  {pos && col.design && (
+                    <DiagramContent classes={col.design.classes.filter((c) => c.status !== "pruned")} relations={col.design.relations.filter((r) => r.status !== "pruned")}
+                      packages={col.design.packages} pos={pos} boxes={boxes} still highlight={changed} metrics={null} />
                   )}
                 </svg>
               )}
-              {o.summary && <div className="o-sum">{o.summary}</div>}
-              {pv?.impact && <ImpactDetails impact={pv.impact} />}
+              {col.summary && <div className="o-sum">{col.summary}</div>}
+              {col.impact && <ImpactDetails impact={col.impact} />}
             </div>
           );
         })}
