@@ -71,6 +71,10 @@ interface Props extends DiagramData {
   stress?: { impacted: Set<string>; ripple: Set<string> } | null;
   /** design vs code: missing in code (red dashed), drifted (amber), only in code (phantom) */
   drift?: { missing: Set<string>; drifted: Set<string>; phantom: Set<string> } | null;
+  /** pinned classes (badge) */
+  pinned?: Set<string>;
+  /** package focus: everything outside dims */
+  focusSet?: Set<string> | null;
   showPackages?: boolean;
 }
 
@@ -142,6 +146,7 @@ export function DiagramContent(p: Props) {
     const { style, warn } = relationStyle(r, p.metrics);
     if (focus && !(r.from === focus || r.to === focus)) style.opacity *= 0.15;
     if (p.stress && !(inStress(r.from) && inStress(r.to))) style.opacity *= 0.15;
+    if (p.focusSet && !(p.focusSet.has(r.from) || p.focusSet.has(r.to))) style.opacity *= 0.15;
     const tgt: Target = r.status === "proposed" && r.proposal ? { kind: "proposal", id: r.proposal } : { kind: "relation", id: r.id };
     if (r.from === r.to) {
       const x = a.x + a.w / 2;
@@ -173,7 +178,8 @@ export function DiagramContent(p: Props) {
           const pk = c.package ? p.packages.find((x) => x.name === c.package) : undefined;
           return (
             <ClassNode key={c.name} cls={c} box={box} x={pos.x} y={pos.y} scale={nodeScale(cm?.[c.name])} m={cm?.[c.name]}
-              dim={(!!focus && !neighbours.has(c.name)) || (!!p.stress && !inStress(c.name))} focus={focus === c.name || p.highlight?.has(c.name)} showMethods={p.showMethods}
+              dim={(!!focus && !neighbours.has(c.name)) || (!!p.stress && !inStress(c.name)) || (!!p.focusSet && !p.focusSet.has(c.name))}
+              pinned={!!p.pinned?.has(c.name)} focus={focus === c.name || p.highlight?.has(c.name)} showMethods={p.showMethods}
               ring={p.stress?.impacted.has(c.name) ? C.cycle : p.stress?.ripple.has(c.name) ? C.warn
                 : p.drift?.missing.has(c.name) ? C.cycle : p.drift?.drifted.has(c.name) ? C.warn : null}
               ringDashed={!!p.drift?.missing.has(c.name)} phantom={!!p.drift?.phantom.has(c.name)}

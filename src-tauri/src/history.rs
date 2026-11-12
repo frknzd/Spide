@@ -118,7 +118,7 @@ mod tests {
         s.apply_user(ops).unwrap();
         append(&dir, &s.design, &mut last).unwrap();
         // layout-only change → no new entry
-        s.set_layout("class", [("A".to_string(), spide_core::model::Pos { x: 1.0, y: 2.0 })].into());
+        s.set_layout("class", [("A".to_string(), spide_core::model::Pos { x: 1.0, y: 2.0, pinned: false })].into());
         append(&dir, &s.design, &mut last).unwrap();
         let ops: Vec<Op> = serde_json::from_str(r#"[{"op":"add_class","name":"B"}]"#).unwrap();
         s.apply_user(ops).unwrap();

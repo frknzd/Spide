@@ -121,7 +121,7 @@ export interface Sequence {
   status: Status;
   feedback: string | null;
 }
-export interface Pos { x: number; y: number }
+export interface Pos { x: number; y: number; pinned?: boolean }
 export interface Design {
   version: number;
   name: string;

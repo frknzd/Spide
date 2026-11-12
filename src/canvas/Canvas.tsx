@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import { api } from "../state/api";
 import type { Layer, Pos, Target } from "../state/types";
 import { NodeDefs } from "./ClassNode";
-import { boxesFor, DiagramContent, type DiagramData } from "./DiagramContent";
+import { boxesFor, DiagramContent, rectOf, type DiagramData } from "./DiagramContent";
 import { elkLayout } from "./layout";
 import { LivingLayout } from "./physics";
 import { nodeScale } from "./visuals";
@@ -13,6 +13,8 @@ export interface CanvasApi {
   tidy(): void;
   /** Zoom to a class and pin focus mode on it; null clears. Returns false if it isn't on the canvas. */
   focus(name: string | null): boolean;
+  /** Zoom to a package and dim everything else; false if it has no classes on the canvas. */
+  focusPackage(name: string): boolean;
   viewport(): ViewportApi | null;
 }
 
@@ -29,6 +31,9 @@ interface Props {
   insetRight?: number;
   stress?: { impacted: Set<string>; ripple: Set<string> } | null;
   drift?: { missing: Set<string>; drifted: Set<string>; phantom: Set<string> } | null;
+  /** a class was dropped onto another package */
+  onMoveToPackage?: (cls: string, pkg: string) => void;
+  onDoubleClickTarget?: (t: Target, at: { x: number; y: number }) => void;
 }
 
 const LAYER_RANK: Record<Layer, number> = { ui: 0, infrastructure: 0, application: 1, domain: 2 };
@@ -100,7 +105,9 @@ export const Canvas = forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
   };
 
   const [pinned, setPinned] = useState<string | null>(null);
+  const [focusSet, setFocusSet] = useState<Set<string> | null>(null);
   const focus = (name: string | null) => {
+    setFocusSet(null);
     if (!name) {
       setPinned(null);
       return true;
@@ -116,7 +123,24 @@ export const Canvas = forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
     if (pinned && !p.data.classes.some((c) => c.name === pinned)) setPinned(null);
   }, [p.data.classes, pinned]);
 
-  useImperativeHandle(ref, () => ({ fit: () => vp.current?.fit(), tidy, focus, viewport: () => vp.current }));
+  const focusPackage = (pkg: string) => {
+    const members = p.data.classes.filter((c) => c.package === pkg).map((c) => c.name);
+    const rs = members.map((n) => rectOf(n, pos, boxes, cm)).filter((r) => r !== null);
+    const svg = vp.current?.svg();
+    if (!rs.length || !svg) return false;
+    const x1 = Math.min(...rs.map((r) => r.x - r.w / 2));
+    const y1 = Math.min(...rs.map((r) => r.y - r.h / 2));
+    const x2 = Math.max(...rs.map((r) => r.x + r.w / 2));
+    const y2 = Math.max(...rs.map((r) => r.y + r.h / 2));
+    const b = svg.getBoundingClientRect();
+    const k = Math.max(0.2, Math.min(1.2, (b.width - (p.insetRight ?? 0) - 240) / (x2 - x1 || 1), (b.height - 320) / (y2 - y1 || 1)));
+    setPinned(null);
+    setFocusSet(new Set(members));
+    vp.current?.zoomTo((x1 + x2) / 2, (y1 + y2) / 2, k);
+    return true;
+  };
+
+  useImperativeHandle(ref, () => ({ fit: () => vp.current?.fit(), tidy, focus, focusPackage, viewport: () => vp.current }));
 
   const pos = new Map<string, Pos>();
   for (const n of layout.nodes.values()) pos.set(n.id, { x: n.x!, y: n.y! });
@@ -149,6 +173,24 @@ export const Canvas = forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
     });
   };
 
+  /** Package box (as drawn) under a dragged class's centre, other than its own. */
+  const packageAt = (id: string): string | null => {
+    const me = p.data.classes.find((c) => c.name === id);
+    const at = pos.get(id);
+    if (!me || !at) return null;
+    for (const pk of p.data.packages) {
+      if (pk.name === me.package || pk.status === "pruned") continue;
+      const rs = p.data.classes.filter((c) => c.package === pk.name && c.name !== id).map((c) => rectOf(c.name, pos, boxes, cm)).filter((r) => r !== null);
+      if (!rs.length) continue;
+      const x1 = Math.min(...rs.map((r) => r.x - r.w / 2)) - 28;
+      const y1 = Math.min(...rs.map((r) => r.y - r.h / 2)) - 40;
+      const x2 = Math.max(...rs.map((r) => r.x + r.w / 2)) + 28;
+      const y2 = Math.max(...rs.map((r) => r.y + r.h / 2)) + 34;
+      if (at.x >= x1 && at.x <= x2 && at.y >= y1 && at.y <= y2) return pk.name;
+    }
+    return null;
+  };
+
   const focusClass = p.hoverKey?.startsWith("class:") ? p.hoverKey.slice(6) : pinned;
 
   return (
@@ -159,7 +201,16 @@ export const Canvas = forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
       insetRight={p.insetRight}
       onPrune={p.onPrune}
       collect={collect}
-      onClickTarget={(t) => p.onClickTarget(t)}
+      onClickTarget={(t, e) => {
+        // ⌥-click pins / unpins a class where it is
+        if (e.altKey && t.kind === "class" && layout.nodes.has(t.name)) {
+          layout.togglePin(t.name);
+          api.setLayout(p.viewKey, layout.positions()).catch(() => {});
+          setFrame((f) => (f + 1) % 1e9);
+          return;
+        }
+        p.onClickTarget(t);
+      }}
       onHover={p.onHover}
       onDragStart={(el, w) => {
         const id = el.closest("[data-node]")?.getAttribute("data-node");
@@ -170,12 +221,19 @@ export const Canvas = forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
         return true;
       }}
       onDragMove={(w) => dragging.current && layout.drag(dragging.current, w[0] + dragOffset.current[0], w[1] + dragOffset.current[1])}
-      onDragEnd={() => {
-        if (dragging.current) layout.release(dragging.current);
+      onDragEnd={(moved) => {
+        const id = dragging.current;
+        if (id) layout.release(id);
         dragging.current = null;
+        if (id && moved && p.onMoveToPackage) {
+          const target = packageAt(id);
+          if (target) p.onMoveToPackage(id, target);
+        }
       }}
+      onDoubleClickTarget={(t, e) => p.onDoubleClickTarget?.(t, { x: e.clientX, y: e.clientY })}
     >
-      <DiagramContent {...p.data} pos={pos} boxes={boxes} showMethods={p.showMethods} focusClass={focusClass} stress={p.stress} drift={p.drift} />
+      <DiagramContent {...p.data} pos={pos} boxes={boxes} showMethods={p.showMethods} focusClass={focusClass} stress={p.stress} drift={p.drift}
+        pinned={layout.pinnedIds()} focusSet={focusSet} />
     </Viewport>
   );
 });

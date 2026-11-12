@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { healthColor } from "../canvas/visuals";
 import type { Issue, Metrics, Tab } from "../state/types";
 
-export function HealthRing({ metrics, ghost, onFix }: { metrics: Metrics; ghost: number | null; onFix?: (i: Issue) => void }) {
+export function HealthRing({ metrics, ghost, onFix, onFocus }: { metrics: Metrics; ghost: number | null; onFix?: (i: Issue) => void; onFocus?: (i: Issue) => void }) {
   const [open, setOpen] = useState(false);
   const h = metrics.health;
   const r = 19;
@@ -34,7 +34,7 @@ export function HealthRing({ metrics, ghost, onFix }: { metrics: Metrics; ghost:
             metrics.issues.slice(0, 12).map((i, k) => (
               <div key={k} className={`issue ${i.kind}`} title={[i.explain, i.fix_hint && `fix: ${i.fix_hint}`].filter(Boolean).join("\n")}>
                 <span className="ik">{i.kind.replace("_", " ")}</span>
-                {i.message}
+                <span className={onFocus ? "imsg" : undefined} onClick={() => onFocus?.(i)}>{i.message}</span>
                 {onFix && <button className="fixbtn" onClick={() => onFix(i)}>fix with agent</button>}
               </div>
             ))

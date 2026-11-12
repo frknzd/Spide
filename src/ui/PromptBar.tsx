@@ -8,6 +8,8 @@ export const COMMANDS: { cmd: string; help: string }[] = [
   { cmd: "/reject", help: "reject all ghost proposals" },
   { cmd: "/tidy", help: "re-layout the diagram" },
   { cmd: "/fit", help: "fit diagram to screen (or double-click)" },
+  { cmd: "/add", help: "/add <Class> [in <package>] — add a class yourself (double-click names to rename, drag onto a package to move)" },
+  { cmd: "/focus", help: "/focus <package> — zoom to a package and dim the rest (Esc clears)" },
   { cmd: "/find", help: "/find <class> — zoom to a class and focus it (Esc clears)" },
   { cmd: "/pruned", help: "show / hide pruned elements" },
   { cmd: "/strict", help: "strict examiner: no overruling" },
@@ -77,7 +79,7 @@ export function PromptBar(p: Props) {
       {suggestions.length > 0 && (
         <div className="cmd-list">
           {suggestions.slice(0, 8).map((c) => (
-            <div key={c.cmd} className="cmd" onMouseDown={(e) => { e.preventDefault(); setText(c.cmd + (["/name", "/find", "/mode", "/branch", "/switch", "/merge", "/stress", "/rules"].includes(c.cmd) ? " " : "")); ta.current?.focus(); }}>
+            <div key={c.cmd} className="cmd" onMouseDown={(e) => { e.preventDefault(); setText(c.cmd + (["/add", "/focus", "/name", "/find", "/mode", "/branch", "/switch", "/merge", "/stress", "/rules"].includes(c.cmd) ? " " : "")); ta.current?.focus(); }}>
               <span>{c.cmd}</span>
               <em>{c.help}</em>
             </div>

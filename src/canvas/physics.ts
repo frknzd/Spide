@@ -14,6 +14,8 @@ export interface SimNode extends SimulationNodeDatum {
   /** tidy target */
   tx?: number;
   ty?: number;
+  /** pinned by the user: fx/fy stay set */
+  pinned?: boolean;
 }
 export interface SimLink extends SimulationLinkDatum<SimNode> {
   kind: string;
@@ -262,6 +264,11 @@ export class LivingLayout {
           }
         }
         n = { id: s.id, x, y, vx: 0, vy: 0, w: s.w, h: s.h, pkg: s.pkg, layer: s.layer, heat: s.heat };
+        if (s.init?.pinned) {
+          n.pinned = true;
+          n.fx = x;
+          n.fy = y;
+        }
       } else {
         if (n.w !== s.w || n.h !== s.h || n.pkg !== s.pkg || n.layer !== s.layer) changed = true;
         Object.assign(n, { w: s.w, h: s.h, pkg: s.pkg, layer: s.layer, heat: s.heat });
@@ -296,16 +303,34 @@ export class LivingLayout {
   release(id: string) {
     const n = this.nodes.get(id);
     if (!n) return;
-    n.fx = null;
-    n.fy = null;
+    // a pinned node stays where it was dropped
+    if (!n.pinned) {
+      n.fx = null;
+      n.fy = null;
+    }
     this.sim.alphaTarget(this.tension >= 0.08 ? 0.012 + this.tension * 0.03 : 0);
   }
 
-  /** Animate towards target positions (e.g. ELK), then let physics take over. */
+  /** Pin / unpin a node where it is. Returns the new state. */
+  togglePin(id: string): boolean {
+    const n = this.nodes.get(id);
+    if (!n) return false;
+    n.pinned = !n.pinned;
+    n.fx = n.pinned ? n.x : null;
+    n.fy = n.pinned ? n.y : null;
+    this.sim.alpha(Math.max(this.sim.alpha(), 0.1)).restart();
+    return n.pinned;
+  }
+
+  pinnedIds(): Set<string> {
+    return new Set([...this.nodes.values()].filter((n) => n.pinned).map((n) => n.id));
+  }
+
+  /** Animate towards target positions (e.g. ELK), then let physics take over. Pinned nodes stay. */
   tidy(pos: Map<string, Pos>) {
     for (const [id, p] of pos) {
       const n = this.nodes.get(id);
-      if (n) {
+      if (n && !n.pinned) {
         n.tx = p.x;
         n.ty = p.y;
       }
@@ -316,7 +341,7 @@ export class LivingLayout {
 
   positions(): Record<string, Pos> {
     const out: Record<string, Pos> = {};
-    for (const n of this.nodes.values()) out[n.id] = { x: Math.round(n.x!), y: Math.round(n.y!) };
+    for (const n of this.nodes.values()) out[n.id] = n.pinned ? { x: Math.round(n.x!), y: Math.round(n.y!), pinned: true } : { x: Math.round(n.x!), y: Math.round(n.y!) };
     return out;
   }
 

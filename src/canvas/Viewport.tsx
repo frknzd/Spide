@@ -28,7 +28,9 @@ interface Props {
   /** element under the pointer started a drag (node drag); return true to claim the pointer */
   onDragStart?: (el: Element, world: [number, number], e: React.PointerEvent) => boolean;
   onDragMove?: (world: [number, number]) => void;
-  onDragEnd?: () => void;
+  onDragEnd?: (moved: boolean, e: React.PointerEvent) => void;
+  /** double-click on an element (inline edit) */
+  onDoubleClickTarget?: (t: Target, e: React.MouseEvent) => void;
   initial?: Transform;
   empty?: boolean;
   /** screen space reserved on the right (e.g. decision panel) */
@@ -182,7 +184,7 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
     const g = gesture.current;
     const kind = g.kind;
     g.kind = "none";
-    if (kind === "drag") p.onDragEnd?.();
+    if (kind === "drag") p.onDragEnd?.(g.moved, e);
     if (kind === "right") {
       if (g.moved && marquee) {
         const targets = p.collect?.(marquee) ?? [];
@@ -210,7 +212,11 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
       onPointerUp={onPointerUp}
       onPointerLeave={() => gesture.current.kind === "none" && p.onHover?.(null, { x: 0, y: 0 })}
       onContextMenu={(e) => e.preventDefault()}
-      onDoubleClick={(e) => !(e.target as Element).closest("[data-target]") && fit()}
+      onDoubleClick={(e) => {
+        const tgt = parseTarget(e.target as Element);
+        if (!tgt) return fit();
+        p.onDoubleClickTarget?.(tgt, e);
+      }}
     >
       <defs>
         <pattern id="dots" width={28} height={28} patternUnits="userSpaceOnUse" patternTransform={`translate(${t.x},${t.y}) scale(${t.k})`}>

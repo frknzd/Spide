@@ -585,10 +585,17 @@ impl PartnerMode {
     }
 }
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub struct Pos {
     pub x: f64,
     pub y: f64,
+    /// Pinned by the user: the living layout doesn't move it (and tidy leaves it alone).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

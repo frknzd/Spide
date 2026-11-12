@@ -28,7 +28,7 @@ fn fixture() -> Design {
     // a layout so direction hints are emitted
     let mut lay = std::collections::BTreeMap::new();
     for (i, c) in d.classes.iter().enumerate() {
-        lay.insert(c.name.clone(), Pos { x: (i % 3) as f64 * 300.0, y: (i / 3) as f64 * 250.0 });
+        lay.insert(c.name.clone(), Pos { x: (i % 3) as f64 * 300.0, y: (i / 3) as f64 * 250.0, pinned: false });
     }
     d.layout.insert("class".into(), lay);
     d

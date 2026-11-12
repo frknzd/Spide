@@ -16,6 +16,7 @@ export interface ClassNodeProps {
   ringDashed?: boolean;
   /** exists only in the code (drift view) */
   phantom?: boolean;
+  pinned?: boolean;
   showMethods?: boolean;
   /** static rendering (previews/export): no animation classes */
   still?: boolean;
@@ -63,6 +64,7 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
         {p.focus && <rect x={-5} y={-5} width={w + 10} height={h + 10} rx={12} fill="none" stroke={C.accent} strokeWidth={1.5} opacity={0.7} pointerEvents="none" />}
         {p.ring && <rect x={-7} y={-7} width={w + 14} height={h + 14} rx={13} fill="none" stroke={p.ring} strokeWidth={2.2} opacity={0.9} pointerEvents="none"
           className="halo-pulse" strokeDasharray={p.ringDashed ? "7 5" : undefined} />}
+        {p.pinned && <text x={w - 8} y={14} textAnchor="end" fontSize={11} fill={C.dim} pointerEvents="none">📌</text>}
         {p.phantom && <Chip x={w - 4} y={-23} text="only in code" color={C.dim} anchor="end" />}
         <rect width={w} height={h} rx={8} fill={C.node} stroke={border} strokeWidth={ghost ? 1.5 : 1.2 + heat * 1.6}
           strokeDasharray={ghost || removing ? "6 4" : undefined}

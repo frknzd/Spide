@@ -17,6 +17,7 @@ import { DecisionHistory } from "./ui/DecisionHistory";
 import { DriftPanel } from "./ui/DriftPanel";
 import { FeedbackPopover, type PruneState } from "./ui/FeedbackPopover";
 import { HoverCard } from "./ui/HoverCard";
+import { InlineEdit, type InlineEditState } from "./ui/InlineEdit";
 import { PromptBar } from "./ui/PromptBar";
 import { Timeline } from "./ui/Timeline";
 import { PRESETS, RulesSection } from "./ui/RulesSection";
@@ -44,6 +45,7 @@ export default function App() {
   const [shownDecision, setShownDecision] = useState<string | null>(null);
   const [timeline, setTimeline] = useState(false);
   const [drift, setDrift] = useState<DriftReport | null>(null);
+  const [inline, setInline] = useState<InlineEditState | null>(null);
   const [c4Level, setC4Level] = useState<"context" | "container">("container");
   const [preview, setPreview] = useState<Design | null>(null);
   const [focusKey, setFocusKey] = useState(0);
@@ -94,6 +96,31 @@ export default function App() {
     [view, run],
   );
 
+  // direct edits: double-click to rename, drop a class onto another package
+  const onDoubleClickTarget = useCallback(
+    (t: Target, at: { x: number; y: number }) => {
+      if (!view) return;
+      const cls = (n: string) => view.classes.find((c) => c.name === n && c.status !== "pruned" && c.status !== "proposed");
+      if (t.kind === "class" && cls(t.name)) {
+        setInline({ at, label: "rename class", value: t.name, onSubmit: (v) => run(api.userOps([{ op: "rename_class", from: t.name, to: v }])) });
+      } else if (t.kind === "attribute") {
+        const a = cls(t.class)?.attributes.find((x) => x.name === t.name);
+        if (a) setInline({ at, label: `rename ${t.class}.${t.name}`, value: a.name,
+          onSubmit: (v) => run(api.userOps([{ op: "update_attribute", class: t.class, name: t.name, attribute: { ...a, name: v } }])) });
+      } else if (t.kind === "method") {
+        const m = cls(t.class)?.methods.find((x) => x.name === t.name);
+        if (m) setInline({ at, label: `rename ${t.class}.${t.name}()`, value: m.name,
+          onSubmit: (v) => run(api.userOps([{ op: "update_method", class: t.class, name: t.name, method: { ...m, name: v } }])) });
+      }
+      setHover(null);
+    },
+    [view, run],
+  );
+  const onMoveToPackage = useCallback(
+    (cls: string, pkg: string) => run(api.userOps([{ op: "move_to_package", class: cls, package: pkg }]).then(() => toast("info", `moved ${cls} to ${pkg} (⌘Z to undo)`))),
+    [run, toast],
+  );
+
   const onHover = useCallback((key: string | null, at: { x: number; y: number }) => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     if (!key) {
@@ -134,6 +161,24 @@ export default function App() {
       toast("error", String(e));
     }
   };
+  // health popover: jump to what an issue is about
+  const focusIssue = (i: { targets: string[] }) => {
+    const t = i.targets[0];
+    if (!t || !view) return;
+    const cls = view.classes.find((c) => c.name === t)?.name ?? (t.includes("->") ? t.split("->")[0] : null);
+    const go = () => {
+      if (cls && view.classes.some((c) => c.name === cls)) canvasRef.current?.focus(cls);
+      else if (view.packages.some((p) => p.name === t)) canvasRef.current?.focusPackage(t);
+      else if (t.startsWith("sequence:")) {
+        setScenario(t.slice(9));
+        setTab("sequence");
+      } else if (view.containers.some((k) => k.name === t)) setTab("system");
+    };
+    if (tab !== "class" && !t.startsWith("sequence:")) {
+      setTab("class");
+      setTimeout(go, 300);
+    } else go();
+  };
   const exportFolder = async (title: string, f: (dir: string) => Promise<string[]>, what: string) => {
     const dir = await openDialog({ directory: true, multiple: false, title, defaultPath: snap?.project_dir });
     if (typeof dir !== "string") return;
@@ -154,6 +199,15 @@ export default function App() {
       case "/accept": return run(api.acceptAll());
       case "/reject": return run(Promise.all((view?.proposals ?? []).map((p) => api.reject(p.id))));
       case "/tidy": return canvasRef.current?.tidy();
+      case "/focus": {
+        if (!arg) return canvasRef.current?.focus(null);
+        const pk = view?.packages.find((p) => p.name.toLowerCase() === arg.toLowerCase()) ?? view?.packages.find((p) => p.name.toLowerCase().includes(arg.toLowerCase()));
+        if (!pk) return toast("error", `no package matches “${arg}”`);
+        const go = () => canvasRef.current?.focusPackage(pk.name) || toast("error", `package ${pk.name} has no classes on the canvas`);
+        if (tab === "class") return void go();
+        setTab("class");
+        return void setTimeout(go, 300);
+      }
       case "/find": {
         if (!arg) return canvasRef.current?.focus(null);
         const name = findClass(view, arg);
@@ -225,6 +279,11 @@ export default function App() {
       case "/agent": return run(api.restartAgent().then(() => toast("info", "agent restarted")));
       case "/folder": return run(api.reveal());
       case "/import": return importCode();
+      case "/add": {
+        const m = arg.match(/^(\S+)(?:\s+(?:in\s+)?(\S+))?$/);
+        if (!m) return toast("error", "usage: /add <Class> [in <package>]");
+        return run(api.userOps([{ op: "add_class", name: m[1], ...(m[2] ? { package: m[2] } : {}) }]).then(() => toast("info", `added ${m[1]}`)));
+      }
       case "/drift": {
         if (drift) return setDrift(null);
         const r = await api.drift().catch((e) => (toast("error", String(e)), null));
@@ -416,7 +475,7 @@ export default function App() {
         {tab === "class" && classData && (
           <Canvas ref={canvasRef} key="class" viewKey="class" data={classData} saved={view.layout["class"]} tension={preview ? 0 : metrics.tension}
             onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} insetRight={pendingCount ? 450 : 0}
-            stress={stressSets} drift={driftSets} />
+            stress={stressSets} drift={driftSets} onMoveToPackage={preview || drift ? undefined : onMoveToPackage} onDoubleClickTarget={preview ? undefined : onDoubleClickTarget} />
         )}
         {tab === "domain" && domainData && (
           <Canvas ref={canvasRef} key="domain" viewKey="domain" data={domainData} saved={view.layout["domain"] ?? view.layout["class"]} showMethods={false} tension={0}
@@ -474,12 +533,13 @@ export default function App() {
         {timeline && <Timeline rev={snap.rev} onPreview={setPreview} onClose={() => setTimeline(false)} run={run} toast={toast} />}
         <AnswerBubble entries={entries} history={history} onCloseHistory={() => setHistory(false)} />
         <div className="prompt-row">
-          {hasClasses && <HealthRing metrics={metrics} ghost={snap.ghost_health} onFix={(i) => run(api.fixIssue(i))} />}
+          {hasClasses && <HealthRing metrics={metrics} ghost={snap.ghost_health} onFix={(i) => run(api.fixIssue(i))} onFocus={focusIssue} />}
           <PromptBar onSubmit={submit} status={snap.pi_status} activity={activity} placeholder={placeholder} focusKey={focusKey} />
           {hasClasses && <div className="health-spacer" />}
         </div>
       </div>
 
+      {inline && <InlineEdit s={inline} onClose={() => setInline(null)} />}
       {hover && !prune && <HoverCard hoverKey={hover.key} at={hover.at} snap={snap} design={preview ?? view} metrics={metrics} />}
       {prune && (
         <FeedbackPopover

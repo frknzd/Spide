@@ -178,8 +178,8 @@ real code. Goal: make Spide a complete loop: **brief → decide → see conseque
 - [x] E2 `derive::system_view`, consistency issues
 - [x] E3 SystemView tab (Context/Container), tab renumbering, C4-PlantUML export + golden
 **G — friction**
-- [ ] G1 `apply_user_ops` command; drag-to-package; inline rename; `/add`
-- [ ] G2 pinning; issue → focus; `/focus <package>`
+- [x] G1 `apply_user_ops` command; drag-to-package; inline rename; `/add`
+- [x] G2 pinning; issue → focus; `/focus <package>`
 **Wrap-up**
 - [ ] README (features, commands, files), PLAN.md link, skill review
 
