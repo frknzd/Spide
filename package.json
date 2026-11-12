@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "app": ". \"$HOME/.cargo/env\" 2>/dev/null; tauri dev",
+    "app:build": ". \"$HOME/.cargo/env\" 2>/dev/null; tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

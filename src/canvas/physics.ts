@@ -216,7 +216,14 @@ export class LivingLayout {
     }
     if (this.settleTimer) clearTimeout(this.settleTimer);
     this.settleTimer = setTimeout(() => this.onSettle(), 1200);
+    // a tense design never settles: persist positions now and then anyway
+    const now = performance.now();
+    if (now - this.lastSave > 6000) {
+      this.lastSave = now;
+      this.onSettle();
+    }
   }
+  private lastSave = performance.now();
 
   update(specs: NodeSpec[], links: LinkSpec[], tension: number) {
     const before = new Set(this.nodes.keys());

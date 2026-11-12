@@ -106,7 +106,7 @@ Spide/
 ## Reuse
 - pi RPC: `pi --mode rpc` JSONL (`pi-coding-agent/docs/rpc.md`, `rpc-commands.md`, `json.md`); wait for `agent_settled`.
 - pi MCP: project `.pi/mcp.json`, streamable HTTP (SSE unsupported) (`docs/mcp.md`).
-- Crates: `tauri` v2, `rmcp` (streamable-http server), `serde`, `notify`, `resvg`/`usvg`/`tiny-skia`, `petgraph` (SCC), `tokio`.
+- Crates: `tauri` v2, ~~`rmcp`~~ (replaced by a small axum-based streamable-HTTP MCP server, see README), `serde`, `notify`, `resvg`/`usvg`/`tiny-skia`, `petgraph` (SCC), `tokio`.
 - npm: `react`, `vite`, `@tauri-apps/api`, `d3-force`, `elkjs`, `framer-motion`.
 - Env: macOS 26 arm64, Xcode CLT present, Node 26, pi 1.5.2. **Rust to install via rustup** (approved).
 
@@ -123,7 +123,7 @@ Spide/
 - [x] 9. `design.json` file watcher → diff → proposals.
 - [x] 10. Derived tabs: Domain + Package (deterministic), Use Case + Sequence (agent, with validation + stale marker); prune/feedback in tabs.
 - [x] 11. Export: JSON save/load, PlantUML per diagram (+ golden tests rendered with PlantUML if available), PNG via resvg.
-- [ ] 12. README with run instructions; polish pass on visuals.
+- [x] 12. README with run instructions; polish pass on visuals.
 
 ## Verification
 - `cargo test -p spide-core`: ops/undo, metrics on fixture designs (known cycle, god class, layer violation), derivations, PlantUML golden files.

@@ -37,6 +37,24 @@ fn pi_binary() -> PathBuf {
     PathBuf::from("pi")
 }
 
+fn in_path(bin: &str, path: &str) -> bool {
+    std::env::split_paths(path).any(|d| d.join(bin).exists())
+}
+
+/// Apps started from Finder get a minimal PATH without node (pi needs it).
+/// Borrow the user's login-shell PATH in that case.
+fn child_path() -> Option<String> {
+    let cur = std::env::var("PATH").unwrap_or_default();
+    if in_path("node", &cur) {
+        return None;
+    }
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let out = Command::new(shell).args(["-ilc", "printf '__P__%s' \"$PATH\""]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let p = text.rsplit("__P__").next()?.trim().to_string();
+    (!p.is_empty()).then(|| format!("{p}:{cur}"))
+}
+
 /// Write `.pi/mcp.json` (project-local) so pi — and any pi you start in a
 /// terminal in this folder — connects to Spide's MCP server.
 pub fn write_mcp_config(project: &Path, url: &str) -> std::io::Result<()> {
@@ -91,6 +109,9 @@ impl PiBridge {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(path) = child_path() {
+            cmd.env("PATH", path);
+        }
         if let Ok(extra) = std::env::var("SPIDE_PI_ARGS") {
             cmd.args(extra.split_whitespace());
         }
