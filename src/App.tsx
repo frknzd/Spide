@@ -1,0 +1,289 @@
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Canvas, type CanvasApi } from "./canvas/Canvas";
+import type { DiagramData } from "./canvas/DiagramContent";
+import type { ViewportApi } from "./canvas/Viewport";
+import { standaloneSvg } from "./export/svg";
+import { api } from "./state/api";
+import { on, useAgentFeed, useSnapshot } from "./state/store";
+import type { Design, Tab, Target } from "./state/types";
+import { AnswerBubble } from "./ui/AnswerBubble";
+import { HealthRing, ProposalBar, Tabs, Toasts, type Toast } from "./ui/Chrome";
+import { DecisionPanel } from "./ui/DecisionCard";
+import { FeedbackPopover, type PruneState } from "./ui/FeedbackPopover";
+import { HoverCard } from "./ui/HoverCard";
+import { PromptBar } from "./ui/PromptBar";
+import { PackageView } from "./views/PackageView";
+import { SequenceView } from "./views/SequenceView";
+import { UseCaseView } from "./views/UseCaseView";
+
+const TAB_ORDER: Tab[] = ["class", "domain", "package", "usecase", "sequence"];
+const TAB_TITLE: Record<Tab, string> = { class: "Class diagram", domain: "Domain model", package: "Package diagram", usecase: "Use case diagram", sequence: "Sequence diagram" };
+
+export default function App() {
+  const snap = useSnapshot();
+  const { entries, activity } = useAgentFeed();
+  const [tab, setTab] = useState<Tab>("class");
+  const [hover, setHover] = useState<{ key: string; at: { x: number; y: number } } | null>(null);
+  const [prune, setPrune] = useState<PruneState | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [history, setHistory] = useState(false);
+  const [preview, setPreview] = useState<Design | null>(null);
+  const [focusKey, setFocusKey] = useState(0);
+  const [scenario, setScenario] = useState<string | null>(null);
+  const canvasRef = useRef<CanvasApi>(null);
+  const vpRef = useRef<ViewportApi | null>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastSeq = useRef(0);
+
+  const toast = useCallback((kind: string, text: string) => setToasts((t) => [...t.slice(-3), { id: ++toastSeq.current, kind, text }]), []);
+  const run = useCallback((p: Promise<unknown>) => p.catch((e) => toast("error", String(e))), [toast]);
+
+  useEffect(() => {
+    const un = on<{ kind: string; text: string }>("toast", (e) => toast(e.payload.kind, e.payload.text));
+    return () => void un.then((f) => f());
+  }, [toast]);
+
+  const view = snap?.view;
+  const metrics = snap?.metrics;
+  const hasClasses = !!view && view.classes.length > 0;
+
+  // ------------------------------------------------------------ actions
+  const doPrune = useCallback(
+    (targets: Target[], at: { x: number; y: number }) => {
+      const proposals = targets.filter((t) => t.kind === "proposal") as { kind: "proposal"; id: string }[];
+      const rest = targets.filter((t) => t.kind !== "proposal");
+      Promise.all([...proposals.map((p) => api.reject(p.id)), rest.length ? api.prune(rest) : Promise.resolve()])
+        .then(() => setPrune({ targets, at }))
+        .catch((e) => toast("error", String(e)));
+      setHover(null);
+    },
+    [toast],
+  );
+
+  const onClickTarget = useCallback(
+    (t: Target) => {
+      if (!view) return;
+      if (t.kind === "proposal") return void run(api.accept(t.id));
+      const pruned =
+        (t.kind === "class" && view.classes.find((c) => c.name === t.name)?.status === "pruned") ||
+        (t.kind === "relation" && view.relations.find((r) => r.id === t.id)?.status === "pruned");
+      if (pruned) return void run(api.restore(t));
+      if (t.kind === "use_case") {
+        setScenario(t.name);
+        setTab("sequence");
+      }
+    },
+    [view, run],
+  );
+
+  const onHover = useCallback((key: string | null, at: { x: number; y: number }) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    if (!key) {
+      hoverTimer.current = setTimeout(() => setHover(null), 80);
+      return;
+    }
+    hoverTimer.current = setTimeout(() => setHover({ key, at }), 260);
+  }, []);
+
+  const exportPng = async () => {
+    const vp = tab === "class" || tab === "domain" ? canvasRef.current?.viewport() : vpRef.current;
+    if (!vp) return toast("error", "nothing to export");
+    const svg = standaloneSvg(vp, `${view?.name ?? "Design"} — ${TAB_TITLE[tab]}`);
+    if (!svg) return toast("error", "nothing to export");
+    const path = await saveDialog({ defaultPath: `${slug(view?.name)}-${tab}.png`, filters: [{ name: "PNG", extensions: ["png"] }] });
+    if (!path) return;
+    await run(api.exportPng(svg, path, 2).then(() => toast("info", `exported ${path}`)));
+  };
+  const exportPuml = async () => {
+    const path = await saveDialog({ defaultPath: `${slug(view?.name)}-${tab}.puml`, filters: [{ name: "PlantUML", extensions: ["puml"] }] });
+    if (!path) return;
+    await run(api.exportPlantUml(tab, path).then(() => toast("info", `exported ${path}`)));
+  };
+
+  const command = async (text: string) => {
+    const [cmd, ...args] = text.split(" ");
+    const arg = args.join(" ").trim();
+    switch (cmd) {
+      case "/undo": return run(api.undo());
+      case "/redo": return run(api.redo());
+      case "/accept": return run(api.acceptAll());
+      case "/reject": return run(Promise.all((view?.proposals ?? []).map((p) => api.reject(p.id))));
+      case "/tidy": return canvasRef.current?.tidy();
+      case "/fit": return tab === "class" || tab === "domain" ? canvasRef.current?.fit() : vpRef.current?.fit();
+      case "/pruned": return run(api.setShowPruned(!view?.settings.show_pruned));
+      case "/strict": return run(api.setExaminer(true).then(() => toast("info", "examiner: strict — no overruling")));
+      case "/lenient": return run(api.setExaminer(false).then(() => toast("info", "examiner: lenient — you may overrule")));
+      case "/history": return setHistory((h) => !h);
+      case "/stop": return run(api.abort());
+      case "/agent": return run(api.restartAgent().then(() => toast("info", "agent restarted")));
+      case "/folder": return run(api.reveal());
+      case "/name": return arg ? run(api.setName(arg)) : toast("error", "usage: /name <title>");
+      case "/export":
+        if (arg.startsWith("p")) return arg.startsWith("png") ? exportPng() : exportPuml();
+        return toast("error", "usage: /export png | /export puml");
+      case "/save": {
+        const path = await saveDialog({ defaultPath: `${slug(view?.name)}.json`, filters: [{ name: "Spide design", extensions: ["json"] }] });
+        if (path) await run(api.saveAs(path).then(() => toast("info", `saved ${path}`)));
+        return;
+      }
+      case "/open": {
+        const path = await openDialog({ multiple: false, filters: [{ name: "Spide design", extensions: ["json"] }] });
+        if (typeof path === "string") await run(api.open(path));
+        return;
+      }
+      case "/new": {
+        const dir = await openDialog({ directory: true, multiple: false, title: "Folder for the new design" });
+        if (typeof dir === "string") await run(api.newDesign(dir));
+        return;
+      }
+      default:
+        toast("error", `unknown command ${cmd}`);
+    }
+  };
+
+  const submit = (text: string) => {
+    if (text.startsWith("/")) return void command(text);
+    run(api.prompt(text, tab));
+  };
+
+  // ------------------------------------------------------------ keyboard
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const inField = (e.target as HTMLElement)?.closest?.("textarea, input");
+      if (e.metaKey && !e.altKey) {
+        const n = Number(e.key);
+        if (n >= 1 && n <= 5) {
+          e.preventDefault();
+          setTab(TAB_ORDER[n - 1]);
+          return;
+        }
+        if (e.key === "z" && !inField) {
+          e.preventDefault();
+          run(e.shiftKey ? api.redo() : api.undo());
+          return;
+        }
+        if (e.key === "j") {
+          e.preventDefault();
+          setHistory((h) => !h);
+          return;
+        }
+        if (e.key === "s") {
+          e.preventDefault();
+          command("/save");
+          return;
+        }
+        if (e.key === "o") {
+          e.preventDefault();
+          command("/open");
+          return;
+        }
+        if (e.key === "e") {
+          e.preventDefault();
+          e.shiftKey ? exportPuml() : exportPng();
+          return;
+        }
+      }
+      if (e.key === "Escape") {
+        setPrune(null);
+        setHistory(false);
+        setHover(null);
+      }
+      if (!inField && !e.metaKey && !e.ctrlKey && e.key.length === 1) setFocusKey((k) => k + 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  // ------------------------------------------------------------ data per tab
+  const classData: DiagramData | null = useMemo(() => {
+    if (!view || !metrics) return null;
+    const d = preview ?? view;
+    return { classes: d.classes, relations: d.relations, packages: d.packages, metrics, implicit: preview ? [] : metrics.implicit_edges };
+  }, [view, metrics, preview]);
+
+  const domainData: DiagramData | null = useMemo(() => {
+    if (!snap) return null;
+    const dm = snap.derived.domain;
+    return {
+      classes: dm.classes.map((c) => ({ ...c, package: null, is_abstract: false, methods: [], responsibilities: [], rationale: null, proposal: null, feedback: null })),
+      relations: dm.relations,
+      packages: [],
+      metrics: null,
+    };
+  }, [snap]);
+
+  if (!snap || !view || !metrics) return <div className="app" />;
+
+  const pending = view.decisions.filter((d) => d.state === "open" || d.state === "evaluating" || d.state === "rejected");
+  const stale: Partial<Record<Tab, boolean>> = { usecase: snap.derived.use_cases_stale, sequence: snap.derived.stale_sequences.length > 0 };
+  const placeholder = hasClasses ? "Tell the architect what to change…   ( / for commands )" : "What are we designing?  e.g. “let's start a class diagram for a library system”";
+
+  return (
+    <div className={`app ${hasClasses ? "" : "empty"}`}>
+      <div className="titlebar" data-tauri-drag-region />
+      <div className="stage">
+        {tab === "class" && classData && (
+          <Canvas ref={canvasRef} key="class" viewKey="class" data={classData} saved={view.layout["class"]} tension={preview ? 0 : metrics.tension}
+            onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} />
+        )}
+        {tab === "domain" && domainData && (
+          <Canvas ref={canvasRef} key="domain" viewKey="domain" data={domainData} saved={view.layout["domain"] ?? view.layout["class"]} showMethods={false} tension={0}
+            onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} />
+        )}
+        {tab === "package" && <PackageView snap={snap} vpRef={vpRef} onPrune={doPrune} onHover={onHover} onClickTarget={onClickTarget} />}
+        {tab === "usecase" && <UseCaseView snap={snap} vpRef={vpRef} onPrune={doPrune} onHover={onHover} onClickTarget={onClickTarget} onRegenerate={() => run(api.regenerate("usecase"))} />}
+        {tab === "sequence" && (
+          <SequenceView snap={snap} vpRef={vpRef} onPrune={doPrune} onHover={onHover} onClickTarget={onClickTarget}
+            selected={scenario} onSelect={setScenario} onGenerate={(s) => run(api.regenerate("sequence", s ?? undefined))} />
+        )}
+      </div>
+
+      {hasClasses && (
+        <>
+          <div className="top-left" data-ui>
+            <span className="design-name">{view.name}</span>
+            {preview && <span className="preview-tag">previewing option</span>}
+          </div>
+          <Tabs tab={tab} onTab={setTab} stale={stale} />
+        </>
+      )}
+
+      {pending.length > 0 && <DecisionPanel decisions={pending} snap={snap} onPreview={setPreview} toast={toast} />}
+
+      <div className="bottom">
+        <ProposalBar count={view.proposals.length} onAccept={() => run(api.acceptAll())}
+          onReject={() => run(Promise.all(view.proposals.map((p) => api.reject(p.id))))} />
+        <AnswerBubble entries={entries} history={history} onCloseHistory={() => setHistory(false)} />
+        <div className="prompt-row">
+          {hasClasses && <HealthRing metrics={metrics} ghost={snap.ghost_health} />}
+          <PromptBar onSubmit={submit} status={snap.pi_status} activity={activity} placeholder={placeholder} focusKey={focusKey} />
+          {hasClasses && <div className="health-spacer" />}
+        </div>
+      </div>
+
+      {hover && !prune && <HoverCard hoverKey={hover.key} at={hover.at} snap={snap} design={preview ?? view} metrics={metrics} />}
+      {prune && (
+        <FeedbackPopover
+          prune={prune}
+          onClose={() => setPrune(null)}
+          onUndo={() => {
+            setPrune(null);
+            run(api.undo());
+          }}
+          onSend={(text) => {
+            const targets = prune.targets;
+            setPrune(null);
+            run(api.pruneFeedback(targets, text, tab));
+          }}
+        />
+      )}
+      <Toasts toasts={toasts} onDone={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
+      {snap.pi_status === "offline" && snap.pi_error && <div className="pi-error" data-ui>agent: {snap.pi_error}</div>}
+    </div>
+  );
+}
+
+function slug(s?: string) {
+  return (s ?? "design").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "design";
+}

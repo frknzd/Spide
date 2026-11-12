@@ -1,0 +1,45 @@
+{
+  "name": "Library system",
+  "packages": [
+    {"name": "ui", "layer": "ui"},
+    {"name": "application", "layer": "application"},
+    {"name": "domain", "layer": "domain"},
+    {"name": "infrastructure", "layer": "infrastructure"}
+  ],
+  "classes": [
+    {"name": "LoanController", "stereotype": "controller", "package": "ui",
+     "methods": [{"name": "borrow", "params": [{"name": "memberId", "type": "String"}, {"name": "isbn", "type": "String"}], "returns": "Loan", "calls": ["LendingService.lend"]}]},
+    {"name": "LendingService", "stereotype": "service", "package": "application",
+     "attributes": [{"name": "loans", "type": "LoanRepository", "visibility": "private"}, {"name": "catalog", "type": "Catalog", "visibility": "private"}],
+     "methods": [{"name": "lend", "params": [{"name": "member", "type": "Member"}, {"name": "copy", "type": "BookCopy"}], "returns": "Loan", "uses": ["loans", "catalog"], "calls": ["Member.canBorrow", "LoanRepository.save"]},
+                 {"name": "giveBack", "params": [{"name": "loan", "type": "Loan"}], "uses": ["loans"]}],
+     "responsibilities": ["coordinate lending", "enforce loan limits"]},
+    {"name": "Catalog", "stereotype": "entity", "package": "domain",
+     "attributes": [{"name": "books", "type": "List<Book>", "visibility": "private"}],
+     "methods": [{"name": "find", "params": [{"name": "isbn", "type": "String"}], "returns": "Book", "uses": ["books"]}]},
+    {"name": "Book", "stereotype": "entity", "package": "domain",
+     "attributes": [{"name": "isbn", "type": "String", "visibility": "private"}, {"name": "title", "type": "String", "visibility": "private"}, {"name": "author", "type": "String", "visibility": "private"}]},
+    {"name": "BookCopy", "stereotype": "entity", "package": "domain",
+     "attributes": [{"name": "barcode", "type": "String", "visibility": "private"}, {"name": "available", "type": "boolean", "visibility": "private"}],
+     "methods": [{"name": "isAvailable", "returns": "boolean", "uses": ["available"]}]},
+    {"name": "Member", "stereotype": "entity", "package": "domain",
+     "attributes": [{"name": "id", "type": "String", "visibility": "private"}, {"name": "name", "type": "String", "visibility": "private"}, {"name": "loans", "type": "List<Loan>", "visibility": "private"}],
+     "methods": [{"name": "canBorrow", "returns": "boolean", "uses": ["loans"]}, {"name": "notify", "params": [{"name": "msg", "type": "String"}], "calls": ["LoanController.borrow"]}]},
+    {"name": "Loan", "stereotype": "entity", "package": "domain",
+     "attributes": [{"name": "due", "type": "Date", "visibility": "private"}, {"name": "returned", "type": "boolean", "visibility": "private"}],
+     "methods": [{"name": "isOverdue", "params": [{"name": "today", "type": "Date"}], "returns": "boolean", "uses": ["due", "returned"]}]},
+    {"name": "LoanRepository", "stereotype": "repository", "package": "infrastructure",
+     "methods": [{"name": "save", "params": [{"name": "loan", "type": "Loan"}]}, {"name": "findByMember", "params": [{"name": "m", "type": "Member"}], "returns": "List<Loan>"}]},
+    {"name": "NotificationLog", "package": "infrastructure"}
+  ],
+  "relations": [
+    {"id": "LoanController->LendingService:dependency", "from": "LoanController", "to": "LendingService", "kind": "dependency"},
+    {"id": "LendingService->LoanRepository:association", "from": "LendingService", "to": "LoanRepository", "kind": "association", "directed": true, "to_mult": "1"},
+    {"id": "LendingService->Catalog:association", "from": "LendingService", "to": "Catalog", "kind": "association", "directed": true, "to_mult": "1"},
+    {"id": "Catalog->Book:composition", "from": "Catalog", "to": "Book", "kind": "composition", "from_mult": "1", "to_mult": "*"},
+    {"id": "Book->BookCopy:composition", "from": "Book", "to": "BookCopy", "kind": "composition", "from_mult": "1", "to_mult": "1..*"},
+    {"id": "Loan->BookCopy:association", "from": "Loan", "to": "BookCopy", "kind": "association", "directed": true, "to_mult": "1", "label": "lends"},
+    {"id": "Member->Loan:association", "from": "Member", "to": "Loan", "kind": "association", "directed": false, "from_mult": "1", "to_mult": "0..5", "label": "holds"},
+    {"id": "Member->LoanController:dependency", "from": "Member", "to": "LoanController", "kind": "dependency"}
+  ]
+}

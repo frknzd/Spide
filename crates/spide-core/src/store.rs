@@ -183,7 +183,7 @@ impl Store {
         let summary = summarize(&p.ops);
         self.mutate("user", format!("accepted {id}: {summary}"), |d| {
             let mut next = apply_all(d, &p.ops, Mode::Commit(Status::Accepted))?;
-            if let Some(r) = &p.rationale {
+            if let Some(r) = p.rationale.as_ref().filter(|_| p.source == "agent") {
                 for name in p.ops.iter().flat_map(|o| match o {
                     Op::AddClass { name, rationale: None, .. } => Some(name.clone()),
                     _ => None,

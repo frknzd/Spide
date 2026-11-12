@@ -1,0 +1,111 @@
+import { useEffect, useRef, useState } from "react";
+import type { PiStatus } from "../state/types";
+
+export const COMMANDS: { cmd: string; help: string }[] = [
+  { cmd: "/undo", help: "undo (⌘Z)" },
+  { cmd: "/redo", help: "redo (⇧⌘Z)" },
+  { cmd: "/accept", help: "accept all ghost proposals" },
+  { cmd: "/reject", help: "reject all ghost proposals" },
+  { cmd: "/tidy", help: "re-layout the diagram" },
+  { cmd: "/fit", help: "fit diagram to screen (or double-click)" },
+  { cmd: "/pruned", help: "show / hide pruned elements" },
+  { cmd: "/strict", help: "strict examiner: no overruling" },
+  { cmd: "/lenient", help: "lenient examiner: you may overrule" },
+  { cmd: "/history", help: "conversation history (⌘J)" },
+  { cmd: "/export png", help: "export current diagram as PNG" },
+  { cmd: "/export puml", help: "export current diagram as PlantUML" },
+  { cmd: "/save", help: "save a copy of the design (JSON)" },
+  { cmd: "/open", help: "open a design (JSON)" },
+  { cmd: "/new", help: "new design in a folder" },
+  { cmd: "/name", help: "/name <title> — rename the design" },
+  { cmd: "/stop", help: "stop the agent" },
+  { cmd: "/agent restart", help: "restart the agent (pi)" },
+  { cmd: "/folder", help: "reveal the project folder" },
+];
+
+interface Props {
+  onSubmit: (text: string) => void;
+  status: PiStatus;
+  activity: string | null;
+  placeholder: string;
+  focusKey: number;
+}
+
+export function PromptBar(p: Props) {
+  const [text, setText] = useState("");
+  const [hist, setHist] = useState<string[]>([]);
+  const [hi, setHi] = useState(-1);
+  const ta = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => ta.current?.focus(), [p.focusKey]);
+  useEffect(() => {
+    const el = ta.current;
+    if (!el) return;
+    el.style.height = "0px";
+    el.style.height = Math.min(160, el.scrollHeight) + "px";
+  }, [text]);
+
+  const suggestions = text.startsWith("/") && !text.includes("\n") ? COMMANDS.filter((c) => c.cmd.startsWith(text.split(" ")[0]) || c.cmd.startsWith(text)) : [];
+
+  const submit = () => {
+    const t = text.trim();
+    if (!t) return;
+    p.onSubmit(t);
+    setHist((h) => [...h.filter((x) => x !== t), t].slice(-50));
+    setHi(-1);
+    setText("");
+  };
+
+  return (
+    <div className="prompt-wrap" data-ui>
+      {suggestions.length > 0 && (
+        <div className="cmd-list">
+          {suggestions.slice(0, 8).map((c) => (
+            <div key={c.cmd} className="cmd" onMouseDown={(e) => { e.preventDefault(); setText(c.cmd + (c.cmd === "/name" ? " " : "")); ta.current?.focus(); }}>
+              <span>{c.cmd}</span>
+              <em>{c.help}</em>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className={`prompt ${p.status === "busy" ? "busy" : ""}`}>
+        <span className={`dot ${p.status}`} title={`agent: ${p.status}`} />
+        <textarea
+          ref={ta}
+          rows={1}
+          value={text}
+          spellCheck={false}
+          placeholder={p.placeholder}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              if (suggestions.length === 1 && text !== suggestions[0].cmd && !text.includes(" ")) setText(suggestions[0].cmd);
+              else submit();
+            } else if (e.key === "Tab" && suggestions.length) {
+              e.preventDefault();
+              setText(suggestions[0].cmd + " ");
+            } else if (e.key === "ArrowUp" && !text.includes("\n") && hist.length && (text === "" || hi >= 0)) {
+              e.preventDefault();
+              const i = hi < 0 ? hist.length - 1 : Math.max(0, hi - 1);
+              setHi(i);
+              setText(hist[i]);
+            } else if (e.key === "ArrowDown" && hi >= 0) {
+              e.preventDefault();
+              const i = hi + 1;
+              if (i >= hist.length) {
+                setHi(-1);
+                setText("");
+              } else {
+                setHi(i);
+                setText(hist[i]);
+              }
+            } else if (e.key === "Escape") {
+              (e.target as HTMLTextAreaElement).blur();
+            }
+          }}
+        />
+      </div>
+      <div className="prompt-activity">{p.activity ?? (p.status === "offline" ? "agent offline — /agent restart" : "")}</div>
+    </div>
+  );
+}
