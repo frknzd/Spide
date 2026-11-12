@@ -29,6 +29,8 @@ interface Props {
   onDragEnd?: () => void;
   initial?: Transform;
   empty?: boolean;
+  /** screen space reserved on the right (e.g. decision panel) */
+  insetRight?: number;
 }
 
 const parseTarget = (el: Element | null): Target | null => {
@@ -75,12 +77,15 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
     anim.current = requestAnimationFrame(step);
   };
 
+  const insetRef = useRef(0);
+  insetRef.current = p.insetRight ?? 0;
   const fit = useCallback((animate = true) => {
     const w = worldRef.current;
     const s = svgRef.current;
     if (!w || !s) return;
     const b = w.getBBox();
-    const r = s.getBoundingClientRect();
+    const full = s.getBoundingClientRect();
+    const r = { width: full.width - insetRef.current, height: full.height };
     if (b.width === 0 || r.width === 0) return;
     const margin = 90;
     const bottom = 150; // keep clear of the prompt

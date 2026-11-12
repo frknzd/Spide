@@ -86,7 +86,8 @@ impl PiBridge {
             .arg(spide_dir.join("sessions"))
             .arg("--append-system-prompt")
             .arg(&skill_path)
-            .args(["--tools", "read,ls,grep,find"])
+            // read-only built-ins + Spide's MCP tools (an allowlist without mcp__ entries drops MCP tools)
+            .args(["--tools", "read,ls,grep,find,mcp__spide__*"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -244,6 +245,12 @@ fn handle_record(st: &AppState, stdin: &Arc<Mutex<ChildStdin>>, v: &Value) {
         "agent_start" => set(PiStatus::Busy),
         "agent_settled" => {
             set(PiStatus::Idle);
+            // a defence the examiner never ruled on must not stay stuck
+            let stuck = st.lock().store.release_stuck_evaluations();
+            if stuck > 0 {
+                st.changed();
+                st.toast("error", "The examiner didn't give a verdict — defend again.");
+            }
             emit(json!({"kind": "settled"}));
         }
         "message_start" => {

@@ -355,6 +355,25 @@ impl Store {
         })
     }
 
+    /// Evaluating decisions without verdict → Rejected with a note. Returns how many.
+    pub fn release_stuck_evaluations(&mut self) -> usize {
+        let n = self.design.decisions.iter().filter(|d| d.state == DecisionState::Evaluating).count();
+        if n == 0 {
+            return 0;
+        }
+        let _ = self.mutate("spide", "examiner gave no verdict", |d| {
+            for dec in d.decisions.iter_mut().filter(|x| x.state == DecisionState::Evaluating) {
+                dec.state = DecisionState::Rejected;
+                if let Some(a) = dec.attempts.last_mut() {
+                    a.verdict = Some("none".into());
+                    a.feedback = Some("The examiner gave no verdict (agent problem). Defend again.".into());
+                }
+            }
+            Ok(())
+        });
+        n
+    }
+
     pub fn dismiss_decision(&mut self, id: &str) -> Result<(), OpError> {
         self.decision(id)?;
         self.mutate("user", format!("dismissed {id}"), |d| {

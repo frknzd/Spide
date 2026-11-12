@@ -213,6 +213,11 @@ export default function App() {
     };
   }, [snap]);
 
+  const pendingCount = view?.decisions.filter((d) => d.state === "open" || d.state === "evaluating" || d.state === "rejected").length ?? 0;
+  useEffect(() => {
+    if (pendingCount) setTimeout(() => canvasRef.current?.fit(), 50);
+  }, [pendingCount]);
+
   if (!snap || !view || !metrics) return <div className="app" />;
 
   const pending = view.decisions.filter((d) => d.state === "open" || d.state === "evaluating" || d.state === "rejected");
@@ -225,7 +230,7 @@ export default function App() {
       <div className="stage">
         {tab === "class" && classData && (
           <Canvas ref={canvasRef} key="class" viewKey="class" data={classData} saved={view.layout["class"]} tension={preview ? 0 : metrics.tension}
-            onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} />
+            onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} insetRight={pendingCount ? 450 : 0} />
         )}
         {tab === "domain" && domainData && (
           <Canvas ref={canvasRef} key="domain" viewKey="domain" data={domainData} saved={view.layout["domain"] ?? view.layout["class"]} showMethods={false} tension={0}

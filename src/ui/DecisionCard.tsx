@@ -135,16 +135,19 @@ function MiniPreview({ pv }: { pv?: OptionPreview }) {
   const sub = useMemo(() => {
     if (!pv?.design) return null;
     const d = pv.design;
-    const focus = new Set(pv.focus);
-    // include everything changed by the option
-    for (const c of d.classes) if (c.status !== "accepted" || c.attributes.some((a) => a.status !== "accepted") || c.methods.some((m) => m.status !== "accepted")) focus.add(c.name);
-    for (const r of d.relations) if (r.status !== "accepted") (focus.add(r.from), focus.add(r.to));
-    const keep = new Set(focus);
+    // what the option adds/changes …
+    const changed = new Set<string>();
+    for (const c of d.classes) if (c.status !== "accepted" || c.attributes.some((a) => a.status !== "accepted") || c.methods.some((m) => m.status !== "accepted")) changed.add(c.name);
+    for (const r of d.relations) if (r.status !== "accepted") (changed.add(r.from), changed.add(r.to));
+    if (changed.size === 0) pv.focus.forEach((f) => changed.add(f));
+    // … plus a little context
+    const keep = new Set(changed);
     for (const r of d.relations) {
-      if (focus.has(r.from)) keep.add(r.to);
-      if (focus.has(r.to)) keep.add(r.from);
+      if (keep.size >= 6) break;
+      if (r.status !== "accepted" && changed.has(r.from)) keep.add(r.to);
     }
-    const classes = d.classes.filter((c) => keep.has(c.name)).slice(0, 9);
+    const focus = changed;
+    const classes = d.classes.filter((c) => keep.has(c.name)).slice(0, 7);
     const names = new Set(classes.map((c) => c.name));
     const relations = d.relations.filter((r) => names.has(r.from) && names.has(r.to));
     return { classes, relations, packages: d.packages, focus };
@@ -154,7 +157,7 @@ function MiniPreview({ pv }: { pv?: OptionPreview }) {
   useEffect(() => {
     if (!sub) return;
     let alive = true;
-    elkLayout(sub.classes.map((c) => ({ id: c.name, w: boxes.get(c.name)!.w, h: boxes.get(c.name)!.h })), sub.relations.map((r) => ({ from: r.from, to: r.to, kind: r.kind })))
+    elkLayout(sub.classes.map((c) => ({ id: c.name, w: boxes.get(c.name)!.w, h: boxes.get(c.name)!.h })), sub.relations.map((r) => ({ from: r.from, to: r.to, kind: r.kind })), "RIGHT")
       .then((p) => alive && setPos(p));
     return () => {
       alive = false;

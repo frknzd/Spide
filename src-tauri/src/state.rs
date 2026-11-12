@@ -80,6 +80,7 @@ impl AppState {
             match Design::from_json(&s) {
                 Ok(d) => {
                     store.load(d);
+                    store.release_stuck_evaluations();
                     last_written = Some(s);
                 }
                 Err(e) => eprintln!("spide: could not parse {}: {e}", path.display()),

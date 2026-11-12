@@ -24,6 +24,7 @@ interface Props {
   onClickTarget: (t: Target) => void;
   onHover: (key: string | null, at: { x: number; y: number }) => void;
   hoverKey: string | null;
+  insetRight?: number;
 }
 
 const LAYER_RANK: Record<Layer, number> = { ui: 0, infrastructure: 0, application: 1, domain: 2 };
@@ -134,6 +135,7 @@ export const Canvas = forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
       ref={vp}
       defs={<NodeDefs />}
       empty={p.data.classes.length === 0}
+      insetRight={p.insetRight}
       onPrune={p.onPrune}
       collect={collect}
       onClickTarget={(t) => p.onClickTarget(t)}
