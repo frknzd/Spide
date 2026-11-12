@@ -277,3 +277,7 @@ textarea { font: inherit; color: var(--text); background: transparent; border: n
 .loc.mid { color: var(--warn); }
 .loc.bad { color: var(--bad); }
 .stress-tag { color: var(--text); border-color: var(--line); pointer-events: none; }
+.hc-origin { margin-top: 7px; padding: 6px 8px; border-left: 2px solid var(--accent); background: rgba(122,162,255,.05); border-radius: 0 8px 8px 0; color: #c3c8d4; font-size: 12px; }
+.history-panel { z-index: 22; }
+.attempt { display: flex; flex-direction: column; gap: 4px; font-size: 13px; line-height: 1.45; }
+.verdict.accept { background: rgba(74,222,128,.07); border: 1px solid rgba(74,222,128,.3); color: #c6f6d5; }

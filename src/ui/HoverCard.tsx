@@ -31,6 +31,29 @@ function proposalNote(design: Design, id: string | null): ReactNode {
   );
 }
 
+/** "Why is this here?" — the decision, proposal or person that introduced an element. */
+export function originNote(design: Design, origin: string | null | undefined): ReactNode {
+  if (!origin) return null;
+  if (origin === "user") return <div className="hc-origin">added by you</div>;
+  if (origin === "import") return <div className="hc-origin">imported from code</div>;
+  const d = design.decisions.find((x) => x.id === origin);
+  if (d) {
+    const opt = d.options.find((o) => o.id === d.chosen);
+    const last = d.attempts[d.attempts.length - 1];
+    return (
+      <div className="hc-origin">
+        <div className="hc-h">why it's here · decision {d.id}{d.state === "overruled" ? " (overruled)" : ""}</div>
+        <div>{d.question}</div>
+        <div>→ <b>{opt?.label ?? d.custom ?? "?"}</b></div>
+        {last?.defense && <div className="faint">“{last.defense.length > 160 ? last.defense.slice(0, 157) + "…" : last.defense}”</div>}
+        <div className="faint small">click for the full decision</div>
+      </div>
+    );
+  }
+  const entry = design.log.find((l) => l.summary.startsWith(`accepted ${origin}:`));
+  return <div className="hc-origin">accepted proposal {origin}{entry ? <span className="faint"> · {new Date(entry.at).toLocaleString()}</span> : null}</div>;
+}
+
 export function HoverCard({ hoverKey, at, snap, design, metrics }: Props) {
   const [kind, ...rest] = hoverKey.split(":");
   const key = rest.join(":");
@@ -52,6 +75,7 @@ export function HoverCard({ hoverKey, at, snap, design, metrics }: Props) {
         {c.status === "overruled" && <div className="hc-warn">⚠ applied by overruling the examiner</div>}
         {c.status === "pruned" && <div className="hc-warn">pruned{c.feedback ? `: “${c.feedback}”` : ""} · click to restore</div>}
         {c.rationale && <div className="hc-rat">{c.rationale}</div>}
+        {c.status !== "proposed" && originNote(design, c.origin)}
         {c.responsibilities.length > 0 && (
           <div className="hc-sec">
             <div className="hc-h">responsibilities</div>
@@ -100,6 +124,7 @@ export function HoverCard({ hoverKey, at, snap, design, metrics }: Props) {
           <div className="hc-title mono"><b>{attrText(a)}</b></div>
           <div className="faint">attribute of {cls}{a.is_static ? " · static" : ""}</div>
           {a.status === "proposed" && proposalNote(design, a.proposal)}
+          {a.status !== "proposed" && a.origin !== c?.origin && originNote(design, a.origin)}
           {users.length > 0 && <div className="hc-sec">used by {users.join(", ")}</div>}
           <div className="faint small">right-click to prune</div>
         </>
@@ -112,6 +137,7 @@ export function HoverCard({ hoverKey, at, snap, design, metrics }: Props) {
           <div className="hc-title mono"><b>{methodText(m)}</b></div>
           <div className="faint">method of {cls}{m.is_abstract ? " · abstract" : ""}{m.is_static ? " · static" : ""}</div>
           {m.status === "proposed" && proposalNote(design, m.proposal)}
+          {m.status !== "proposed" && m.origin !== c?.origin && originNote(design, m.origin)}
           {m.description && <div className="hc-rat">{m.description}</div>}
           {m.uses.length > 0 && <div className="hc-sec">uses <span className="mono">{m.uses.join(", ")}</span></div>}
           {m.calls.length > 0 && <div className="hc-sec">calls <span className="mono">{m.calls.join(", ")}</span></div>}
@@ -132,6 +158,7 @@ export function HoverCard({ hoverKey, at, snap, design, metrics }: Props) {
         {r.label && <div className="hc-sec">“{r.label}”</div>}
         {r.status === "proposed" && proposalNote(design, r.proposal)}
         {r.rationale && <div className="hc-rat">{r.rationale}</div>}
+        {r.status !== "proposed" && originNote(design, r.origin)}
         {cyc && <div className="hc-bad">⟲ part of a dependency cycle — break it with an interface, an event, or by moving responsibility</div>}
         {lv && metrics.issues.filter((i) => i.rule && i.targets.includes(r.id)).map((i, k) => (
           <div key={k} className="hc-warn">⚠ {i.explain}{i.fix_hint && <div className="faint small">fix: {i.fix_hint}</div>}</div>

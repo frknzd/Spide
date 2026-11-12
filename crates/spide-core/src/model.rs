@@ -64,6 +64,8 @@ pub struct Attribute {
     pub multiplicity: Option<String>,
     pub status: Status,
     pub proposal: Option<String>,
+    /// Where it came from: decision id (D…), proposal id (P…), `user` or `import`.
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -90,6 +92,8 @@ pub struct Method {
     pub description: Option<String>,
     pub status: Status,
     pub proposal: Option<String>,
+    /// Where it came from: decision id (D…), proposal id (P…), `user` or `import`.
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -108,6 +112,8 @@ pub struct Class {
     pub aggregate_root: bool,
     pub status: Status,
     pub proposal: Option<String>,
+    /// Where it came from: decision id (D…), proposal id (P…), `user` or `import`.
+    pub origin: Option<String>,
     pub feedback: Option<String>,
 }
 
@@ -163,6 +169,8 @@ pub struct Relation {
     pub rationale: Option<String>,
     pub status: Status,
     pub proposal: Option<String>,
+    /// Where it came from: decision id (D…), proposal id (P…), `user` or `import`.
+    pub origin: Option<String>,
     pub feedback: Option<String>,
 }
 
@@ -234,6 +242,8 @@ pub struct Package {
     pub container: Option<String>,
     pub status: Status,
     pub proposal: Option<String>,
+    /// Where it came from: decision id (D…), proposal id (P…), `user` or `import`.
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

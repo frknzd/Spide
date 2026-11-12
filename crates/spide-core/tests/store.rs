@@ -163,3 +163,27 @@ fn restore_members() {
     assert_eq!(s.view().class("Book").unwrap().attributes.len(), 1);
     assert_eq!(s.view().class("Library").unwrap().methods.len(), 1);
 }
+
+#[test]
+fn provenance_is_stamped_on_commit() {
+    let mut s = library();
+    // library() accepted proposal P1
+    assert_eq!(s.design.class("Book").unwrap().origin.as_deref(), Some("P1"));
+    assert_eq!(s.design.class("Book").unwrap().attributes[0].origin.as_deref(), Some("P1"));
+    assert!(s.design.relations.iter().all(|r| r.origin.as_deref() == Some("P1")));
+    // a decision stamps its id
+    let opts: Vec<DecisionOption> = serde_json::from_str(r#"[{"label":"x","ops":[{"op":"add_class","name":"Fine"},{"op":"add_attribute","class":"Loan","attribute":{"name":"fine","type":"Fine"}}]}]"#).unwrap();
+    let d = s.propose_decision("Fines?".into(), None, opts).unwrap();
+    s.submit_defense(&d, Some("A".into()), None, "because".into()).unwrap();
+    s.evaluate_defense(&d, true, "ok".into(), None).unwrap();
+    assert_eq!(s.design.class("Fine").unwrap().origin.as_deref(), Some(d.as_str()));
+    assert_eq!(s.design.class("Loan").unwrap().origin.as_deref(), Some("P1"), "existing class keeps its origin");
+    let fine = s.design.class("Loan").unwrap().attributes.iter().find(|a| a.name == "fine").unwrap();
+    assert_eq!(fine.origin.as_deref(), Some(d.as_str()));
+    // user edits
+    s.apply_user(ops(r#"[{"op":"add_class","name":"Mine"}]"#)).unwrap();
+    assert_eq!(s.design.class("Mine").unwrap().origin.as_deref(), Some("user"));
+    // updates keep the origin
+    s.apply_user(ops(r#"[{"op":"update_attribute","class":"Book","name":"isbn","attribute":{"name":"isbn","type":"Isbn"}}]"#)).unwrap();
+    assert_eq!(s.design.class("Book").unwrap().attributes[0].origin.as_deref(), Some("P1"));
+}

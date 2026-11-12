@@ -13,6 +13,7 @@ import { HealthRing, ProposalBar, Tabs, Toasts, type Toast } from "./ui/Chrome";
 import { ChangeSection } from "./ui/ChangeSection";
 import { ComparePanel } from "./ui/ComparePanel";
 import { DecisionPanel } from "./ui/DecisionCard";
+import { DecisionHistory } from "./ui/DecisionHistory";
 import { FeedbackPopover, type PruneState } from "./ui/FeedbackPopover";
 import { HoverCard } from "./ui/HoverCard";
 import { PromptBar } from "./ui/PromptBar";
@@ -36,6 +37,7 @@ export default function App() {
   const [brief, setBrief] = useState(false);
   const [compare, setCompare] = useState<string | null>(null);
   const [stress, setStress] = useState<string | null>(null);
+  const [shownDecision, setShownDecision] = useState<string | null>(null);
   const [preview, setPreview] = useState<Design | null>(null);
   const [focusKey, setFocusKey] = useState(0);
   const [scenario, setScenario] = useState<string | null>(null);
@@ -74,6 +76,8 @@ export default function App() {
       if (!view) return;
       if (t.kind === "proposal") return void run(api.accept(t.id));
       if (isPruned(view, t)) return void run(api.restore(t));
+      const origin = originOf(view, t);
+      if (origin && view.decisions.some((d) => d.id === origin && !["open", "evaluating", "rejected"].includes(d.state))) return setShownDecision(origin);
       if (t.kind === "use_case") {
         setScenario(t.name);
         setTab("sequence");
@@ -252,6 +256,7 @@ export default function App() {
           canvasRef.current?.focus(null);
           setBrief(false);
           setStress(null);
+          setShownDecision(null);
         }
         setPrune(null);
         setHistory(false);
@@ -274,7 +279,7 @@ export default function App() {
     if (!snap) return null;
     const dm = snap.derived.domain;
     return {
-      classes: dm.classes.map((c) => ({ ...c, package: null, is_abstract: false, methods: [], responsibilities: [], rationale: null, aggregate_root: false, proposal: null, feedback: null })),
+      classes: dm.classes.map((c) => ({ ...c, package: null, is_abstract: false, methods: [], responsibilities: [], rationale: null, aggregate_root: false, proposal: null, feedback: null, origin: null })),
       relations: dm.relations,
       packages: [],
       metrics: null,
@@ -346,6 +351,7 @@ export default function App() {
           <RulesSection rules={view.rules} run={run} />
         </BriefPanel>
       )}
+      {shownDecision && pending.length === 0 && <DecisionHistory design={view} id={shownDecision} onClose={() => setShownDecision(null)} />}
       {pending.length > 0 && <DecisionPanel decisions={pending} snap={snap} onPreview={setPreview} toast={toast} onCompare={setCompare} />}
       {compare && view.decisions.find((x) => x.id === compare && (x.state === "open" || x.state === "rejected" || x.state === "evaluating")) && (
         <ComparePanel d={view.decisions.find((x) => x.id === compare)!} snap={snap} onClose={() => setCompare(null)} />
@@ -402,6 +408,18 @@ function isPruned(d: Design, t: Target): boolean {
     }
   })();
   return st === "pruned";
+}
+
+/** Origin (decision / proposal / user) of a clicked element. */
+function originOf(d: Design, t: Target): string | null {
+  const cls = (name: string) => d.classes.find((c) => c.name === name);
+  switch (t.kind) {
+    case "class": return cls(t.name)?.origin ?? null;
+    case "attribute": return cls(t.class)?.attributes.find((a) => a.name === t.name)?.origin ?? null;
+    case "method": return cls(t.class)?.methods.find((m) => m.name === t.name)?.origin ?? null;
+    case "relation": return d.relations.find((r) => r.id === t.id)?.origin ?? null;
+    default: return null;
+  }
 }
 
 /** Best class-name match: exact, then prefix, then substring (case-insensitive). */

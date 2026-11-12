@@ -8,10 +8,10 @@ fn live_classes(d: &Design) -> Vec<&Class> {
 }
 
 fn strip_attr(a: &Attribute) -> Attribute {
-    Attribute { status: Status::Accepted, proposal: None, ..a.clone() }
+    Attribute { status: Status::Accepted, proposal: None, origin: None, ..a.clone() }
 }
 fn strip_method(m: &Method) -> Method {
-    Method { status: Status::Accepted, proposal: None, ..m.clone() }
+    Method { status: Status::Accepted, proposal: None, origin: None, ..m.clone() }
 }
 
 pub fn diff(old: &Design, new: &Design) -> Vec<Op> {

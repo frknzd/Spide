@@ -76,7 +76,7 @@ fn diff_covers_forces() {
     b.forces[0].priority = 1;
     b.forces.push(Force { name: "New".into(), kind: ForceKind::Constraint, ..Default::default() });
     let d = diff(&a, &b);
-    let after = ops::apply_all(&a, &d, ops::Mode::Commit(Status::Accepted)).unwrap();
+    let after = ops::apply_all(&a, &d, ops::Mode::Commit(Status::Accepted, None)).unwrap();
     assert_eq!(after.forces, b.forces);
 }
 

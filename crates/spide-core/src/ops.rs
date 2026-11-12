@@ -137,8 +137,9 @@ fn err<T>(msg: impl Into<String>) -> Result<T, OpError> {
 /// How an op is applied.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mode<'a> {
-    /// Real change with the given status for new elements (Accepted / Overruled).
-    Commit(Status),
+    /// Real change with the given status for new elements (Accepted / Overruled) and their
+    /// origin (decision id, proposal id, `user`, `import`).
+    Commit(Status, Option<&'a str>),
     /// Ghost preview belonging to a proposal id.
     Ghost(&'a str),
 }
@@ -146,14 +147,20 @@ pub enum Mode<'a> {
 impl Mode<'_> {
     fn status(self) -> Status {
         match self {
-            Mode::Commit(s) => s,
+            Mode::Commit(s, _) => s,
             Mode::Ghost(_) => Status::Proposed,
         }
     }
     fn proposal(self) -> Option<String> {
         match self {
-            Mode::Commit(_) => None,
+            Mode::Commit(..) => None,
             Mode::Ghost(p) => Some(p.to_string()),
+        }
+    }
+    fn origin(self) -> Option<String> {
+        match self {
+            Mode::Commit(_, o) => o.map(String::from),
+            Mode::Ghost(_) => None,
         }
     }
     fn is_ghost(self) -> bool {
@@ -224,6 +231,7 @@ impl Op {
     pub fn apply(&self, d: &mut Design, mode: Mode) -> Result<(), OpError> {
         let st = mode.status();
         let prop = mode.proposal();
+        let origin = mode.origin();
         match self {
             Op::AddClass { name, stereotype, package, is_abstract, attributes, methods, responsibilities, rationale, aggregate_root } => {
                 if !valid_ident(name) {
@@ -236,8 +244,8 @@ impl Op {
                 if let Some(p) = package {
                     ensure_package(d, p, mode);
                 }
-                let mark_attr = |a: &Attribute| Attribute { status: st, proposal: prop.clone(), ..a.clone() };
-                let mark_m = |m: &Method| Method { status: st, proposal: prop.clone(), ..m.clone() };
+                let mark_attr = |a: &Attribute| Attribute { status: st, proposal: prop.clone(), origin: origin.clone(), ..a.clone() };
+                let mark_m = |m: &Method| Method { status: st, proposal: prop.clone(), origin: origin.clone(), ..m.clone() };
                 check_unique(attributes.iter().map(|a| &a.name), "attribute")?;
                 check_unique(methods.iter().map(|m| (&m.name, m.params.len())), "method")?;
                 d.classes.push(Class {
@@ -253,6 +261,7 @@ impl Op {
                     status: st,
                     proposal: prop,
                     feedback: None,
+                    origin,
                 });
             }
             Op::UpdateClass { name, stereotype, package, is_abstract, responsibilities, rationale, aggregate_root } => {
@@ -319,7 +328,7 @@ impl Op {
                     return err(format!("{class}.{} already exists", attribute.name));
                 }
                 c.attributes.retain(|a| a.name != attribute.name);
-                c.attributes.push(Attribute { status: st, proposal: prop, ..attribute.clone() });
+                c.attributes.push(Attribute { status: st, proposal: prop, origin, ..attribute.clone() });
             }
             Op::UpdateAttribute { class, name, attribute } => {
                 let c = live_class_mut(d, class)?;
@@ -329,7 +338,8 @@ impl Op {
                     .find(|a| a.name == *name && a.status != Status::Pruned)
                     .ok_or_else(|| OpError(format!("unknown attribute {class}.{name}")))?;
                 let keep = if mode.is_ghost() { st } else { a.status };
-                *a = Attribute { status: keep, proposal: prop, ..attribute.clone() };
+                let keep_origin = a.origin.clone();
+                *a = Attribute { status: keep, proposal: prop, origin: keep_origin, ..attribute.clone() };
                 if a.name.is_empty() {
                     a.name = name.clone();
                 }
@@ -359,7 +369,7 @@ impl Op {
                     return err(format!("{class}.{}() already exists; use update_method", method.name));
                 }
                 c.methods.retain(|m| !(m.name == method.name && m.params.len() == method.params.len()));
-                c.methods.push(Method { status: st, proposal: prop, ..method.clone() });
+                c.methods.push(Method { status: st, proposal: prop, origin, ..method.clone() });
             }
             Op::UpdateMethod { class, name, method } => {
                 let c = live_class_mut(d, class)?;
@@ -369,7 +379,8 @@ impl Op {
                     .find(|m| m.name == *name && m.status != Status::Pruned)
                     .ok_or_else(|| OpError(format!("unknown method {class}.{name}()")))?;
                 let keep = if mode.is_ghost() { st } else { m.status };
-                *m = Method { status: keep, proposal: prop, ..method.clone() };
+                let keep_origin = m.origin.clone();
+                *m = Method { status: keep, proposal: prop, origin: keep_origin, ..method.clone() };
                 if m.name.is_empty() {
                     m.name = name.clone();
                 }
@@ -416,6 +427,7 @@ impl Op {
                     status: st,
                     proposal: prop,
                     feedback: None,
+                    origin,
                 });
             }
             Op::UpdateRelation { from, to, kind, label, from_mult, to_mult, directed, interaction } => {
@@ -478,6 +490,7 @@ impl Op {
                     container: None,
                     status: st,
                     proposal: prop,
+                    origin,
                 });
             }
             Op::SetLayer { package, layer } => {
@@ -655,6 +668,7 @@ fn ensure_package(d: &mut Design, name: &str, mode: Mode) {
         container: None,
         status: mode.status(),
         proposal: mode.proposal(),
+        origin: mode.origin(),
     });
 }
 

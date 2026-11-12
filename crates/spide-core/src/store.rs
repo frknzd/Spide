@@ -136,7 +136,7 @@ impl Store {
         }
         let summary = summarize(&ops);
         self.mutate("user", summary, |d| {
-            *d = apply_all(d, &ops, Mode::Commit(Status::Accepted))?;
+            *d = apply_all(d, &ops, Mode::Commit(Status::Accepted, Some("user")))?;
             Ok(())
         })
     }
@@ -197,7 +197,7 @@ impl Store {
             .ok_or_else(|| OpError(format!("unknown proposal {id}")))?;
         let summary = summarize(&p.ops);
         self.mutate("user", format!("accepted {id}: {summary}"), |d| {
-            let mut next = apply_all(d, &p.ops, Mode::Commit(Status::Accepted))?;
+            let mut next = apply_all(d, &p.ops, Mode::Commit(Status::Accepted, Some(&p.id)))?;
             if let Some(r) = p.rationale.as_ref().filter(|_| p.source == "agent") {
                 for name in p.ops.iter().flat_map(|o| match o {
                     Op::AddClass { name, rationale: None, .. } => Some(name.clone()),
@@ -323,7 +323,7 @@ impl Store {
         };
         let verdict = if accept { "accept" } else { "reject" };
         self.mutate("examiner", format!("{verdict}ed defence for {id}"), |d| {
-            let mut next = if accept { apply_all(d, &ops, Mode::Commit(Status::Accepted))? } else { d.clone() };
+            let mut next = if accept { apply_all(d, &ops, Mode::Commit(Status::Accepted, Some(id)))? } else { d.clone() };
             let dec = next.decisions.iter_mut().find(|x| x.id == id).unwrap();
             if let Some(a) = dec.attempts.last_mut() {
                 a.verdict = Some(verdict.into());
@@ -361,7 +361,7 @@ impl Store {
             return Err(OpError("nothing concrete to apply: the examiner gave no ops for your custom answer".into()));
         }
         self.mutate("user", format!("overruled examiner on {id}"), |d| {
-            let mut next = apply_all(d, &ops, Mode::Commit(Status::Overruled))?;
+            let mut next = apply_all(d, &ops, Mode::Commit(Status::Overruled, Some(id)))?;
             let dec = next.decisions.iter_mut().find(|x| x.id == id).unwrap();
             dec.state = DecisionState::Overruled;
             dec.applied_ops = ops.clone();

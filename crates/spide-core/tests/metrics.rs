@@ -3,7 +3,7 @@ use spide_core::*;
 
 fn design(ops_json: &str) -> Design {
     let ops: Vec<Op> = serde_json::from_str(ops_json).unwrap();
-    ops::apply_all(&Design::default(), &ops, ops::Mode::Commit(Status::Accepted)).unwrap()
+    ops::apply_all(&Design::default(), &ops, ops::Mode::Commit(Status::Accepted, None)).unwrap()
 }
 
 #[test]

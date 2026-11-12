@@ -16,7 +16,7 @@ pub fn shop() -> Design {
                  {"op":"add_class","name":"Order","package":"domain","stereotype":"entity","aggregate_root":true,"methods":[{"name":"place"}]},
                  {"op":"add_class","name":"Stock","package":"domain","stereotype":"entity","aggregate_root":true,"methods":[{"name":"reserve"}]},
                  {"op":"add_class","name":"Line","package":"domain","stereotype":"entity","methods":[{"name":"price"}]}]"#),
-        ops::Mode::Commit(Status::Accepted),
+        ops::Mode::Commit(Status::Accepted, None),
     )
     .unwrap()
 }
@@ -114,7 +114,7 @@ fn quality_attribute_checks() {
         &d,
         &ops(r#"[{"op":"add_relation","from":"CartController","to":"Order","kind":"dependency"},
                  {"op":"add_relation","from":"CheckoutService","to":"Stock","kind":"dependency","interaction":"async"}]"#),
-        ops::Mode::Commit(Status::Accepted),
+        ops::Mode::Commit(Status::Accepted, None),
     )
     .unwrap();
     assert_eq!(d.relations[1].interaction, Interaction::Async);

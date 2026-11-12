@@ -13,7 +13,7 @@ fn base() -> Design {
                  {"op":"add_class","name":"Line","package":"domain"},
                  {"op":"add_relation","from":"OrderView","to":"Order","kind":"dependency"},
                  {"op":"add_relation","from":"Order","to":"Line","kind":"composition"}]"#),
-        ops::Mode::Commit(Status::Accepted),
+        ops::Mode::Commit(Status::Accepted, None),
     )
     .unwrap()
 }
@@ -35,7 +35,7 @@ fn cycle_introduced_and_rule_broken() {
 #[test]
 fn cycle_resolved() {
     let mut b = base();
-    b = ops::apply_all(&b, &ops(r#"[{"op":"add_relation","from":"Line","to":"Order","kind":"association"}]"#), ops::Mode::Commit(Status::Accepted)).unwrap();
+    b = ops::apply_all(&b, &ops(r#"[{"op":"add_relation","from":"Line","to":"Order","kind":"association"}]"#), ops::Mode::Commit(Status::Accepted, None)).unwrap();
     let i = impact_of_ops(&b, &ops(r#"[{"op":"remove_relation","from":"Line","to":"Order"}]"#)).unwrap();
     assert!(i.resolved_issues.iter().any(|m| m.contains("cycle")));
     assert!(i.health_delta() > 0);

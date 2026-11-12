@@ -13,6 +13,7 @@ export interface Attribute {
   multiplicity: string | null;
   status: Status;
   proposal: string | null;
+  origin: string | null;
 }
 export interface Param { name: string; type: string }
 export interface Method {
@@ -27,6 +28,7 @@ export interface Method {
   description: string | null;
   status: Status;
   proposal: string | null;
+  origin: string | null;
 }
 export interface Class {
   name: string;
@@ -41,6 +43,7 @@ export interface Class {
   status: Status;
   proposal: string | null;
   feedback: string | null;
+  origin: string | null;
 }
 export interface Relation {
   id: string;
@@ -56,6 +59,7 @@ export interface Relation {
   status: Status;
   proposal: string | null;
   feedback: string | null;
+  origin: string | null;
 }
 export interface Package { name: string; layer: Layer | null; description: string | null; container: string | null; status: Status; proposal: string | null }
 export type Op = { op: string; [k: string]: unknown };

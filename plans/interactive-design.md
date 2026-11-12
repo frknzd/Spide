@@ -163,9 +163,9 @@ real code. Goal: make Spide a complete loop: **brief → decide → see conseque
 **C — scenarios**
 - [x] C1 `scenarios.rs` scoring + `chatty_scenario`; SequenceView header
 - [x] C2 change scenarios model/ops/MCP `set_change_impact`, ripple/locality, staleness, `/stress`
-- [ ] C3 QA annotations + `sync_chain`/`spof`/`multi_aggregate_write` checks
+- [x] C3 QA annotations + `sync_chain`/`spof`/`multi_aggregate_write` checks
 **D — history & branches**
-- [ ] D1 `Origin` in `Mode::Commit`, stamping, HoverCard provenance
+- [x] D1 `Origin` in `Mode::Commit`, stamping, HoverCard provenance
 - [ ] D2 `.spide/history.jsonl` append + `history_at`; Timeline UI (preview, fork, restore)
 - [ ] D3 branches (create/switch/list/delete/compare/merge) + commands + UI
 **H — reality loop**

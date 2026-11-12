@@ -212,6 +212,6 @@ fn committed_base(d: &Design) -> Design {
 /// Impact of applying `ops` to `base` (as if accepted).
 pub fn impact_of_ops(base: &Design, ops: &[Op]) -> Result<Impact, OpError> {
     let before = committed_base(base);
-    let after = apply_all(&before, ops, Mode::Commit(Status::Accepted))?;
+    let after = apply_all(&before, ops, Mode::Commit(Status::Accepted, None))?;
     Ok(impact(&before, &after))
 }
