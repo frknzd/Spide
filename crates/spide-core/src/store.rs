@@ -25,6 +25,7 @@ pub enum Target {
     Sequence { name: String },
     Message { sequence: String, index: usize },
     Proposal { id: String },
+    Force { name: String },
 }
 
 impl Target {
@@ -40,6 +41,7 @@ impl Target {
             Target::Sequence { name } => format!("sequence \"{name}\""),
             Target::Message { sequence, index } => format!("message #{} in \"{sequence}\"", index + 1),
             Target::Proposal { id } => format!("proposal {id}"),
+            Target::Force { name } => format!("force \"{name}\""),
         }
     }
 }
@@ -121,9 +123,22 @@ impl Store {
     /// Replace everything (load). Clears history.
     pub fn load(&mut self, mut design: Design) {
         design.rev = design.rev.max(1);
+        design.version = SCHEMA_VERSION;
         self.design = design;
         self.undo.clear();
         self.redo.clear();
+    }
+
+    /// Direct user edits (inline edits, brief panel): committed immediately, undoable.
+    pub fn apply_user(&mut self, ops: Vec<Op>) -> Result<(), OpError> {
+        if ops.is_empty() {
+            return Ok(());
+        }
+        let summary = summarize(&ops);
+        self.mutate("user", summary, |d| {
+            *d = apply_all(d, &ops, Mode::Commit(Status::Accepted))?;
+            Ok(())
+        })
     }
 
     /// Layout changes don't create undo entries or new revisions.
@@ -470,6 +485,12 @@ impl Store {
     pub fn set_show_pruned(&mut self, on: bool) {
         self.design.settings.show_pruned = on;
     }
+    pub fn set_partner(&mut self, mode: PartnerMode) {
+        self.design.settings.partner = mode;
+    }
+    pub fn set_brief_skipped(&mut self, on: bool) {
+        self.design.settings.brief_skipped = on;
+    }
 }
 
 pub fn summarize(ops: &[Op]) -> String {
@@ -487,6 +508,7 @@ fn strip_pruned(d: &mut Design) {
     let names: Vec<String> = d.classes.iter().map(|c| c.name.clone()).collect();
     d.relations.retain(|r| r.status != Status::Pruned && names.contains(&r.from) && names.contains(&r.to));
     d.packages.retain(|p| p.status != Status::Pruned);
+    d.forces.retain(|f| f.status != Status::Pruned);
 }
 
 fn set_status(d: &mut Design, t: &Target, st: Status, fb: Option<String>) -> Result<(), OpError> {
@@ -542,6 +564,9 @@ fn set_status(d: &mut Design, t: &Target, st: Status, fb: Option<String>) -> Res
             let m = s.messages.get_mut(*index).ok_or_else(nf)?;
             m.status = st;
             m.feedback = fb;
+        }
+        Target::Force { name } => {
+            d.forces.iter_mut().find(|f| &f.name == name).ok_or_else(nf)?.status = st;
         }
         Target::Proposal { .. } => {}
     }

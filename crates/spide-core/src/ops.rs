@@ -89,6 +89,27 @@ pub enum Op {
     SetLayer { package: String, layer: Option<Layer> },
     RemovePackage { name: String },
     MoveToPackage { class: String, package: Option<String> },
+    AddForce {
+        name: String,
+        #[serde(default)]
+        kind: ForceKind,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        priority: Option<u8>,
+    },
+    UpdateForce {
+        name: String,
+        #[serde(default)]
+        rename: Option<String>,
+        #[serde(default)]
+        kind: Option<ForceKind>,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        priority: Option<u8>,
+    },
+    RemoveForce { name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -157,6 +178,9 @@ impl Op {
             Op::MoveToPackage { class, package } => {
                 format!("move {class} → {}", package.as_deref().unwrap_or("(none)"))
             }
+            Op::AddForce { name, kind, .. } => format!("add {} \"{name}\"", kind.as_str()),
+            Op::UpdateForce { name, .. } => format!("update force \"{name}\""),
+            Op::RemoveForce { name } => format!("remove force \"{name}\""),
         }
     }
 
@@ -176,6 +200,7 @@ impl Op {
                 vec![from.clone(), to.clone()]
             }
             Op::AddPackage { .. } | Op::SetLayer { .. } | Op::RemovePackage { .. } => vec![],
+            Op::AddForce { .. } | Op::UpdateForce { .. } | Op::RemoveForce { .. } => vec![],
         }
     }
 
@@ -463,6 +488,74 @@ impl Op {
                 let c = live_class_mut(d, class)?;
                 c.package = package.clone().filter(|s| !s.is_empty());
                 mark_changed(c, mode);
+            }
+            Op::AddForce { name, kind, description, priority } => {
+                if !valid_ident(name) {
+                    return err("force needs a name");
+                }
+                if d.forces.iter().any(|f| f.name == *name && f.status != Status::Pruned) {
+                    return err(format!("force \"{name}\" already exists; use update_force"));
+                }
+                d.forces.retain(|f| f.name != *name);
+                d.forces.push(Force {
+                    name: name.clone(),
+                    kind: *kind,
+                    description: description.clone().filter(|s| !s.is_empty()),
+                    priority: priority.unwrap_or(2).clamp(1, 3),
+                    status: st,
+                    proposal: prop,
+                });
+            }
+            Op::UpdateForce { name, rename, kind, description, priority } => {
+                if let Some(r) = rename.as_ref().filter(|r| *r != name) {
+                    if !valid_ident(r) {
+                        return err("force needs a name");
+                    }
+                    if d.forces.iter().any(|f| f.name == *r && f.status != Status::Pruned) {
+                        return err(format!("force \"{r}\" already exists"));
+                    }
+                }
+                let f = d
+                    .forces
+                    .iter_mut()
+                    .find(|f| f.name == *name && f.status != Status::Pruned)
+                    .ok_or_else(|| OpError(format!("unknown force \"{name}\"")))?;
+                if let Some(r) = rename.as_ref().filter(|r| !r.is_empty()) {
+                    f.name = r.clone();
+                }
+                if let Some(k) = kind {
+                    f.kind = *k;
+                }
+                if let Some(desc) = description {
+                    f.description = Some(desc.clone()).filter(|s| !s.is_empty());
+                }
+                if let Some(p) = priority {
+                    f.priority = (*p).clamp(1, 3);
+                }
+                if mode.is_ghost() {
+                    f.proposal = prop;
+                }
+                if let Some(r) = rename.as_ref().filter(|r| !r.is_empty() && *r != name) {
+                    // keep decision trade-offs pointing at the renamed force
+                    for o in d.decisions.iter_mut().flat_map(|x| x.options.iter_mut()) {
+                        for t in o.tradeoffs.iter_mut().filter(|t| t.force == *name) {
+                            t.force = r.clone();
+                        }
+                    }
+                }
+            }
+            Op::RemoveForce { name } => {
+                let idx = d
+                    .forces
+                    .iter()
+                    .position(|f| f.name == *name && f.status != Status::Pruned)
+                    .ok_or_else(|| OpError(format!("unknown force \"{name}\"")))?;
+                if mode.is_ghost() {
+                    d.forces[idx].status = Status::Removing;
+                    d.forces[idx].proposal = prop;
+                } else {
+                    d.forces.remove(idx);
+                }
             }
         }
         Ok(())

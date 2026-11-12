@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -216,6 +216,69 @@ pub struct DecisionOption {
     pub ops: Vec<crate::ops::Op>,
     pub pros: Vec<String>,
     pub cons: Vec<String>,
+    /// How this option affects the design forces (brief).
+    pub tradeoffs: Vec<Tradeoff>,
+}
+
+/// Effect of a decision option on one force of the brief.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Tradeoff {
+    /// Force name (see `Design::forces`).
+    pub force: String,
+    /// `+` (helps) or `-` (hurts).
+    pub effect: String,
+    pub note: Option<String>,
+}
+
+impl Tradeoff {
+    pub fn helps(&self) -> bool {
+        !self.effect.trim_start().starts_with('-')
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ForceKind {
+    /// What the system must achieve.
+    #[default]
+    Goal,
+    /// Quality attribute (performance, evolvability, testability, …).
+    Quality,
+    /// Fixed constraint (technology, budget, regulation, team).
+    Constraint,
+    /// Expected change the design should absorb.
+    Change,
+}
+
+impl ForceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ForceKind::Goal => "goal",
+            ForceKind::Quality => "quality",
+            ForceKind::Constraint => "constraint",
+            ForceKind::Change => "change",
+        }
+    }
+}
+
+/// A design force: part of the brief the design is judged against.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Force {
+    pub name: String,
+    pub kind: ForceKind,
+    pub description: Option<String>,
+    /// 1 = must, 2 = should, 3 = nice to have.
+    pub priority: u8,
+    pub status: Status,
+    pub proposal: Option<String>,
+}
+
+impl Default for Force {
+    fn default() -> Self {
+        Force { name: String::new(), kind: ForceKind::Goal, description: None, priority: 2, status: Status::Accepted, proposal: None }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -372,6 +435,44 @@ pub enum ExaminerMode {
 pub struct Settings {
     pub examiner: ExaminerMode,
     pub show_pruned: bool,
+    pub partner: PartnerMode,
+    /// The user skipped the brief (forces) — don't nag about it.
+    pub brief_skipped: bool,
+}
+
+/// How the AI partner behaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PartnerMode {
+    /// Raises decisions, makes the user defend them (default).
+    #[default]
+    Examiner,
+    /// Only asks questions; never proposes changes.
+    Socratic,
+    /// Argues against the user's choice before examining it.
+    DevilsAdvocate,
+    /// Proposes freely; decisions only for big forks.
+    Sketch,
+}
+
+impl PartnerMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PartnerMode::Examiner => "examiner",
+            PartnerMode::Socratic => "socratic",
+            PartnerMode::DevilsAdvocate => "devils_advocate",
+            PartnerMode::Sketch => "sketch",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s.trim().to_lowercase().replace(['-', ' '], "_").as_str() {
+            "examiner" | "exam" => PartnerMode::Examiner,
+            "socratic" | "questions" => PartnerMode::Socratic,
+            "devils_advocate" | "devil" | "advocate" => PartnerMode::DevilsAdvocate,
+            "sketch" | "free" => PartnerMode::Sketch,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
@@ -388,6 +489,8 @@ pub struct Design {
     pub rev: u64,
     /// Revision of the last change to the class model (drives staleness of derived views).
     pub model_rev: u64,
+    /// The brief: goals, quality attributes, constraints, expected changes.
+    pub forces: Vec<Force>,
     pub classes: Vec<Class>,
     pub relations: Vec<Relation>,
     pub packages: Vec<Package>,
@@ -410,6 +513,7 @@ impl Default for Design {
             name: "Untitled design".into(),
             rev: 0,
             model_rev: 0,
+            forces: vec![],
             classes: vec![],
             relations: vec![],
             packages: vec![],
@@ -444,6 +548,12 @@ impl Design {
         self.relations.iter().filter(move |r| {
             r.status.is_live() && self.live_class(&r.from).is_some() && self.live_class(&r.to).is_some()
         })
+    }
+    pub fn force(&self, name: &str) -> Option<&Force> {
+        self.forces.iter().find(|f| f.name == name)
+    }
+    pub fn live_forces(&self) -> impl Iterator<Item = &Force> {
+        self.forces.iter().filter(|f| f.status.is_live())
     }
     pub fn next_id(&mut self, prefix: &str) -> String {
         self.counter += 1;

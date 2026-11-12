@@ -4,8 +4,8 @@
 use crate::pi_bridge::PiBridge;
 use crate::prompts;
 use crate::state::{AppState, Snapshot};
-use spide_core::model::{ExaminerMode, Pos};
-use spide_core::{Design, Target};
+use spide_core::model::{ExaminerMode, PartnerMode, Pos};
+use spide_core::{Design, Op, Target};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tauri::State;
@@ -28,7 +28,7 @@ pub fn send_prompt(st: State<'_, AppState>, pi: State<'_, PiBridge>, text: Strin
     if text.is_empty() {
         return Ok(());
     }
-    let msg = prompts::user_prompt(&text, &tab);
+    let msg = prompts::user_prompt(&text, &tab, &st.lock().store.design);
     pi.prompt(&st, msg, Some(text))
 }
 
@@ -134,7 +134,7 @@ pub fn submit_defense(
         let mut s = st.lock();
         s.store.submit_defense(&id, option, custom, defense).map_err(|e| e.0)?;
         let dec = s.store.design.decisions.iter().find(|d| d.id == id).cloned().unwrap();
-        prompts::examine(&dec, s.store.design.settings.examiner)
+        prompts::examine(&dec, s.store.design.settings.examiner, &s.store.design)
     };
     st.changed();
     pi.prompt(&st, msg, Some(format!("⚖ defending {id}")))
@@ -175,6 +175,26 @@ pub fn set_layout(st: State<'_, AppState>, view: String, positions: BTreeMap<Str
 #[tauri::command]
 pub fn set_examiner(st: State<'_, AppState>, strict: bool) -> R {
     st.lock().store.set_examiner(if strict { ExaminerMode::Strict } else { ExaminerMode::Lenient });
+    done(&st)
+}
+
+/// Direct user edits (brief panel, inline edits): committed immediately, undoable.
+#[tauri::command]
+pub fn apply_user_ops(st: State<'_, AppState>, ops: Vec<Op>) -> R {
+    st.lock().store.apply_user(ops).map_err(|e| e.0)?;
+    done(&st)
+}
+
+#[tauri::command]
+pub fn set_partner(st: State<'_, AppState>, mode: String) -> R {
+    let m = PartnerMode::parse(&mode).ok_or_else(|| format!("unknown mode {mode} (examiner | socratic | devils_advocate | sketch)"))?;
+    st.lock().store.set_partner(m);
+    done(&st)
+}
+
+#[tauri::command]
+pub fn set_brief_skipped(st: State<'_, AppState>, on: bool) -> R {
+    st.lock().store.set_brief_skipped(on);
     done(&st)
 }
 
@@ -345,6 +365,9 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "redo" => redo(s),
         "set_layout" => set_layout(s, req("view")?, serde_json::from_value(de("positions")).map_err(|e| e.to_string())?),
         "set_examiner" => set_examiner(s, a.get("strict").and_then(Value::as_bool).unwrap_or(false)),
+        "apply_user_ops" => apply_user_ops(s, serde_json::from_value(de("ops")).map_err(|e| e.to_string())?),
+        "set_partner" => set_partner(s, req("mode")?),
+        "set_brief_skipped" => set_brief_skipped(s, a.get("on").and_then(Value::as_bool).unwrap_or(false)),
         "set_show_pruned" => set_show_pruned(s, a.get("on").and_then(Value::as_bool).unwrap_or(false)),
         "set_name" => set_name(s, req("name")?),
         "regenerate" => regenerate(s, pi, req("view")?, str_("scenario")),

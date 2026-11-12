@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Pos, Snapshot, Tab, Target } from "./types";
+import type { Op, Pos, Snapshot, Tab, Target } from "./types";
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const DEV_URL = "http://127.0.0.1:47800/dev/snapshot";
@@ -34,6 +34,9 @@ export const api = {
   setExaminer: (strict: boolean) => call("set_examiner", { strict }),
   setShowPruned: (on: boolean) => call("set_show_pruned", { on }),
   setName: (name: string) => call("set_name", { name }),
+  userOps: (ops: Op[]) => call("apply_user_ops", { ops }),
+  setPartner: (mode: string) => call("set_partner", { mode }),
+  setBriefSkipped: (on: boolean) => call("set_brief_skipped", { on }),
   regenerate: (view: "usecase" | "sequence", scenario?: string) => call("regenerate", { view, scenario: scenario ?? null }),
   newDesign: (dir: string) => call("new_design", { dir }),
   open: (path: string) => call("open_design", { path }),

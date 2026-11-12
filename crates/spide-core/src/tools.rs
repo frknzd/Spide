@@ -28,6 +28,8 @@ const OPS_DOC: &str = r#"Each op is an object with an "op" field:
 - {"op":"remove_relation","from":"A","to":"B","kind?":"…"}
 - {"op":"add_package","name":"domain","layer?":"ui|application|domain|infrastructure"}  - {"op":"set_layer","package":"…","layer":"…"|null}
 - {"op":"move_to_package","class":"Order","package":"domain"}   - {"op":"remove_package","name":"…"}
+- {"op":"add_force","name":"Evolvability","kind":"goal|quality|constraint|change","priority?":1|2|3,"description?":"…"}  (the brief)
+- {"op":"update_force","name":"…", any of "rename","kind","priority","description"}   - {"op":"remove_force","name":"…"}
 ATTR   = {"name":"total","type":"Money","visibility?":"public|private|protected|package","is_static?":false,"multiplicity?":"0..1"}
 METHOD = {"name":"addLine","params":[{"name":"p","type":"Product"},{"name":"qty","type":"int"}],"returns?":"OrderLine","visibility?":"public",
           "is_abstract?":false,"uses?":["lines"] (attributes of the same class it touches — drives the cohesion metric),
@@ -37,7 +39,7 @@ Batches are atomic and may reference classes added earlier in the same batch."#;
 pub fn tool_list() -> Value {
     let ops_schema = json!({"type":"array","description": OPS_DOC,"items":{"type":"object","properties":{"op":{"type":"string"}},"required":["op"]}});
     json!([
-        {"name":"get_design","description":"Read the whole design: classes with members, relations, packages, pending proposals and decisions, \
+        {"name":"get_design","description":"Read the whole design: partner mode, design stage, the brief (forces: goals, qualities, constraints, expected changes), classes with members, relations, packages, pending proposals and decisions, \
            pruned elements WITH the user's feedback (respect it!), use cases and sequences. Compact JSON.",
          "inputSchema":{"type":"object","properties":{}}, "annotations":{"readOnlyHint":true}},
         {"name":"get_metrics","description":"Architecture health: score 0–100, issues (cycles, god classes, low cohesion (LCOM4), layer violations, orphans, high coupling), per-class fan-in/out & instability, package metrics.",
@@ -58,6 +60,9 @@ pub fn tool_list() -> Value {
                 "summary":{"type":"string"},
                 "pros":{"type":"array","items":{"type":"string"}},
                 "cons":{"type":"array","items":{"type":"string"}},
+                "tradeoffs":{"type":"array","description":"Forces from the brief this option helps (+) or hurts (-).",
+                    "items":{"type":"object","properties":{"force":{"type":"string"},"effect":{"type":"string","enum":["+","-"]},"note":{"type":"string"}},
+                    "required":["force","effect"]}},
                 "ops": ops_schema},"required":["label","ops"]}}},
           "required":["question","options"]}},
         {"name":"propose_ops","description":"Propose small, unambiguous changes (e.g. adding obvious attributes, fixing a multiplicity). They appear as \
@@ -118,7 +123,73 @@ fn health_delta(before: &Metrics, after: &Metrics) -> String {
     s
 }
 
+/// Where the design is in the boundaries → responsibilities → interactions → details progression.
+pub fn stage(d: &Design) -> &'static str {
+    let classes: Vec<&Class> = d.live_classes().collect();
+    if classes.is_empty() {
+        return if d.live_forces().next().is_none() && !d.settings.brief_skipped { "brief" } else { "boundaries" };
+    }
+    let packaged = classes.iter().filter(|c| c.package.is_some()).count();
+    if classes.len() >= 4 && packaged * 2 < classes.len() {
+        return "boundaries";
+    }
+    let described = classes
+        .iter()
+        .filter(|c| !c.responsibilities.is_empty() || c.methods.iter().any(|m| m.status.is_live()))
+        .count();
+    if described * 2 < classes.len() {
+        return "responsibilities";
+    }
+    let rels = d.live_relations().count();
+    if rels + 1 < classes.len() {
+        return "interactions";
+    }
+    "details"
+}
+
+pub fn stage_hint(stage: &str) -> &'static str {
+    match stage {
+        "brief" => "The brief is empty: elicit goals, quality attributes, constraints and expected changes first (one question at a time).",
+        "boundaries" => "Settle boundaries: packages/layers and the core concepts before details.",
+        "responsibilities" => "Assign responsibilities: what each class knows and does (GRASP).",
+        "interactions" => "Decide collaborations: who talks to whom, ownership, multiplicities.",
+        _ => "Refine details: signatures, types, cohesion; validate with scenarios.",
+    }
+}
+
+/// Compact one-line-per-force brief for prompts.
+pub fn brief_digest(d: &Design) -> String {
+    let mut forces: Vec<&Force> = d.live_forces().collect();
+    forces.sort_by_key(|f| (f.priority, f.kind as u8));
+    if forces.is_empty() {
+        return "(no brief yet)".into();
+    }
+    forces
+        .iter()
+        .map(|f| {
+            let prio = ["must", "should", "nice"][(f.priority.clamp(1, 3) - 1) as usize];
+            match &f.description {
+                Some(desc) => format!("- [{} · {prio}] {}: {desc}", f.kind.as_str(), f.name),
+                None => format!("- [{} · {prio}] {}", f.kind.as_str(), f.name),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, String> {
+    if store.design.settings.partner == PartnerMode::Socratic && matches!(name, "propose_ops" | "propose_decision") {
+        // recording the user's own answers in the brief is still fine
+        let only_forces = name == "propose_ops"
+            && args.get("ops").and_then(Value::as_array).is_some_and(|ops| {
+                ops.iter().all(|o| o.get("op").and_then(Value::as_str).is_some_and(|n| n.ends_with("_force")))
+            });
+        if !only_forces {
+            return Err("Socratic mode: you may not propose design changes. Ask the user a guiding question instead; \
+                        they will decide (or switch modes with /mode). Recording their answers as forces is allowed."
+                .into());
+        }
+    }
     match name {
         "get_design" => ok(design_digest(store), false),
         "get_metrics" => {
@@ -167,10 +238,26 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
                     Err(_) => String::new(),
                 })
                 .collect();
+            // pending (ghost) forces count as known
+            let view = store.view();
+            let mut unknown: Vec<String> = a
+                .options
+                .iter()
+                .flat_map(|o| o.tradeoffs.iter())
+                .filter(|t| view.force(&t.force).is_none_or(|f| matches!(f.status, Status::Pruned | Status::Removing)))
+                .map(|t| format!("\"{}\"", t.force))
+                .collect();
+            unknown.sort();
+            unknown.dedup();
             let id = store.propose_decision(a.question, a.context, a.options).map_err(|e| e.0)?;
+            let warn = if unknown.is_empty() {
+                String::new()
+            } else {
+                format!(" Note: trade-offs mention forces that are not in the brief: {}.", unknown.join(", "))
+            };
             ok(
                 format!(
-                    "Decision {id} is now shown to the user with live previews (current health {}; {}). \
+                    "Decision {id} is now shown to the user with live previews (current health {}; {}).{warn} \
                      Wait: the user will choose and defend; Spide will then ask you to examine the defence. \
                      End your turn now with at most one short sentence.",
                     before.health,
@@ -369,8 +456,23 @@ pub fn design_digest(store: &Store) -> String {
         .map(|p| json!({"name": p.name, "layer": p.layer}))
         .collect();
     let m = compute(&store.view(), false);
+    let forces: Vec<Value> = d
+        .live_forces()
+        .map(|f| {
+            let mut o = json!({"name": f.name, "kind": f.kind, "priority": f.priority});
+            if let Some(desc) = &f.description {
+                o["description"] = json!(desc);
+            }
+            o
+        })
+        .collect();
+    let st = stage(d);
     serde_json::to_string(&json!({
         "name": d.name,
+        "mode": d.settings.partner,
+        "stage": st,
+        "stage_hint": stage_hint(st),
+        "forces": forces,
         "health": m.health,
         "top_issues": m.issues.iter().take(6).map(|i| &i.message).collect::<Vec<_>>(),
         "packages": packages,

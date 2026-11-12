@@ -13,6 +13,9 @@ export const COMMANDS: { cmd: string; help: string }[] = [
   { cmd: "/strict", help: "strict examiner: no overruling" },
   { cmd: "/lenient", help: "lenient examiner: you may overrule" },
   { cmd: "/history", help: "conversation history (⌘J)" },
+  { cmd: "/brief", help: "goals, qualities, constraints, expected changes + partner mode (⌘B)" },
+  { cmd: "/mode", help: "/mode examiner | socratic | devils_advocate | sketch" },
+  { cmd: "/skip", help: "skip the brief and start designing" },
   { cmd: "/export png", help: "export current diagram as PNG" },
   { cmd: "/export puml", help: "export current diagram as PlantUML" },
   { cmd: "/export all", help: "export every diagram as PlantUML into a folder" },
@@ -62,7 +65,7 @@ export function PromptBar(p: Props) {
       {suggestions.length > 0 && (
         <div className="cmd-list">
           {suggestions.slice(0, 8).map((c) => (
-            <div key={c.cmd} className="cmd" onMouseDown={(e) => { e.preventDefault(); setText(c.cmd + (c.cmd === "/name" || c.cmd === "/find" ? " " : "")); ta.current?.focus(); }}>
+            <div key={c.cmd} className="cmd" onMouseDown={(e) => { e.preventDefault(); setText(c.cmd + (["/name", "/find", "/mode"].includes(c.cmd) ? " " : "")); ta.current?.focus(); }}>
               <span>{c.cmd}</span>
               <em>{c.help}</em>
             </div>

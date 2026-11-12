@@ -58,7 +58,11 @@ export interface Relation {
 export interface Package { name: string; layer: Layer | null; description: string | null; status: Status; proposal: string | null }
 export type Op = { op: string; [k: string]: unknown };
 export interface Proposal { id: string; ops: Op[]; rationale: string | null; source: string }
-export interface DecisionOption { id: string; label: string; summary: string | null; ops: Op[]; pros: string[]; cons: string[] }
+export interface Tradeoff { force: string; effect: string; note: string | null }
+export interface DecisionOption { id: string; label: string; summary: string | null; ops: Op[]; pros: string[]; cons: string[]; tradeoffs: Tradeoff[] }
+export type ForceKind = "goal" | "quality" | "constraint" | "change";
+export interface Force { name: string; kind: ForceKind; description: string | null; priority: number; status: Status; proposal: string | null }
+export type PartnerMode = "examiner" | "socratic" | "devils_advocate" | "sketch";
 export type DecisionState = "open" | "evaluating" | "rejected" | "accepted" | "overruled" | "dismissed";
 export interface Attempt { option: string | null; custom: string | null; defense: string; verdict: string | null; feedback: string | null }
 export interface Decision {
@@ -112,6 +116,7 @@ export interface Design {
   name: string;
   rev: number;
   model_rev: number;
+  forces: Force[];
   classes: Class[];
   relations: Relation[];
   packages: Package[];
@@ -122,7 +127,7 @@ export interface Design {
   feedback: { target: string; text: string; at: number }[];
   log: { rev: number; at: number; actor: string; summary: string }[];
   layout: Record<string, Record<string, Pos>>;
-  settings: { examiner: "lenient" | "strict"; show_pruned: boolean };
+  settings: { examiner: "lenient" | "strict"; show_pruned: boolean; partner: PartnerMode; brief_skipped: boolean };
 }
 
 export interface ClassMetrics {
@@ -208,7 +213,8 @@ export type Target =
   | { kind: "use_case"; name: string }
   | { kind: "sequence"; name: string }
   | { kind: "message"; sequence: string; index: number }
-  | { kind: "proposal"; id: string };
+  | { kind: "proposal"; id: string }
+  | { kind: "force"; name: string };
 
 export type Tab = "class" | "domain" | "package" | "usecase" | "sequence";
 
@@ -237,6 +243,7 @@ export function targetLabel(t: Target): string {
     case "sequence": return t.name;
     case "message": return `message #${t.index + 1}`;
     case "proposal": return `proposal ${t.id}`;
+    case "force": return `force ${t.name}`;
   }
 }
 

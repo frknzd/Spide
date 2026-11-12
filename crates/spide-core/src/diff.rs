@@ -143,7 +143,37 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
         }
     }
 
-    let mut out = adds_pkg;
+    // forces (the brief)
+    let mut forces = vec![];
+    let of: Vec<&Force> = old.live_forces().collect();
+    for f in new.live_forces() {
+        match of.iter().find(|o| o.name == f.name) {
+            None => forces.push(Op::AddForce {
+                name: f.name.clone(),
+                kind: f.kind,
+                description: f.description.clone(),
+                priority: Some(f.priority),
+            }),
+            Some(o) if o.kind != f.kind || o.description != f.description || o.priority != f.priority => {
+                forces.push(Op::UpdateForce {
+                    name: f.name.clone(),
+                    rename: None,
+                    kind: Some(f.kind),
+                    description: Some(f.description.clone().unwrap_or_default()),
+                    priority: Some(f.priority),
+                })
+            }
+            _ => {}
+        }
+    }
+    for o in &of {
+        if new.force(&o.name).is_none_or(|f| !f.status.is_live()) {
+            forces.push(Op::RemoveForce { name: o.name.clone() });
+        }
+    }
+
+    let mut out = forces;
+    out.extend(adds_pkg);
     out.extend(rel_removes);
     out.extend(adds_cls);
     out.extend(members);

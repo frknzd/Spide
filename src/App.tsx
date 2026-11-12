@@ -8,6 +8,7 @@ import { api } from "./state/api";
 import { on, useAgentFeed, useSnapshot } from "./state/store";
 import type { Design, Tab, Target } from "./state/types";
 import { AnswerBubble } from "./ui/AnswerBubble";
+import { BriefPanel, MODES } from "./ui/BriefPanel";
 import { HealthRing, ProposalBar, Tabs, Toasts, type Toast } from "./ui/Chrome";
 import { DecisionPanel } from "./ui/DecisionCard";
 import { FeedbackPopover, type PruneState } from "./ui/FeedbackPopover";
@@ -17,17 +18,19 @@ import { PackageView } from "./views/PackageView";
 import { SequenceView } from "./views/SequenceView";
 import { UseCaseView } from "./views/UseCaseView";
 
+const DEV_QUERY = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
 const TAB_ORDER: Tab[] = ["class", "domain", "package", "usecase", "sequence"];
 const TAB_TITLE: Record<Tab, string> = { class: "Class diagram", domain: "Domain model", package: "Package diagram", usecase: "Use case diagram", sequence: "Sequence diagram" };
 
 export default function App() {
   const snap = useSnapshot();
   const { entries, activity } = useAgentFeed();
-  const [tab, setTab] = useState<Tab>("class");
+  const [tab, setTab] = useState<Tab>(() => (DEV_QUERY?.get("tab") as Tab | null) ?? "class");
   const [hover, setHover] = useState<{ key: string; at: { x: number; y: number } } | null>(null);
   const [prune, setPrune] = useState<PruneState | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [history, setHistory] = useState(false);
+  const [brief, setBrief] = useState(false);
   const [preview, setPreview] = useState<Design | null>(null);
   const [focusKey, setFocusKey] = useState(0);
   const [scenario, setScenario] = useState<string | null>(null);
@@ -130,6 +133,13 @@ export default function App() {
       case "/strict": return run(api.setExaminer(true).then(() => toast("info", "examiner: strict — no overruling")));
       case "/lenient": return run(api.setExaminer(false).then(() => toast("info", "examiner: lenient — you may overrule")));
       case "/history": return setHistory((h) => !h);
+      case "/brief": return setBrief((b) => !b);
+      case "/mode": {
+        if (!arg) return toast("info", `mode: ${view?.settings.partner} — ${MODES.map((m) => m.mode).join(" | ")}`);
+        return run(api.setPartner(arg).then(() => toast("info", `partner mode: ${arg}`)));
+      }
+      case "/skip":
+        return run(api.setBriefSkipped(true).then(() => api.prompt("I'd rather skip the brief for now. Let's start designing.", tab)));
       case "/stop": return run(api.abort());
       case "/agent": return run(api.restartAgent().then(() => toast("info", "agent restarted")));
       case "/folder": return run(api.reveal());
@@ -158,6 +168,15 @@ export default function App() {
     }
   };
 
+  // dev aid for automated UI checks: ?cmd=/brief&cmd=/find%20Loan runs commands once the first snapshot arrived
+  const devRan = useRef(false);
+  useEffect(() => {
+    if (!DEV_QUERY || devRan.current || !snap) return;
+    devRan.current = true;
+    const cmds = DEV_QUERY.getAll("cmd");
+    cmds.forEach((c, i) => setTimeout(() => command(c), 400 + i * 400));
+  }); // eslint-disable-line react-hooks/exhaustive-deps
+
   const submit = (text: string) => {
     if (text.startsWith("/")) return void command(text);
     run(api.prompt(text, tab));
@@ -177,6 +196,11 @@ export default function App() {
         if (e.key === "z" && !inField) {
           e.preventDefault();
           run(e.shiftKey ? api.redo() : api.undo());
+          return;
+        }
+        if (e.key === "b") {
+          e.preventDefault();
+          setBrief((b) => !b);
           return;
         }
         if (e.key === "j") {
@@ -201,7 +225,10 @@ export default function App() {
         }
       }
       if (e.key === "Escape") {
-        if (!inField) canvasRef.current?.focus(null);
+        if (!inField) {
+          canvasRef.current?.focus(null);
+          setBrief(false);
+        }
         setPrune(null);
         setHistory(false);
         setHover(null);
@@ -229,6 +256,12 @@ export default function App() {
       metrics: null,
     };
   }, [snap]);
+
+  // the agent recorded forces → show them so the user can accept/reject
+  const ghostForces = view?.forces.filter((f) => f.status === "proposed").length ?? 0;
+  useEffect(() => {
+    if (ghostForces) setBrief(true);
+  }, [ghostForces]);
 
   const pendingCount = view?.decisions.filter((d) => d.state === "open" || d.state === "evaluating" || d.state === "rejected").length ?? 0;
   useEffect(() => {
@@ -265,12 +298,14 @@ export default function App() {
         <>
           <div className="top-left" data-ui>
             <span className="design-name">{view.name}</span>
+            {view.settings.partner !== "examiner" && <span className="preview-tag mode-tag">{MODES.find((m) => m.mode === view.settings.partner)?.label}</span>}
             {preview && <span className="preview-tag">previewing option</span>}
           </div>
           <Tabs tab={tab} onTab={setTab} stale={stale} />
         </>
       )}
 
+      {brief && <BriefPanel design={view} onClose={() => setBrief(false)} run={run} />}
       {pending.length > 0 && <DecisionPanel decisions={pending} snap={snap} onPreview={setPreview} toast={toast} />}
 
       <div className="bottom">

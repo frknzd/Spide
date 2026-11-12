@@ -78,6 +78,20 @@ function DecisionCard({ d, snap, onPreview, toast }: { d: Decision; snap: Snapsh
               </div>
               <MiniPreview pv={pv} />
               {o.summary && <div className="o-sum">{o.summary}</div>}
+              {o.tradeoffs?.length > 0 && (
+                <div className="tradeoffs">
+                  {o.tradeoffs.map((t, i) => {
+                    const minus = t.effect.trim().startsWith("-");
+                    const known = snap.view.forces.some((f) => f.name === t.force);
+                    return (
+                      <span key={i} className={`tchip ${minus ? "minus" : "plus"} ${known ? "" : "unknown"}`}
+                        title={(t.note ?? "") + (known ? "" : " (not in the brief)")}>
+                        {minus ? "−" : "+"} {t.force}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
               {(o.pros.length > 0 || o.cons.length > 0) && (
                 <div className="o-pc">
                   {o.pros.map((x, i) => <div key={"p" + i} className="pro">+ {x}</div>)}

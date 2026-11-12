@@ -148,10 +148,10 @@ real code. Goal: make Spide a complete loop: **brief → decide → see conseque
 
 ## Steps
 **A — forces & modes**
-- [ ] A1 model `Brief`/`Force`, force ops, `DecisionOption.tradeoffs`, `Settings.partner`, schema v2 + v1 load test
-- [ ] A2 prompts: brief in examine/user prompts, mode prefixes, socratic tool guard; skill: modes, stages, brief elicitation
-- [ ] A3 MCP: forces in `get_design`, `tradeoffs` in `propose_decision` schema, stage hint
-- [ ] A4 UI: BriefPanel, trade-off chips on options, `/mode`, `/brief`, `/skip`
+- [x] A1 model `Brief`/`Force`, force ops, `DecisionOption.tradeoffs`, `Settings.partner`, schema v2 + v1 load test
+- [x] A2 prompts: brief in examine/user prompts, mode prefixes, socratic tool guard; skill: modes, stages, brief elicitation
+- [x] A3 MCP: forces in `get_design`, `tradeoffs` in `propose_decision` schema, stage hint
+- [x] A4 UI: BriefPanel, trade-off chips on options, `/mode`, `/brief`, `/skip`
 **F — rules**
 - [ ] F1 `rules.rs` + presets + tests per preset (allowed/forbidden matrices)
 - [ ] F2 metrics read rules; issue `rule`/`explain`/`fix_hint`; new issue kinds; existing metric tests still green
