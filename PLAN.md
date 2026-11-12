@@ -111,8 +111,8 @@ Spide/
 - Env: macOS 26 arm64, Xcode CLT present, Node 26, pi 1.5.2. **Rust to install via rustup** (approved).
 
 ## Steps
-- [ ] 0. Install Rust via `rustup` (user-level); `git init` in `Spide/`; scaffold Tauri v2 + React/TS + workspace crate.
-- [ ] 1. `spide-core`: model, ops, store with op log/undo, JSON (de)serialisation + unit tests.
+- [x] 0. Install Rust via `rustup` (user-level); `git init` in `Spide/`; scaffold Tauri v2 + React/TS + workspace crate.
+- [x] 1. `spide-core`: model, ops, store with op log/undo, JSON (de)serialisation + unit tests.
 - [ ] 2. Metrics engine (fan-in/out, instability, SCC cycles, LCOM4, god class, layering, orphans, health score) + tests.
 - [ ] 3. Frontend shell: dark canvas, bottom prompt, Tauri command/event plumbing, snapshot rendering.
 - [ ] 4. Class rendering: UML boxes, relations with correct notation, elk initial layout, d3-force living physics, metric→visual mappings, ghost/accept/prune states, animations.
