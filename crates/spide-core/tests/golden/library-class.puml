@@ -111,7 +111,7 @@ Member "1" -[#FF5C6C,bold]left- "0..5" Loan : holds <color:#FF5C6C>⟲</color>
 Member .[#FF5C6C,bold]left.> LoanController : <color:#FF5C6C>⟲ cycle</color>
 
 legend right
-  <b>health 41/100</b>
+  <b>health 37/100</b>
   dependency cycle: LendingService ⇄ Loan ⇄ LoanController ⇄ LoanRepository ⇄ Member
   package cycle: application ⇄ domain ⇄ infrastructure ⇄ ui
   layer violation: LendingService->LoanRepository:association — application is an inner layer; it must not depend on the outer infrastructure layer

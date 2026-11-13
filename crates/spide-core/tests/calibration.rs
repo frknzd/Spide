@@ -178,3 +178,79 @@ fn principle_scores_explain_the_number() {
         assert!(!i.source.is_empty());
     }
 }
+
+#[test]
+fn ui_calling_the_domain_directly_is_worse_than_a_controller() {
+    // Ch. 3 Controller: the POS applet calling makeLineItem on Sale is "incorrect"
+    let base = r#"{"op":"add_package","name":"ui","layer":"ui"},{"op":"add_package","name":"domain","layer":"domain"},
+        {"op":"add_class","name":"Sale","stereotype":"entity","package":"domain","attributes":[{"name":"lines","type":"List<SalesLineItem>"}],
+         "methods":[{"name":"makeLineItem","params":[{"name":"spec","type":"ProductSpecification"},{"name":"qty","type":"int"}],"uses":["lines"]},
+                    {"name":"getTotal","returns":"Money","uses":["lines"],"calls":["SalesLineItem.getSubtotal"]}]},
+        {"op":"add_class","name":"SalesLineItem","package":"domain","attributes":[{"name":"quantity","type":"int"}],"methods":[{"name":"getSubtotal","returns":"Money","uses":["quantity"]}]},
+        {"op":"add_class","name":"ProductSpecification","stereotype":"value","package":"domain","attributes":[{"name":"price","type":"Money"}],"methods":[{"name":"getPrice","returns":"Money","uses":["price"]}]},
+        {"op":"add_relation","from":"Sale","to":"SalesLineItem","kind":"composition"},{"op":"add_relation","from":"SalesLineItem","to":"ProductSpecification","kind":"association"}"#;
+    let worse = design(&format!(
+        r#"[{base},{{"op":"add_class","name":"SaleFrame","package":"ui","attributes":[{{"name":"sale","type":"Sale"}}],
+             "methods":[{{"name":"onEnterItem","uses":["sale"],"calls":["Sale.makeLineItem","refresh"]}},{{"name":"refresh","uses":["sale"],"calls":["Sale.getTotal"]}}]}},
+            {{"op":"add_relation","from":"SaleFrame","to":"Sale","kind":"association"}}]"#
+    ));
+    let better = design(&format!(
+        r#"[{base},{{"op":"add_class","name":"SaleFrame","package":"ui","attributes":[{{"name":"register","type":"Register"}}],
+             "methods":[{{"name":"onEnterItem","uses":["register"],"calls":["Register.enterItem","refresh"]}},{{"name":"refresh","uses":["register"],"calls":["Register.getTotal"]}}]}},
+            {{"op":"add_class","name":"Register","stereotype":"controller","package":"domain","attributes":[{{"name":"sale","type":"Sale"}}],
+             "methods":[{{"name":"enterItem","params":[{{"name":"id","type":"ItemID"}},{{"name":"qty","type":"int"}}],"uses":["sale"],"calls":["Sale.makeLineItem"]}},
+                        {{"name":"getTotal","returns":"Money","uses":["sale"],"calls":["Sale.getTotal"]}}]}},
+            {{"op":"add_relation","from":"SaleFrame","to":"Register","kind":"association"}},{{"op":"add_relation","from":"Register","to":"Sale","kind":"association"}}]"#
+    ));
+    assert!(compute(&worse, false).issues.iter().any(|i| i.kind == "ui_bypasses_controller"));
+    worse_than(&worse, &better, "POS: UI → Sale vs UI → Register → Sale");
+}
+
+#[test]
+fn brewery_god_class_without_behaviour_fails_against_the_passing_design() {
+    // Ch. 6 exam feedback: "Fail — God class & no real behaviour" vs "Pass — Recipe builds list of steps"
+    let fail = design(
+        r#"[{"op":"add_class","name":"Brewery","attributes":[{"name":"recipes","type":"List<Recipe>"},{"name":"steps","type":"List<Step>"},{"name":"ingredients","type":"List<Ingredient>"}],
+             "methods":[{"name":"brew","params":[{"name":"r","type":"Recipe"}],"uses":["steps"],"calls":["Step.getKind","Step.getMinutes","Ingredient.getName","Ingredient.getAmount"]},
+                        {"name":"totalDuration","params":[{"name":"r","type":"Recipe"}],"returns":"int","uses":["steps"],"calls":["Step.getMinutes","Step.getKind"]},
+                        {"name":"listIngredients","params":[{"name":"r","type":"Recipe"}],"returns":"List<String>","uses":["ingredients"],"calls":["Ingredient.getName","Ingredient.getAmount"]},
+                        {"name":"validate","params":[{"name":"r","type":"Recipe"}],"returns":"boolean","uses":["steps"],"calls":["Step.getKind"]}]},
+            {"op":"add_class","name":"Recipe","attributes":[{"name":"name","type":"String"},{"name":"stepIds","type":"List<int>"}]},
+            {"op":"add_class","name":"Step","attributes":[{"name":"kind","type":"String"},{"name":"minutes","type":"int"}],
+             "methods":[{"name":"getKind","returns":"String","uses":["kind"]},{"name":"getMinutes","returns":"int","uses":["minutes"]}]},
+            {"op":"add_class","name":"Ingredient","attributes":[{"name":"name","type":"String"},{"name":"amount","type":"int"}],
+             "methods":[{"name":"getName","returns":"String","uses":["name"]},{"name":"getAmount","returns":"int","uses":["amount"]}]},
+            {"op":"add_relation","from":"Brewery","to":"Recipe","kind":"aggregation"},{"op":"add_relation","from":"Brewery","to":"Step","kind":"aggregation"},
+            {"op":"add_relation","from":"Brewery","to":"Ingredient","kind":"aggregation"}]"#,
+    );
+    let pass = design(
+        r#"[{"op":"add_class","name":"Recipe","attributes":[{"name":"name","type":"String"},{"name":"steps","type":"List<Step>"}],
+             "methods":[{"name":"addStep","params":[{"name":"s","type":"Step"}],"uses":["steps"]},{"name":"duration","returns":"int","uses":["steps"],"calls":["Step.duration"]},
+                        {"name":"accept","params":[{"name":"v","type":"RecipeVisitor"}],"uses":["steps"],"calls":["Step.accept"]}]},
+            {"op":"add_class","name":"Step","stereotype":"abstract","attributes":[{"name":"ingredients","type":"List<Ingredient>"}],
+             "methods":[{"name":"duration","returns":"int","is_abstract":true},{"name":"accept","params":[{"name":"v","type":"RecipeVisitor"}],"is_abstract":true}]},
+            {"op":"add_class","name":"MaltingStep","attributes":[{"name":"minutes","type":"int"}],"methods":[{"name":"duration","returns":"int","uses":["minutes"]},{"name":"accept","params":[{"name":"v","type":"RecipeVisitor"}],"calls":["RecipeVisitor.visitMalting"]}]},
+            {"op":"add_class","name":"BoilingStep","attributes":[{"name":"minutes","type":"int"}],"methods":[{"name":"duration","returns":"int","uses":["minutes"]},{"name":"accept","params":[{"name":"v","type":"RecipeVisitor"}],"calls":["RecipeVisitor.visitBoiling"]}]},
+            {"op":"add_class","name":"Ingredient","attributes":[{"name":"name","type":"String"},{"name":"amount","type":"int"}],
+             "methods":[{"name":"scale","params":[{"name":"factor","type":"double"}],"uses":["amount"]}]},
+            {"op":"add_class","name":"RecipeVisitor","stereotype":"interface","methods":[{"name":"visitMalting","params":[{"name":"s","type":"MaltingStep"}],"is_abstract":true},{"name":"visitBoiling","params":[{"name":"s","type":"BoilingStep"}],"is_abstract":true}]},
+            {"op":"add_relation","from":"Recipe","to":"Step","kind":"composition"},{"op":"add_relation","from":"MaltingStep","to":"Step","kind":"inheritance"},
+            {"op":"add_relation","from":"BoilingStep","to":"Step","kind":"inheritance"},{"op":"add_relation","from":"Step","to":"Ingredient","kind":"aggregation"},
+            {"op":"add_relation","from":"Recipe","to":"RecipeVisitor","kind":"dependency"}]"#,
+    );
+    worse_than(&fail, &pass, "Brewery exam: fail vs pass");
+}
+
+#[test]
+fn composite_and_visitor_sanity() {
+    let d = design(
+        r#"[{"op":"add_class","name":"Node","stereotype":"abstract","methods":[{"name":"size","returns":"int","is_abstract":true}]},
+            {"op":"add_class","name":"Folder","methods":[{"name":"size","returns":"int"}]},
+            {"op":"add_relation","from":"Folder","to":"Node","kind":"inheritance"},
+            {"op":"add_relation","from":"Folder","to":"Node","kind":"aggregation","to_mult":"*"},
+            {"op":"add_class","name":"SizeVisitor","stereotype":"interface","methods":[{"name":"visitFile","params":[{"name":"f","type":"Node"}],"is_abstract":true}]}]"#,
+    );
+    let m = compute(&d, false);
+    assert!(m.issues.iter().any(|i| i.kind == "composite_incomplete" && i.message.contains("add/remove/getChildren")), "{:#?}", m.issues);
+    assert!(m.issues.iter().any(|i| i.kind == "degenerate_visitor"));
+}

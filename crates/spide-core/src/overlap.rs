@@ -118,9 +118,7 @@ fn features<'a>(class_names: &BTreeSet<String>, c: &'a Class, m: &'a Method) -> 
             touches.extend(type_tokens(&a.ty));
         }
     }
-    for p in &m.params {
-        touches.extend(type_tokens(&p.ty).into_iter().filter(|t| class_names.contains(t)));
-    }
+    let _ = class_names; // parameter types are part of the signature, not of what the body does
     let text = m.description.as_deref().map(tokens).unwrap_or_default();
     Features { class: c, m, name: tokens(&m.name), sig, touches, text, ids: Default::default() }
 }
@@ -220,11 +218,19 @@ fn inherited_method(d: &Design, anc: &BTreeMap<String, Vec<String>>, c: &Class, 
     anc.get(&c.name)?.iter().find(|a| d.class(a).is_some_and(|x| x.methods.iter().any(|m| m.name == name))).cloned()
 }
 
-/// A method that only forwards to one method of another class.
+/// A method that only forwards to one method of another class. Asking each of its parts (a
+/// collection it keeps: `for step in steps: step.duration()`) is a whole's work, not forwarding.
 fn forwards(c: &Class, m: &Method) -> Option<String> {
     let external: Vec<&String> = m.calls.iter().filter(|x| x.split_once('.').is_some_and(|(cls, _)| cls != c.name && cls != "this")).collect();
     let local = m.calls.len() - external.len();
-    (external.len() == 1 && local == 0 && m.uses.len() <= 1).then(|| external[0].clone())
+    if external.len() != 1 || local != 0 || m.uses.len() > 1 {
+        return None;
+    }
+    let target = external[0].split_once('.').map(|(cls, _)| cls).unwrap_or("");
+    let over_parts = m.uses.iter().any(|u| {
+        c.attributes.iter().any(|a| &a.name == u && (a.ty.contains('<') || a.ty.contains('[')) && detail::type_names(&a.ty).any(|t| t == target))
+    });
+    (!over_parts).then(|| external[0].clone())
 }
 
 fn similarity(a: &Features, b: &Features) -> MethodPair {

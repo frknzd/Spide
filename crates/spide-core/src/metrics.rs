@@ -126,6 +126,8 @@ pub fn classify_issue(kind: &str) -> (&'static str, &'static str) {
         "change_ripple" | "chatty_scenario" | "multi_aggregate_write" => ("responsibility", "Protected Variations · Information Expert (Ch. 3)"),
         "layer" | "module_boundary" | "forbidden_dep" | "forbidden_type" | "orphan" | "consistency" => ("architecture", "Architecture rules"),
         "long_params" => ("uml", "Bad smells: Long Parameter List (Ch. 5)"),
+        "missing_types" | "inherited_repeated" => ("uml", "Exam notes: UML class diagrams (Ch. 6)"),
+        "composite_incomplete" | "degenerate_visitor" => ("uml", "Composite / Visitor (Ch. 5–6)"),
         _ => ("uml", "Exam notes: UML class diagrams (Ch. 6)"),
     }
 }
@@ -244,7 +246,10 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
             }
         }
         for m in c.methods.iter().filter(|m| counts(m.status, ghosts)) {
-            for p in &m.params {
+            // an interface's abstract method only *names* its parameter types (callbacks, double
+            // dispatch in a Visitor): that's not a dependency that can form a harmful cycle
+            let declaration_only = m.is_abstract && c.is_interface();
+            for p in m.params.iter().filter(|_| !declaration_only) {
                 for t in type_refs(&p.ty, &names) {
                     add(t, format!("{}() parameter", m.name));
                 }
@@ -748,7 +753,7 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
     out.overlap = ov;
 
     // ---- course checks (Demeter, Creator, switches, long methods, UML hygiene, …)
-    issues.extend(crate::course::check(d, ghosts));
+    issues.extend(crate::course::check(d, ghosts, &out.responsibility));
 
     // ---- the agent's judgement: confirm, dispute or add (current assessments only)
     crate::assess::merge(d, &mut issues);
