@@ -210,3 +210,30 @@ fn external_packages_are_suggested_once_and_discounted() {
     assert!(after.health >= before.health);
     assert!(!after.issues.iter().any(|i| i.targets.contains(&"A".to_string())), "external classes aren't judged");
 }
+
+/// 200 classes with realistic, overlapping method names (the overlap engine compares names pairwise).
+#[test]
+fn metrics_scale_to_200_classes() {
+    let verbs = ["add", "remove", "compute", "find", "validate", "show", "save", "count"];
+    let nouns = ["Order", "Line", "Customer", "Invoice", "Payment", "Item", "Report", "Path"];
+    let mut ops = vec![];
+    for i in 0..200 {
+        let ms: Vec<String> = (0..6)
+            .map(|k| {
+                let (v, n) = (verbs[(i + k) % 8], nouns[(i * 3 + k) % 8]);
+                format!(r#"{{"name":"{v}{n}{k}","params":[{{"name":"x","type":"C{}"}}],"returns":"int","uses":["f{}"],"calls":["C{}.{}{}{}"]}}"#, (i + 1) % 200, k % 2, (i + 2) % 200, verbs[(i + 2 + k) % 8], nouns[((i + 2) * 3 + k) % 8], k)
+            })
+            .collect();
+        ops.push(format!(r#"{{"op":"add_class","name":"C{i}","attributes":[{{"name":"f0","type":"int"}},{{"name":"f1","type":"C{}"}}],"methods":[{}]}}"#, (i + 5) % 200, ms.join(",")));
+    }
+    for i in 0..200 {
+        ops.push(format!(r#"{{"op":"add_relation","from":"C{i}","to":"C{}","kind":"dependency"}}"#, (i * 7 + 3) % 200));
+    }
+    let d = design(&format!("[{}]", ops.join(",")));
+    let t = std::time::Instant::now();
+    let m = compute(&d, false);
+    let ms = t.elapsed().as_millis();
+    println!("200 classes: {ms} ms, {} issues", m.issues.len());
+    let limit = if cfg!(debug_assertions) { 400 } else { 20 };
+    assert!(ms < limit, "took {ms} ms");
+}

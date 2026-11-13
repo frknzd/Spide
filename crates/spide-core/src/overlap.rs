@@ -60,9 +60,42 @@ struct Features<'a> {
     sig: BTreeSet<String>,
     touches: BTreeSet<String>,
     text: BTreeSet<String>,
+    /// The same sets as sorted token ids (fast pairwise comparison): name, sig, touches, text.
+    ids: [Vec<u32>; 4],
 }
 
-fn features<'a>(d: &Design, c: &'a Class, m: &'a Method) -> Features<'a> {
+fn intern(map: &mut std::collections::HashMap<String, u32>, set: &BTreeSet<String>) -> Vec<u32> {
+    let mut v: Vec<u32> = set
+        .iter()
+        .map(|t| {
+            let n = map.len() as u32;
+            *map.entry(t.clone()).or_insert(n)
+        })
+        .collect();
+    v.sort_unstable();
+    v
+}
+
+fn jaccard_ids(a: &[u32], b: &[u32]) -> f64 {
+    if a.is_empty() && b.is_empty() {
+        return 0.0;
+    }
+    let (mut i, mut j, mut inter) = (0, 0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                inter += 1;
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    inter as f64 / (a.len() + b.len() - inter) as f64
+}
+
+fn features<'a>(class_names: &BTreeSet<String>, c: &'a Class, m: &'a Method) -> Features<'a> {
     let mut sig: BTreeSet<String> = BTreeSet::new();
     for p in &m.params {
         sig.extend(type_tokens(&p.ty).into_iter().map(|t| format!("in:{t}")));
@@ -86,10 +119,10 @@ fn features<'a>(d: &Design, c: &'a Class, m: &'a Method) -> Features<'a> {
         }
     }
     for p in &m.params {
-        touches.extend(type_tokens(&p.ty).into_iter().filter(|t| d.classes.iter().any(|c| c.name.to_lowercase() == *t)));
+        touches.extend(type_tokens(&p.ty).into_iter().filter(|t| class_names.contains(t)));
     }
     let text = m.description.as_deref().map(tokens).unwrap_or_default();
-    Features { class: c, m, name: tokens(&m.name), sig, touches, text }
+    Features { class: c, m, name: tokens(&m.name), sig, touches, text, ids: Default::default() }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -162,15 +195,13 @@ pub fn trivial(c: &Class, m: &Method) -> bool {
     m.is_abstract || detail::is_accessor(&c.name, m) || ["toString", "equals", "hashCode", "compareTo"].contains(&m.name.as_str())
 }
 
-/// Do both classes implement the same method of a common supertype (polymorphism, not duplication)?
-fn overrides_same(d: &Design, a: &Class, b: &Class, name: &str) -> bool {
-    let mut ancestors_a: BTreeSet<String> = detail::ancestors(d, &a.name).into_iter().collect();
-    ancestors_a.insert(a.name.clone());
-    let mut ancestors_b: BTreeSet<String> = detail::ancestors(d, &b.name).into_iter().collect();
-    ancestors_b.insert(b.name.clone());
-    ancestors_a.intersection(&ancestors_b).any(|x| d.class(x).is_some_and(|c| c.methods.iter().any(|m| m.name == name)))
-        || detail::ancestors(d, &a.name).iter().any(|x| d.class(x).is_some_and(|c| c.methods.iter().any(|m| m.name == name)))
-            && detail::ancestors(d, &b.name).iter().any(|x| d.class(x).is_some_and(|c| c.methods.iter().any(|m| m.name == name)))
+/// Do both classes implement the same method of a supertype (polymorphism, not duplication)?
+fn overrides_same(d: &Design, anc: &BTreeMap<String, Vec<String>>, a: &Class, b: &Class, name: &str) -> bool {
+    let declares = |x: &String| d.class(x).is_some_and(|c| c.methods.iter().any(|m| m.name == name));
+    let (aa, ab) = (anc.get(&a.name), anc.get(&b.name));
+    let in_a = aa.is_some_and(|v| v.iter().any(declares)) || ab.is_some_and(|v| v.contains(&a.name));
+    let in_b = ab.is_some_and(|v| v.iter().any(declares)) || aa.is_some_and(|v| v.contains(&b.name));
+    in_a && in_b || ab.is_some_and(|v| v.contains(&a.name)) || aa.is_some_and(|v| v.contains(&b.name))
 }
 
 fn calls_target(m: &Method, class: &str, method: &str) -> bool {
@@ -183,8 +214,8 @@ fn handler(m: &Method) -> bool {
 }
 
 /// The method implements/overrides one declared by a supertype (polymorphism).
-fn inherited_method(d: &Design, c: &Class, name: &str) -> Option<String> {
-    detail::ancestors(d, &c.name).into_iter().find(|a| d.class(a).is_some_and(|x| x.methods.iter().any(|m| m.name == name)))
+fn inherited_method(d: &Design, anc: &BTreeMap<String, Vec<String>>, c: &Class, name: &str) -> Option<String> {
+    anc.get(&c.name)?.iter().find(|a| d.class(a).is_some_and(|x| x.methods.iter().any(|m| m.name == name))).cloned()
 }
 
 /// A method that only forwards to one method of another class.
@@ -195,11 +226,11 @@ fn forwards(c: &Class, m: &Method) -> Option<String> {
 }
 
 fn similarity(a: &Features, b: &Features) -> MethodPair {
-    let name = jaccard(&a.name, &b.name);
-    let signature = if a.sig.is_empty() && b.sig.is_empty() { 0.5 } else { jaccard(&a.sig, &b.sig) };
-    let touches = jaccard(&a.touches, &b.touches);
-    let have_text = !a.text.is_empty() && !b.text.is_empty();
-    let text = if have_text { jaccard(&a.text, &b.text) } else { 0.0 };
+    let name = jaccard_ids(&a.ids[0], &b.ids[0]);
+    let signature = if a.ids[1].is_empty() && b.ids[1].is_empty() { 0.5 } else { jaccard_ids(&a.ids[1], &b.ids[1]) };
+    let touches = jaccard_ids(&a.ids[2], &b.ids[2]);
+    let have_text = !a.ids[3].is_empty() && !b.ids[3].is_empty();
+    let text = if have_text { jaccard_ids(&a.ids[3], &b.ids[3]) } else { 0.0 };
     // weights: name .35, signature .25, touches .25, text .15 (redistributed when there is no text)
     let mut score = if have_text {
         0.35 * name + 0.25 * signature + 0.25 * touches + 0.15 * text
@@ -212,18 +243,9 @@ fn similarity(a: &Features, b: &Features) -> MethodPair {
         score = score.min(0.45);
     }
     if name < 0.34 {
-        score = score.min(0.5);
+        score = score.min(0.49);
     }
-    MethodPair {
-        a: format!("{}.{}", a.class.name, a.m.name),
-        b: format!("{}.{}", b.class.name, b.m.name),
-        score: (score * 100.0).round() / 100.0,
-        name,
-        signature,
-        touches,
-        text,
-        shared: a.name.intersection(&b.name).cloned().collect(),
-    }
+    MethodPair { a: String::new(), b: String::new(), score: (score * 100.0).round() / 100.0, name, signature, touches, text, shared: vec![] }
 }
 
 /// Analyse live, non-external classes. Pairs below `min_score` aren't reported.
@@ -235,10 +257,28 @@ pub fn analyse_with(d: &Design, min_score: f64, ghosts: bool) -> Report {
     let live = |s: Status| s.is_live() || (ghosts && s == Status::Proposed);
     let classes: Vec<&Class> = d.classes.iter().filter(|c| live(c.status) && !d.is_external(&c.name)).collect();
     let mut r = Report::default();
+    let class_names: BTreeSet<String> = d.classes.iter().map(|c| c.name.to_lowercase()).collect();
+    let has_inheritance = d.relations.iter().any(|r| matches!(r.kind, RelationKind::Inheritance | RelationKind::Realization));
+    let anc: BTreeMap<String, Vec<String>> = if has_inheritance {
+        classes.iter().map(|c| (c.name.clone(), detail::ancestors(d, &c.name))).filter(|(_, v)| !v.is_empty()).collect()
+    } else {
+        BTreeMap::new()
+    };
     let mut feats: Vec<Features> = vec![];
     for c in &classes {
         for m in c.methods.iter().filter(|m| live(m.status) && !trivial(c, m) && !detail::is_constructor(&c.name, m)) {
-            feats.push(features(d, c, m));
+            feats.push(features(&class_names, c, m));
+        }
+    }
+    let mut ids: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    for f in feats.iter_mut() {
+        f.ids = [intern(&mut ids, &f.name), intern(&mut ids, &f.sig), intern(&mut ids, &f.touches), intern(&mut ids, &f.text)];
+    }
+    // inverted index on name words: only methods sharing a name word can score ≥ 0.5
+    let mut by_word: std::collections::HashMap<u32, Vec<usize>> = std::collections::HashMap::new();
+    for (i, f) in feats.iter().enumerate() {
+        for w in &f.ids[0] {
+            by_word.entry(*w).or_default().push(i);
         }
     }
     // delegation (pass-through), reported separately
@@ -264,28 +304,57 @@ pub fn analyse_with(d: &Design, min_score: f64, ghosts: bool) -> Report {
     };
     // method pairs across classes
     let mut near: BTreeMap<(String, String), usize> = BTreeMap::new();
+    let mut stamp: Vec<usize> = vec![usize::MAX; feats.len()];
     for i in 0..feats.len() {
-        for j in (i + 1)..feats.len() {
+        let candidates: Vec<usize> = if min_score >= 0.49 {
+            let mut c = vec![];
+            for w in &feats[i].ids[0] {
+                for &j in &by_word[w] {
+                    if j > i && stamp[j] != i {
+                        stamp[j] = i;
+                        c.push(j);
+                    }
+                }
+            }
+            c.sort_unstable();
+            c
+        } else {
+            ((i + 1)..feats.len()).collect()
+        };
+        for j in candidates {
             let (a, b) = (&feats[i], &feats[j]);
             if a.class.name == b.class.name {
+                continue;
+            }
+            // with too few shared name words the score stays below 0.5: skip the work
+            if min_score >= 0.49 && jaccard_ids(&a.ids[0], &b.ids[0]) < 0.34 {
                 continue;
             }
             // one calls the other: delegation, not duplication
             if calls_target(a.m, &b.class.name, &b.m.name) || calls_target(b.m, &a.class.name, &a.m.name) {
                 continue;
             }
-            if a.m.name == b.m.name && overrides_same(d, a.class, b.class, &a.m.name) {
+            if a.m.name == b.m.name && !anc.is_empty() && overrides_same(d, &anc, a.class, b.class, &a.m.name) {
+                continue;
+            }
+            if handler(a.m) != handler(b.m) {
+                continue;
+            }
+            let mut p = similarity(a, b);
+            if p.score < min_score && p.score < DUPLICATE {
                 continue;
             }
             let (ka, kb) = (format!("{}.{}", a.class.name, a.m.name), format!("{}.{}", b.class.name, b.m.name));
-            if reaches(&ka, &kb) || reaches(&kb, &ka) || handler(a.m) != handler(b.m) {
+            if reaches(&ka, &kb) || reaches(&kb, &ka) {
                 continue;
             }
-            let p = similarity(a, b);
             if p.score >= DUPLICATE {
                 *near.entry((a.class.name.clone(), b.class.name.clone())).or_default() += 1;
             }
             if p.score >= min_score {
+                p.a = ka;
+                p.b = kb;
+                p.shared = a.name.intersection(&b.name).cloned().collect();
                 r.pairs.push(p);
             }
         }
@@ -293,14 +362,18 @@ pub fn analyse_with(d: &Design, min_score: f64, ghosts: bool) -> Report {
     r.pairs.sort_by(|x, y| y.score.partial_cmp(&x.score).unwrap().then(x.a.cmp(&y.a)));
 
     // class overlap matrix
-    let behaviour = |c: &str| feats.iter().filter(|f| f.class.name == c).count();
-    let resp_tokens = |c: &Class| c.responsibilities.iter().flat_map(|r| tokens(r)).collect::<BTreeSet<String>>();
+    let mut behaviour_n: BTreeMap<&str, usize> = BTreeMap::new();
+    for f in &feats {
+        *behaviour_n.entry(f.class.name.as_str()).or_default() += 1;
+    }
+    let behaviour = |c: &str| behaviour_n.get(c).copied().unwrap_or(0);
+    let resp_tok: Vec<BTreeSet<String>> = classes.iter().map(|c| c.responsibilities.iter().flat_map(|r| tokens(r)).collect()).collect();
     for i in 0..classes.len() {
         for j in (i + 1)..classes.len() {
             let (a, b) = (classes[i], classes[j]);
-            let n = near.get(&(a.name.clone(), b.name.clone())).or_else(|| near.get(&(b.name.clone(), a.name.clone()))).copied().unwrap_or(0);
-            let (ra, rb) = (resp_tokens(a), resp_tokens(b));
-            let resp = if ra.len() >= 3 && rb.len() >= 3 { jaccard(&ra, &rb) } else { 0.0 };
+            let (ra, rb) = (&resp_tok[i], &resp_tok[j]);
+            let n = if near.is_empty() { 0 } else { near.get(&(a.name.clone(), b.name.clone())).or_else(|| near.get(&(b.name.clone(), a.name.clone()))).copied().unwrap_or(0) };
+            let resp = if ra.len() >= 3 && rb.len() >= 3 { jaccard(ra, rb) } else { 0.0 };
             if n == 0 && resp < 0.25 {
                 continue;
             }
@@ -313,16 +386,24 @@ pub fn analyse_with(d: &Design, min_score: f64, ghosts: bool) -> Report {
     }
 
     // concepts another class owns (its attributes or its stated responsibilities)
+    let attr_tok: BTreeMap<&str, Vec<(&Attribute, BTreeSet<String>)>> = classes
+        .iter()
+        .map(|c| (c.name.as_str(), c.attributes.iter().filter(|a| live(a.status)).map(|a| (a, tokens(&a.name))).filter(|(_, t)| t.len() >= 2).collect()))
+        .collect();
+    let resp_each: BTreeMap<&str, Vec<(&String, BTreeSet<String>)>> =
+        classes.iter().map(|c| (c.name.as_str(), c.responsibilities.iter().map(|r| (r, tokens(r))).collect())).collect();
     for f in &feats {
-        if delegating.contains(&format!("{}.{}", f.class.name, f.m.name)) || f.name.len() < 2 || handler(f.m) || inherited_method(d, f.class, &f.m.name).is_some() {
+        if delegating.contains(&format!("{}.{}", f.class.name, f.m.name)) || f.name.len() < 2 || handler(f.m) || inherited_method(d, &anc, f.class, &f.m.name).is_some() {
             continue;
         }
         let own_data = !f.m.uses.is_empty();
         for other in classes.iter().filter(|o| o.name != f.class.name) {
-            for a in other.attributes.iter().filter(|a| live(a.status)) {
-                let at = tokens(&a.name);
-                let shared: BTreeSet<String> = f.name.intersection(&at).cloned().collect();
-                if at.len() >= 2 && shared.len() == at.len() && !own_data {
+            for (a, at) in &attr_tok[other.name.as_str()] {
+                if own_data || f.name.is_disjoint(at) {
+                    continue;
+                }
+                let shared: BTreeSet<String> = f.name.intersection(at).cloned().collect();
+                if shared.len() == at.len() {
                     r.claims.push(Claim {
                         method: format!("{}.{}", f.class.name, f.m.name),
                         owner: other.name.clone(),
@@ -333,12 +414,14 @@ pub fn analyse_with(d: &Design, min_score: f64, ghosts: bool) -> Report {
                     });
                 }
             }
-            for resp in &other.responsibilities {
-                let rt = tokens(resp);
-                let shared: BTreeSet<String> = f.name.intersection(&rt).cloned().collect();
+            for (resp, rt) in &resp_each[other.name.as_str()] {
+                if f.name.is_disjoint(rt) {
+                    continue;
+                }
+                let shared: BTreeSet<String> = f.name.intersection(rt).cloned().collect();
                 // two or more of the method's words appear in what the other class says it is responsible for
                 if shared.len() >= 2 && shared.len() as f64 >= 0.6 * f.name.len() as f64 {
-                    let mine = f.class.responsibilities.iter().any(|x| tokens(x).intersection(&shared).count() == shared.len());
+                    let mine = resp_each[f.class.name.as_str()].iter().any(|(_, x)| x.intersection(&shared).count() == shared.len());
                     if !mine {
                         r.claims.push(Claim {
                             method: format!("{}.{}", f.class.name, f.m.name),
@@ -372,7 +455,7 @@ pub fn analyse_with(d: &Design, min_score: f64, ghosts: bool) -> Report {
     }
     for (concept, ms) in by_concept {
         // overrides of one supertype method count as one place (polymorphism)
-        let family = |c: &String, m: &String| d.class(c).and_then(|cl| inherited_method(d, cl, m)).unwrap_or_else(|| c.clone());
+        let family = |c: &String, m: &String| d.class(c).and_then(|cl| inherited_method(d, &anc, cl, m)).unwrap_or_else(|| c.clone());
         let fams: BTreeSet<String> = ms.iter().map(|(c, m)| family(c, m)).collect();
         let cls: BTreeSet<&String> = ms.iter().map(|(c, _)| c).collect();
         if fams.len() >= 3 {
