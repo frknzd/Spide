@@ -3,7 +3,8 @@ import { api } from "../state/api";
 import { perfCount } from "../state/perf";
 import type { Layer, Pos, Target } from "../state/types";
 import { NodeDefs } from "./ClassNode";
-import { boxesFor, DiagramContent, externalClasses, rectOf, type DiagramData } from "./DiagramContent";
+import { boxesFor, DiagramContent, externalClasses, rectOf, type DiagramData, type Lens } from "./DiagramContent";
+import { methodConcerns, methodMarks, overlapLinks, scatteredByClass } from "../state/insights";
 import { elkCompoundLayout, type GroupSpec } from "./layout";
 import { LivingLayout } from "./physics";
 import { nodeScale } from "./visuals";
@@ -27,6 +28,7 @@ interface Props {
   /** granularity 0–4 (slider) */
   level?: number;
   showImplicit?: boolean;
+  lens?: Lens;
   tension: number;
   onPrune: (targets: Target[], at: { x: number; y: number }) => void;
   onClickTarget: (t: Target) => void;
@@ -68,10 +70,14 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
   const dragging = useRef<string | null>(null);
 
   const level = p.level ?? 4;
+  const insights = useMemo(() => {
+    const m = p.data.metrics;
+    return { marks: methodMarks(m), concerns: methodConcerns(m), overlap: overlapLinks(m), scattered: scatteredByClass(m) };
+  }, [p.data.metrics]);
   const external = useMemo(() => externalClasses(p.data.classes, p.data.packages), [p.data.classes, p.data.packages]);
   const boxes = useMemo(
-    () => boxesFor(p.data.classes, p.showMethods !== false, Math.max(1, level), p.data.relations, undefined, external),
-    [p.data.classes, p.data.relations, p.showMethods, level, external],
+    () => boxesFor(p.data.classes, p.showMethods !== false, Math.max(1, level), p.data.relations, undefined, external, insights.marks),
+    [p.data.classes, p.data.relations, p.showMethods, level, external, insights.marks],
   );
   const cm = p.data.metrics?.classes;
 
@@ -258,7 +264,8 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
       onDoubleClickTarget={(t, e) => p.onDoubleClickTarget?.(t, { x: e.clientX, y: e.clientY })}
     >
       <DiagramContent {...p.data} pos={pos} boxes={boxes} showMethods={p.showMethods} focusClass={focusClass} stress={p.stress} drift={p.drift}
-        pinned={layout.pinnedIds()} focusSet={focusSet} zoomCap={zoomCap} level={level} showImplicit={p.showImplicit} />
+        pinned={layout.pinnedIds()} focusSet={focusSet} zoomCap={zoomCap} level={level} showImplicit={p.showImplicit}
+        lens={p.lens ?? "none"} marks={insights.marks} concerns={insights.concerns} overlap={insights.overlap} scattered={insights.scattered} />
     </Viewport>
   );
 }));

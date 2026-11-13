@@ -151,6 +151,18 @@ fn data_points(d: &Design, owner: &Class, m: &Method, claims: &[crate::overlap::
     pts
 }
 
+/// Quick Information-Expert guess (no simulation): the non-external class, other than the owner,
+/// that owns the largest share of the data the method uses.
+pub fn expert(d: &Design, class: &str, method: &str, claims: &[crate::overlap::Claim]) -> Option<String> {
+    let owner = d.class(class)?;
+    let m = owner.methods.iter().find(|x| x.name == method)?;
+    data_points(d, owner, m, claims)
+        .into_iter()
+        .filter(|(k, _)| k != class && !d.is_external(k))
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then(b.0.cmp(&a.0)))
+        .map(|(k, _)| k)
+}
+
 /// The method as it would look in `home`: calls into home become local, a parameter of home's
 /// type becomes `this`, attributes of the old owner it used become parameters.
 fn moved_method(d: &Design, owner: &Class, m: &Method, home: &str) -> Method {

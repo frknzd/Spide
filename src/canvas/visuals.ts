@@ -141,6 +141,8 @@ export interface BoxContext {
   inherited?: Set<string>;
   /** attributes that duplicate a drawn association: shown as the edge's role name instead */
   associations?: Set<string>;
+  /** methods that must stay visible (flagged by the diagnostics) */
+  keep?: Set<string>;
 }
 
 const ACCESSOR = /^(get|is|has|set)[A-Z_]/;
@@ -206,7 +208,7 @@ export function classBox(
     let helpers = 0;
     let shown = 0;
     for (const m of c.methods ?? []) {
-      if (design && m.status !== "proposed" && m.status !== "removing") {
+      if (design && m.status !== "proposed" && m.status !== "removing" && !ctx.keep?.has(m.name)) {
         if (isAccessor(c, m)) {
           accessors++;
           continue;

@@ -135,9 +135,31 @@ fn classify(op: &Op) -> (u8, String) {
     }
 }
 
+thread_local! {
+    /// Metrics of recently seen "before" designs: every decision option and proposal is compared with
+    /// the same base, so its metrics are computed once per snapshot instead of once per option.
+    static BEFORE: std::cell::RefCell<Vec<(String, Metrics)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn compute_before(d: &Design) -> Metrics {
+    let key = crate::assess::fnv(&serde_json::to_string(d).unwrap_or_default());
+    if let Some(m) = BEFORE.with(|c| c.borrow().iter().find(|(k, _)| *k == key).map(|(_, m)| m.clone())) {
+        return m;
+    }
+    let m = compute(d, false);
+    BEFORE.with(|c| {
+        let mut c = c.borrow_mut();
+        c.push((key, m.clone()));
+        if c.len() > 4 {
+            c.remove(0);
+        }
+    });
+    m
+}
+
 /// Impact of moving from `before` to `after` (both committed designs).
 pub fn impact(before: &Design, after: &Design) -> Impact {
-    let mb = compute(before, false);
+    let mb = compute_before(before);
     let ma = compute(after, false);
     let ops = diff(before, after);
     let mut out = Impact { health_before: mb.health, health_after: ma.health, ..Default::default() };

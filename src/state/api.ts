@@ -60,6 +60,7 @@ export const api = {
   exportArchUnit: (path: string) => call("export_archunit", { path }),
   setCodeRoot: (root: string | null) => call("set_code_root", { root }),
   importCode: (dir: string) => call<ImportSummary>("import_code", { dir }),
+  codeSnippet: (cls: string, method?: string) => call<string>("code_snippet", { class: cls, method: method ?? null }),
   drift: () => call<DriftReport>("drift"),
   driftAdopt: () => call("drift_adopt"),
   exportAdr: (dir: string) => call<string[]>("export_adr", { dir }),

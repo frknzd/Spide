@@ -671,6 +671,18 @@ pub fn drift(st: State<'_, AppState>) -> R<DriftReport> {
     Ok(DriftReport { reality: spide_core::drift::with_design_rules(&design, &reality), drift, findings, checklist, code_dir: design.settings.code_dir.clone() })
 }
 
+/// The imported implementation of a class (or one method), for the hover card.
+#[tauri::command(async)]
+pub fn code_snippet(st: State<'_, AppState>, class: String, method: Option<String>) -> R<String> {
+    let (project, dir) = {
+        let s = st.lock();
+        (s.project_dir.clone(), s.store.design.settings.code_dir.clone())
+    };
+    let dir = dir.ok_or("no code imported yet — /import a source folder first")?;
+    let reality = load_reality(&project).ok_or("no code imported yet")?;
+    spide_core::code::snippet(&reality, std::path::Path::new(&dir), &class, method.as_deref())
+}
+
 /// What exists only in the code becomes a proposal (never removes anything from the design).
 #[tauri::command(async)]
 pub fn drift_adopt(st: State<'_, AppState>) -> R {
@@ -760,6 +772,7 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "set_code_root" => set_code_root(s, str_("root")),
         "drift" => return drift(s).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "drift_adopt" => drift_adopt(s),
+        "code_snippet" => return code_snippet(s, req("class")?, str_("method")).map(|v| serde_json::json!(v)),
         "import_code" => return import_code(s, pi, req("dir")?).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "export_adr" => return export_adr(s, req("dir")?).map(|v| serde_json::json!(v)),
         "export_plantuml_all" => return export_plantuml_all(s, req("dir")?).map(|v| serde_json::json!(v)),

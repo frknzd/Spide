@@ -91,6 +91,7 @@ fn main() {
             commands::export_archunit,
             commands::set_code_root,
             commands::import_code,
+            commands::code_snippet,
             commands::drift,
             commands::drift_adopt,
             commands::reveal_project,

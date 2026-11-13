@@ -5,3 +5,7 @@ members = ["crates/spide-core", "crates/spide-import", "src-tauri"]
 [workspace.package]
 edition = "2021"
 version = "0.1.0"
+
+# The metrics engine runs on every change (and per decision option): keep it fast in dev builds too.
+[profile.dev.package.spide-core]
+opt-level = 2

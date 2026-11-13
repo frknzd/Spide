@@ -152,6 +152,7 @@ export interface Design {
   layout: Record<string, Record<string, Pos>>;
   settings: { examiner: "lenient" | "strict"; show_pruned: boolean; partner: PartnerMode; brief_skipped: boolean; code_root: string | null; code_dir: string | null; detail?: Record<string, number> };
   rules: Rules;
+  assessments?: Record<string, Assessment>;
 }
 
 export interface ClassMetrics {

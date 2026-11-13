@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { perfCount } from "../state/perf";
+import type { MethodMark, OverlapLink } from "../state/insights";
 import type { Class, ClassMetrics, ImplicitEdge, Metrics, Package, Pos, Relation, Target } from "../state/types";
 import { ClassNode } from "./ClassNode";
 import { Edge, type EdgeStyle } from "./Edge";
@@ -64,14 +65,17 @@ export function externalClasses(classes: Class[], packages: Package[]): Set<stri
   return new Set(classes.filter((c) => c.external || (c.package && ext.has(c.package))).map((c) => c.name));
 }
 
-export function boxesFor(classes: Class[], showMethods = true, level = 4, relations: Relation[] = [], purposes?: Record<string, string>, external?: Set<string>): Map<string, ClassBox> {
+export function boxesFor(
+  classes: Class[], showMethods = true, level = 4, relations: Relation[] = [], purposes?: Record<string, string>, external?: Set<string>,
+  keep?: Map<string, Map<string, unknown>>,
+): Map<string, ClassBox> {
   const m = new Map<string, ClassBox>();
   const assoc = level === 3 ? associationRoles(classes, relations).attrs : new Map<string, Set<string>>();
   const inh = level === 3 ? inheritedAttrs(classes, relations) : new Map<string, Set<string>>();
   for (const c of classes) {
     // external classes: a compact header (they aren't designed here), unless everything is shown
     const lvl = external?.has(c.name) && level < 4 ? 1 : level;
-    m.set(c.name, classBox(c, { methods: showMethods, level: lvl, ctx: { inherited: inh.get(c.name), associations: assoc.get(c.name) }, purpose: purposes?.[c.name] }));
+    m.set(c.name, classBox(c, { methods: showMethods, level: lvl, ctx: { inherited: inh.get(c.name), associations: assoc.get(c.name), keep: keep?.get(c.name) ? new Set(keep.get(c.name)!.keys()) : undefined }, purpose: purposes?.[c.name] }));
   }
   return m;
 }
@@ -141,7 +145,15 @@ interface Props extends DiagramData {
   level?: number;
   /** draw every implicit (type/call) dependency, not just the focused class's */
   showImplicit?: boolean;
+  /** diagnostics on the canvas */
+  marks?: Map<string, Map<string, MethodMark>>;
+  lens?: Lens;
+  concerns?: Map<string, Map<string, string>>;
+  overlap?: OverlapLink[];
+  scattered?: Map<string, string[]>;
 }
+
+export type Lens = "none" | "concerns" | "overlap";
 
 export const DiagramContent = memo(function DiagramContent(p: Props) {
   perfCount("DiagramContent");
@@ -229,6 +241,18 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
       );
     }
   }
+  // overlap lens: classes that duplicate each other, methods dealing with another class's concept
+  if (p.lens === "overlap" && !overview) {
+    for (const l of p.overlap ?? []) {
+      const a = rects.get(l.from);
+      const b = rects.get(l.to);
+      if (!a || !b) continue;
+      edgeEls.push(
+        <Edge key={`ov${l.from}>${l.to}`} from={a} to={b} kind="implicit" bend={-0.4} label={l.label}
+          style={{ color: "#c4b5fd", width: 3 + l.strength * 4, opacity: 0.9, dashed: true }} />,
+      );
+    }
+  }
   for (const e of overview ? [] : p.implicit ?? []) {
     // implicit dependencies are clutter unless asked for (/implicit) or the class is in focus
     if (!p.showImplicit && !(focus && (e.from === focus || e.to === focus))) continue;
@@ -290,7 +314,9 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
               ring={p.stress?.impacted.has(c.name) ? C.cycle : p.stress?.ripple.has(c.name) ? C.warn
                 : p.drift?.missing.has(c.name) ? C.cycle : p.drift?.drifted.has(c.name) ? C.warn : null}
               ringDashed={!!p.drift?.missing.has(c.name)} phantom={!!p.drift?.phantom.has(c.name)}
-              still={p.still} layerColor={pk?.layer ? LAYER_COLOR[pk.layer] : null} compact={cap <= 1 && level >= 2} />
+              still={p.still} layerColor={pk?.layer ? LAYER_COLOR[pk.layer] : null} compact={cap <= 1 && level >= 2}
+              marks={level >= 3 ? p.marks?.get(c.name) : undefined} concerns={p.lens === "concerns" ? p.concerns?.get(c.name) : undefined}
+              chips={p.lens === "overlap" ? p.scattered?.get(c.name) : undefined} />
           );
         })}
       </g>

@@ -1,7 +1,7 @@
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, type CanvasApi } from "./canvas/Canvas";
-import type { DiagramData } from "./canvas/DiagramContent";
+import type { DiagramData, Lens } from "./canvas/DiagramContent";
 import type { ViewportApi } from "./canvas/Viewport";
 import { standaloneSvg } from "./export/svg";
 import { api } from "./state/api";
@@ -21,6 +21,8 @@ import { InlineEdit, type InlineEditState } from "./ui/InlineEdit";
 import { PromptBar } from "./ui/PromptBar";
 import { PerfOverlay } from "./ui/PerfOverlay";
 import { DetailSlider } from "./ui/DetailSlider";
+import { CodeView } from "./ui/CodeView";
+import { CONCERN_COLOR } from "./state/insights";
 import { DEFAULT_DETAIL, DETAIL_LABELS } from "./canvas/visuals";
 import { perfCount } from "./state/perf";
 import { Timeline } from "./ui/Timeline";
@@ -55,6 +57,8 @@ export default function App() {
   const [focusKey, setFocusKey] = useState(0);
   const [scenario, setScenario] = useState<string | null>(null);
   const [showImplicit, setShowImplicit] = useState(false);
+  const [lens, setLens] = useState<Lens>("none");
+  const [codeView, setCodeView] = useState<{ title: string; text: string } | null>(null);
   const canvasRef = useRef<CanvasApi>(null);
   const vpRef = useRef<ViewportApi | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -235,6 +239,18 @@ export default function App() {
         const c = name ? view.classes.find((x) => x.name === name) : null;
         if (!c) return toast("error", `no package or class matches “${arg}”`);
         return run(api.userOps([{ op: "update_class", name: c.name, external: !c.external }]).then(() => toast("info", `${c.name}: ${c.external ? "ours again" : "external"}`)));
+      }
+      case "/code": {
+        if (!arg) return toast("error", "usage: /code <Class>[.method] — the imported implementation");
+        const [c, m] = arg.split(".");
+        const name = findClass(view, c) ?? c;
+        return api.codeSnippet(name, m || undefined).then((text) => setCodeView({ title: m ? `${name}.${m}()` : name, text }), (e) => toast("error", String(e)));
+      }
+      case "/lens": {
+        const l = arg.startsWith("c") ? "concerns" : arg.startsWith("o") ? "overlap" : "none";
+        setLens((cur) => (arg ? l : cur === "none" ? "concerns" : "none"));
+        if (tab !== "class") setTab("class");
+        return toast("info", l === "concerns" ? "lens: method rows coloured by what they do" : l === "overlap" ? "lens: duplicated behaviour and scattered concepts" : "lens off");
       }
       case "/implicit":
         setShowImplicit((x) => !x);
@@ -496,7 +512,7 @@ export default function App() {
       <div className="titlebar" data-tauri-drag-region />
       <div className="stage">
         {tab === "class" && classData && (
-          <Canvas ref={canvasRef} key="class" viewKey="class" data={classData} saved={view.layout["class"]} tension={preview ? 0 : metrics.tension} level={detailOf("class")} showImplicit={showImplicit}
+          <Canvas ref={canvasRef} key="class" viewKey="class" data={classData} saved={view.layout["class"]} tension={preview ? 0 : metrics.tension} level={detailOf("class")} showImplicit={showImplicit} lens={preview ? "none" : lens}
             onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} insetRight={pendingCount ? 450 : 0}
             stress={stressSets} drift={driftSets} onMoveToPackage={preview || drift ? undefined : onMoveToPackage} onDoubleClickTarget={preview ? undefined : onDoubleClickTarget} />
         )}
@@ -520,6 +536,12 @@ export default function App() {
             <span className="branch-tag" title="active branch (/branch, /switch, /compare, /merge)">⎇ {snap.branch}</span>
             {view.settings.partner !== "examiner" && <span className="preview-tag mode-tag">{MODES.find((m) => m.mode === view.settings.partner)?.label}</span>}
             {preview && <span className="preview-tag">{timeline ? "past revision (read-only)" : "previewing option"}</span>}
+            {lens === "concerns" && (
+              <span className="preview-tag lens-legend" title="/lens off">
+                what methods do:{Object.entries(CONCERN_COLOR).map(([k, c]) => <span key={k}><i style={{ background: c }} />{k.replace("_", " ")}</span>)}
+              </span>
+            )}
+            {lens === "overlap" && <span className="preview-tag" title="/lens off" style={{ color: "#c4b5fd" }}>overlap: dashed = duplicated behaviour · ⁂ = scattered concept</span>}
             {stressSets && <span className="preview-tag stress-tag">what if: {stress} · <span style={{ color: "#ff5c6c" }}>impacted</span> · <span style={{ color: "#ffb454" }}>ripple</span></span>}
           </div>
           <Tabs tab={tab} onTab={setTab} stale={stale} />
@@ -565,8 +587,9 @@ export default function App() {
       {hasClasses && (tab === "class" || tab === "domain") && (
         <DetailSlider level={detailOf(tab)} onChange={(l) => run(api.setDetail(tab, l))} />
       )}
+      {codeView && <CodeView title={codeView.title} text={codeView.text} onClose={() => setCodeView(null)} />}
       {inline && <InlineEdit s={inline} onClose={() => setInline(null)} />}
-      {hover && !prune && <HoverCard hoverKey={hover.key} at={hover.at} snap={snap} design={preview ?? view} metrics={metrics} />}
+      {hover && !prune && <HoverCard hoverKey={hover.key} at={hover.at} snap={snap} design={preview ?? view} metrics={metrics} drift={drift} />}
       {prune && (
         <FeedbackPopover
           prune={prune}

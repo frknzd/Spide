@@ -674,7 +674,15 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
     }
 
     // ---- responsibilities: does each class do what its name/role says? (RDD, GRASP)
-    let resp = crate::responsibility::analyse_with(d, ghosts);
+    let mut resp = crate::responsibility::analyse_with(d, ghosts);
+    let ov = crate::overlap::analyse_with(d, 0.5, ghosts);
+    // the same Information-Expert reading suggest_home uses (wholes over parts, providers, claims)
+    for f in resp.findings.iter_mut().filter(|f| f.method.is_some()) {
+        if let Some(h) = crate::home::expert(d, &f.class, f.method.as_deref().unwrap(), &ov.claims) {
+            f.fix_hint = format!("move it to {h}, which owns most of the data it uses (Information Expert), or to a new class if no class fits (Pure Fabrication)");
+            f.home = Some(h);
+        }
+    }
     for f in &resp.findings {
         let target = match &f.method {
             Some(m) => vec![f.class.clone(), format!("{}.{m}", f.class)],
@@ -691,7 +699,6 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
     out.responsibility = resp;
 
     // ---- overlap: the same behaviour in several places, or in the wrong place
-    let ov = crate::overlap::analyse_with(d, 0.5, ghosts);
     let mut push = |kind: &'static str, sev: f64, conf: f64, msg: String, targets: Vec<String>, explain: &str, fix: String| {
         let mut i = Issue::new(kind, sev, msg, targets);
         i.explain = explain.into();

@@ -1,6 +1,7 @@
 import { memo } from "react";
 import type { Class, ClassMetrics, Status, Target } from "../state/types";
 import { badges, C, F, FONT_MONO, FONT_SANS, heatBucket, heatColor, PAD_X, statusOpacity, textWidth, type ClassBox } from "./visuals";
+import { CONCERN_COLOR, type MethodMark } from "../state/insights";
 
 export interface ClassNodeProps {
   cls: Class;
@@ -23,6 +24,12 @@ export interface ClassNodeProps {
   layerColor?: string | null;
   /** zoomed far out: draw the frame and a large name only (same box size, so nothing moves) */
   compact?: boolean;
+  /** methods in the wrong place → suggested home */
+  marks?: Map<string, MethodMark>;
+  /** concerns lens: method → concern (colours the rows) */
+  concerns?: Map<string, string>;
+  /** extra chips (scattered concepts in the overlap lens) */
+  chips?: string[];
 }
 
 const T = (t: Target) => JSON.stringify(t);
@@ -102,12 +109,21 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
           const kind = r.kind;
           const tgt: Target = r.status === "proposed" && member?.proposal ? { kind: "proposal", id: member.proposal } : { kind, class: cls.name, name: r.name };
           const tw = textWidth(r.text, F.member);
+          const mark = r.kind === "method" ? p.marks?.get(r.name) : undefined;
+          const concern = r.kind === "method" ? p.concerns?.get(r.name) : undefined;
           return (
             <g key={r.kind + r.name + r.y} data-target={T(tgt)} data-hover={`${r.kind}:${cls.name}.${r.name}`} style={{ cursor: r.status === "pruned" ? "pointer" : "context-menu" }}>
               <rect x={2} y={r.y - 12} width={w - 4} height={16} fill="transparent">
                 {r.status === "pruned" && <title>pruned · click to restore</title>}
               </rect>
-              <text x={PAD_X} y={r.y} fontFamily={FONT_MONO} fontSize={12} fill={rowColor(r.status)}
+              {concern && <rect x={3} y={r.y - 11} width={3} height={14} rx={1.5} fill={CONCERN_COLOR[concern] ?? C.dim} pointerEvents="none" />}
+              {mark && (
+                <text x={w + 6} y={r.y} fontFamily={FONT_SANS} fontSize={11} fill={C.warn} pointerEvents="none">
+                  {mark.home ? `↗ ${mark.home}` : `⚠ ${mark.kind.replace(/_/g, " ")}`}
+                  <title>{mark.message}</title>
+                </text>
+              )}
+              <text x={PAD_X} y={r.y} fontFamily={FONT_MONO} fontSize={12} fill={concern ? CONCERN_COLOR[concern] ?? rowColor(r.status) : rowColor(r.status)}
                 fontStyle={r.isAbstract ? "italic" : undefined} textDecoration={r.isStatic ? "underline" : undefined}>
                 {r.text}
               </text>
@@ -131,7 +147,7 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
           </>
         )}
         {removing && <line x1={-6} y1={-6} x2={w + 6} y2={h + 6} stroke={C.removing} strokeWidth={1.5} opacity={0.7} pointerEvents="none" />}
-        {bs.map((b) => {
+        {[...bs, ...(p.chips ?? []).map((c) => ({ text: `⁂ ${c}`, color: "#c4b5fd", title: "scattered concept" }))].map((b) => {
           const cw = textWidth(b.text, F.small) + 12;
           const el = <Chip key={b.text} x={bx} y={h + 6} text={b.text} color={b.color} />;
           bx += cw + 4;

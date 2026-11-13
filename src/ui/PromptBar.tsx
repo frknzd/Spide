@@ -10,6 +10,8 @@ export const COMMANDS: { cmd: string; help: string }[] = [
   { cmd: "/tidy", help: "re-layout the diagram" },
   { cmd: "/detail", help: "/detail 0–4 — granularity: packages · names · responsibilities · design (default) · full" },
   { cmd: "/external", help: "/external <package|Class> — tag (or untag) as an external library/system: compact, coupling to it counts less" },
+  { cmd: "/code", help: "/code <Class>[.method] — read the imported implementation" },
+  { cmd: "/lens", help: "/lens concerns | overlap | off — colour methods by what they do, or show duplicated behaviour" },
   { cmd: "/implicit", help: "show all implicit (type/call) dependencies, not only the hovered class's" },
   { cmd: "/fit", help: "fit diagram to screen (or double-click)" },
   { cmd: "/add", help: "/add <Class> [in <package>] — add a class yourself (double-click names to rename, drag onto a package to move)" },

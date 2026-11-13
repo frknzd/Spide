@@ -311,3 +311,23 @@ textarea { font: inherit; color: var(--text); background: transparent; border: n
   background: rgba(37,39,45,.8); border: 1px solid var(--line); font-size: 12px; color: var(--text); backdrop-filter: blur(8px); }
 .detail-slider input[type=range] { width: 110px; accent-color: var(--accent); }
 .detail-label { min-width: 104px; color: var(--accent); }
+.health-pop { width: 470px; max-height: 70vh; display: flex; flex-direction: column; }
+.hp-principles { display: grid; gap: 3px; margin-bottom: 8px; }
+.hp-p { display: grid; grid-template-columns: 110px 1fr 30px; align-items: center; gap: 8px; padding: 2px 4px; border-radius: 6px; text-align: left; color: var(--text); }
+.hp-p:hover, .hp-p.on { background: rgba(122,162,255,.1); }
+.hp-pl { font-size: 12px; color: var(--dim); }
+.hp-bar { height: 6px; border-radius: 3px; background: #2c2f36; overflow: hidden; }
+.hp-bar i { display: block; height: 100%; border-radius: 3px; }
+.hp-ps { font-size: 12px; font-weight: 700; text-align: right; }
+.hp-issues { overflow-y: auto; min-height: 0; }
+.hp-group { margin-top: 6px; }
+.issue .iref { display: flex; gap: 10px; font-size: 10.5px; color: var(--faint); margin: 1px 0 3px; }
+.issue.misplaced_responsibility .ik, .issue.duplication .ik, .issue.fat_controller .ik, .issue.ui_bypasses_controller .ik, .issue.concept_elsewhere .ik { color: var(--warn); }
+.issue.disagreement .ik { color: var(--accent); }
+.hc-purpose .hc-home { font-size: 12px; color: var(--warn); }
+.hc-purpose .hc-code { font-size: 12px; color: var(--bad); }
+.code-view { position: fixed; top: 52px; right: 16px; bottom: 120px; width: min(720px, 55vw); z-index: 30; display: flex; flex-direction: column;
+  background: rgba(33,35,41,.98); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.5); overflow: hidden; }
+.code-view pre { flex: 1; overflow: auto; margin: 0; padding: 10px 14px; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre; }
+.lens-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin: 0 3px 0 8px; }
+.preview-tag.lens-legend { position: fixed; left: 16px; bottom: 66px; z-index: 6; max-width: 300px; line-height: 1.8; white-space: normal; }

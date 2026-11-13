@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { attrText, healthColor, heatColor, methodText } from "../canvas/visuals";
-import type { Design, Metrics, Snapshot } from "../state/types";
+import type { Design, DriftReport, Metrics, Snapshot } from "../state/types";
+import { CONCERN_COLOR, methodMarks } from "../state/insights";
 
 interface Props {
   hoverKey: string;
@@ -8,6 +9,39 @@ interface Props {
   snap: Snapshot;
   design: Design;
   metrics: Metrics;
+  drift?: DriftReport | null;
+}
+
+/** "What is it for?": the agent's purpose, the role Spide reads and why, misplaced methods → home, what the code says. */
+function purposeSection(name: string, design: Design, metrics: Metrics, drift?: DriftReport | null): ReactNode {
+  const cr = metrics.responsibility?.classes[name];
+  const role = cr?.role;
+  const a = design.assessments?.[name];
+  const marks = methodMarks(metrics).get(name);
+  const code = drift?.findings?.disagreements.filter((d) => d.class === name) ?? [];
+  if (!role && !a && !marks && !code.length) return null;
+  const heuristic = role?.by_name ?? role?.by_stereotype ?? role?.by_layer ?? null;
+  const agentNote = a?.role ? (heuristic && a.role !== heuristic ? `agent says ${a.role}, names say ${heuristic}` : "agent agrees") : null;
+  const sourceText: Record<string, string> = { explicit: "set explicitly", agent: "from the agent's assessment", name: "from its name", stereotype: "from its stereotype", layer: "from its layer", default: "no signal, assumed" };
+  return (
+    <div className="hc-sec hc-purpose">
+      <div className="hc-h">purpose</div>
+      {a?.purpose && <div>{a.purpose}</div>}
+      {role && (
+        <div className="faint">
+          <b style={{ color: "var(--text)" }}>{role.role}</b> · {sourceText[role.source] ?? role.source}{role.source !== "agent" ? ` (${role.evidence})` : ""}{agentNote ? ` · ${agentNote}` : ""}
+          {cr && Object.keys(cr.concerns).length > 1 && <> · does {Object.entries(cr.concerns).map(([k, n]) => `${k.replace("_", " ")} ${n}`).join(", ")}</>}
+        </div>
+      )}
+      {marks && [...marks.entries()].map(([m, x]) => (
+        <div key={m} className="hc-home">
+          <span className="mono">{m}()</span> <span className="faint">{x.kind.replace(/_/g, " ")}</span>{x.home && <> → <b>{x.home}</b></>}
+        </div>
+      ))}
+      {code.map((d, i) => <div key={i} className="hc-code">code says: {d.code}</div>)}
+      {drift && <div className="faint small">/code {name} shows the implementation</div>}
+    </div>
+  );
 }
 
 const KIND_TEXT: Record<string, string> = {
@@ -54,7 +88,7 @@ export function originNote(design: Design, origin: string | null | undefined): R
   return <div className="hc-origin">accepted proposal {origin}{entry ? <span className="faint"> · {new Date(entry.at).toLocaleString()}</span> : null}</div>;
 }
 
-export function HoverCard({ hoverKey, at, snap, design, metrics }: Props) {
+export function HoverCard({ hoverKey, at, snap, design, metrics, drift }: Props) {
   const [kind, ...rest] = hoverKey.split(":");
   const key = rest.join(":");
   let body: ReactNode = null;
@@ -75,6 +109,8 @@ export function HoverCard({ hoverKey, at, snap, design, metrics }: Props) {
         {c.status === "overruled" && <div className="hc-warn">⚠ applied by overruling the examiner</div>}
         {c.status === "pruned" && <div className="hc-warn">pruned{c.feedback ? `: “${c.feedback}”` : ""} · click to restore</div>}
         {c.rationale && <div className="hc-rat">{c.rationale}</div>}
+        {c.status !== "proposed" && !c.external && purposeSection(c.name, design, metrics, drift)}
+        {c.external && <div className="faint">«external» — a library/system class: drawn compact, coupling to it counts less, not judged</div>}
         {c.status !== "proposed" && originNote(design, c.origin)}
         {c.responsibilities.length > 0 && (
           <div className="hc-sec">
@@ -139,6 +175,23 @@ export function HoverCard({ hoverKey, at, snap, design, metrics }: Props) {
           {m.status === "proposed" && proposalNote(design, m.proposal)}
           {m.status !== "proposed" && m.origin !== c?.origin && originNote(design, m.origin)}
           {m.description && <div className="hc-rat">{m.description}</div>}
+          {(() => {
+            const mi = metrics.responsibility?.methods.find((x) => x.class === cls && x.method === name);
+            const mark = methodMarks(metrics).get(cls)?.get(name);
+            const av = design.assessments?.[cls]?.methods.find((x) => x.name === name);
+            return (
+              <>
+                {mi && (
+                  <div className="hc-sec">
+                    <span style={{ color: CONCERN_COLOR[mi.concern] }}>{mi.concern.replace("_", " ")}</span> · {mi.rdd}
+                    <span className="faint"> — {mi.reason}</span>
+                  </div>
+                )}
+                {av && <div className="hc-sec">agent: <b>{av.verdict}</b>{av.home ? ` → ${av.home}` : ""} <span className="faint">— {av.reason}</span></div>}
+                {mark && <div className="hc-warn">{mark.message}{mark.home && <div>suggested home: <b>{mark.home}</b></div>}</div>}
+              </>
+            );
+          })()}
           {m.uses.length > 0 && <div className="hc-sec">uses <span className="mono">{m.uses.join(", ")}</span></div>}
           {m.calls.length > 0 && <div className="hc-sec">calls <span className="mono">{m.calls.join(", ")}</span></div>}
           <div className="faint small">right-click to prune</div>
