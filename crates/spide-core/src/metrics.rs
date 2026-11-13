@@ -119,6 +119,8 @@ pub struct Metrics {
     pub scenarios: Vec<crate::scenarios::ScenarioScore>,
     /// Footprint of each change scenario.
     pub changes: Vec<crate::scenarios::ChangeFootprint>,
+    /// Roles, method concerns and responsibility findings (RDD/GRASP).
+    pub responsibility: crate::responsibility::Report,
     /// 0..100
     pub health: u8,
     /// 0..1 — drives the canvas jitter.
@@ -602,6 +604,21 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         }
         out.changes.push(fp);
     }
+
+    // ---- responsibilities: does each class do what its name/role says? (RDD, GRASP)
+    let resp = crate::responsibility::analyse_with(d, ghosts);
+    for f in &resp.findings {
+        let target = match &f.method {
+            Some(m) => vec![f.class.clone(), format!("{}.{m}", f.class)],
+            None => vec![f.class.clone()],
+        };
+        let mut i = Issue::new(f.kind, f.severity, f.message.clone(), target);
+        i.explain = f.explain.clone();
+        i.fix_hint = Some(f.fix_hint.clone());
+        issues.push(i);
+        rule_penalty += 6.0 * f.severity * f.confidence;
+    }
+    out.responsibility = resp;
 
     // ---- health
     let mut penalty = 0.0;

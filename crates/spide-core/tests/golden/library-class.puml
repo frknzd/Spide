@@ -111,11 +111,11 @@ Member "1" -[#FF5C6C,bold]left- "0..5" Loan : holds <color:#FF5C6C>⟲</color>
 Member .[#FF5C6C,bold]left.> LoanController : <color:#FF5C6C>⟲ cycle</color>
 
 legend right
-  <b>health 66/100</b>
+  <b>health 64/100</b>
   dependency cycle: LendingService ⇄ Loan ⇄ LoanController ⇄ LoanRepository ⇄ Member
   package cycle: application ⇄ domain ⇄ infrastructure ⇄ ui
   layer violation: LendingService->LoanRepository:association — application is an inner layer; it must not depend on the outer infrastructure layer
   layer violation: Member->LoanController:dependency — domain is an inner layer; it must not depend on the outer ui layer
-  NotificationLog is not connected to anything
+  LoanRepository.findByMember() does domain logic (verb “find”) but LoanRepository is persistence (name ends in Repository)
 endlegend
 @enduml
