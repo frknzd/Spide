@@ -121,6 +121,8 @@ pub struct Metrics {
     pub changes: Vec<crate::scenarios::ChangeFootprint>,
     /// Roles, method concerns and responsibility findings (RDD/GRASP).
     pub responsibility: crate::responsibility::Report,
+    /// Duplicated behaviour, concepts owned elsewhere, scattered concepts, delegation.
+    pub overlap: crate::overlap::Report,
     /// 0..100
     pub health: u8,
     /// 0..1 — drives the canvas jitter.
@@ -619,6 +621,63 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         rule_penalty += 6.0 * f.severity * f.confidence;
     }
     out.responsibility = resp;
+
+    // ---- overlap: the same behaviour in several places, or in the wrong place
+    let ov = crate::overlap::analyse_with(d, 0.5, ghosts);
+    let mut push = |kind: &'static str, sev: f64, conf: f64, msg: String, targets: Vec<String>, explain: &str, fix: String| {
+        let mut i = Issue::new(kind, sev, msg, targets);
+        i.explain = explain.into();
+        i.fix_hint = Some(fix);
+        issues.push(i);
+        rule_penalty += 6.0 * sev * conf;
+    };
+    for p in ov.pairs.iter().filter(|p| p.score >= crate::overlap::DUPLICATE) {
+        let (ca, cb) = (p.a.split('.').next().unwrap_or("").to_string(), p.b.split('.').next().unwrap_or("").to_string());
+        push(
+            "duplication",
+            0.3 + (p.score - 0.6).max(0.0),
+            p.score,
+            format!("{}() and {}() look like the same behaviour ({:.0}% similar: {})", p.a, p.b, p.score * 100.0, p.shared.join(", ")),
+            vec![ca, cb, p.a.clone(), p.b.clone()],
+            "Duplicated code is “number one in the stink parade”: every change has to be made twice, and the copies drift apart.",
+            "keep one implementation in the class that owns the data (Information Expert), or in a new shared class (Pure Fabrication), and call it from both".into(),
+        );
+    }
+    for c in ov.claims.iter().filter(|c| c.uses_no_own_data) {
+        let cls = c.method.split('.').next().unwrap_or("").to_string();
+        push(
+            "concept_elsewhere",
+            0.4,
+            0.7,
+            format!("{}() deals with “{}”, which {} owns ({}), and uses none of {}'s data", c.method, c.shared.join(" "), c.owner, c.evidence, cls),
+            vec![cls, c.method.clone(), c.owner.clone()],
+            "The behaviour lives far from the information it needs; the class that has the information should do the work (Information Expert), or the same rule ends up in two places.",
+            format!("move it to {} and call it from there", c.owner),
+        );
+    }
+    for x in &ov.scattered {
+        push(
+            "scattered_concept",
+            0.25,
+            0.5,
+            format!("behaviour about “{}” is spread over {} classes ({})", x.concept, x.classes.len(), x.classes.join(", ")),
+            x.classes.clone(),
+            "When one kind of change needs small edits in many classes (shotgun surgery), changes are easy to miss.",
+            "bring that behaviour together in one class (Move Method / Pure Fabrication)".into(),
+        );
+    }
+    for m in &ov.middle_men {
+        push(
+            "middle_man",
+            0.3,
+            0.6,
+            format!("{m} mostly forwards calls to other classes"),
+            vec![m.clone()],
+            "A class that only passes calls on adds coupling without responsibility (unless it is a deliberate facade/controller).",
+            "let clients talk to the real owner, or give the class a real responsibility (or mark it a controller/facade if that is its role)".into(),
+        );
+    }
+    out.overlap = ov;
 
     // ---- health
     let mut penalty = 0.0;

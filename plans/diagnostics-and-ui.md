@@ -238,7 +238,7 @@ The engine works on any `Design`: the intended design, or the imported code ("re
 - [x] B2 Granularity slider (levels 0–4) and semantic-zoom clamp; association-attribute, inherited-member and accessor folding; exports follow
 - [x] B3 `external` tag on packages and classes, ops, auto-suggestion, compact rendering, metric discount, optional link to a C4 system
 - [x] C1 `role`/`concern` model fields plus ops (`update_class`/`update_method`)
-- [ ] C2 `responsibility.rs` classification, fit matrix and issues, with tests
+- [x] C2 `responsibility.rs` classification, fit matrix and issues, with tests
 - [ ] D1 `overlap.rs` similarity, exclusions, class matrix and scattered concepts, with tests
 - [ ] D2 `suggest_home` ranking with simulated impact, with tests
 - [ ] D3 `assessments` model, `assess_class` tool, staleness hashes, merge with heuristics (confidence, disagreements)

@@ -10,6 +10,7 @@ pub mod impact;
 pub mod metrics;
 pub mod model;
 pub mod ops;
+pub mod overlap;
 pub mod plantuml;
 pub mod responsibility;
 pub mod png;
