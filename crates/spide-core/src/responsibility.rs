@@ -295,6 +295,8 @@ pub fn classify(d: &Design, c: &Class, m: &Method, role: &str) -> MethodInfo {
     } else if role == "presentation" && other_reads >= 2 && (is_numeric_or_bool(returns) || in_list(&verb, V_COMPUTE)) {
         // a UI method that derives a value from other classes' data is doing their work
         base("domain_logic", "calls", format!("derives {} from {} getter call(s) on {}", returns.unwrap_or("a result"), other_reads, reads.keys().cloned().collect::<Vec<_>>().join(", ")))
+    } else if role == "persistence" && in_list(&verb, &["find", "get", "exist", "count", "delete", "remove", "list", "all", "by", "fetch", "search"]) {
+        base("persistence", "name", format!("“{verb}” in a repository is a query"))
     } else if in_list(&verb, V_PRESENT) {
         base("presentation", "name", format!("verb “{verb}”"))
     } else if in_list(&verb, V_PERSIST) {
@@ -501,7 +503,9 @@ pub fn analyse_with(d: &Design, ghosts: bool) -> Report {
             if !matches!(mi.concern.as_str(), "accessor" | "creation" | "coordination") {
                 *concerns.entry(mi.concern.clone()).or_default() += 1;
             }
-            if let Some((sev, why)) = misfit(&role, &mi.concern) {
+            // without any intent signal (no name, stereotype, layer, agent or role) there is nothing to misfit
+            let misfit_here = if ri.source == "default" { None } else { misfit(&role, &mi.concern) };
+            if let Some((sev, why)) = misfit_here {
                 if role == "controller" && mi.concern == "domain_logic" {
                     misplaced_logic += 1;
                 } else {

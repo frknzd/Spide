@@ -147,6 +147,18 @@ fn default_explanation(kind: &str) -> (&'static str, Option<&'static str>) {
     }
 }
 
+/// The course's basic principles (plus architecture rules and UML hygiene) and their weight in health.
+pub const PRINCIPLES: [(&str, f64); 5] = [("coupling", 0.25), ("cohesion", 0.2), ("responsibility", 0.3), ("architecture", 0.15), ("uml", 0.1)];
+/// How fast a principle's score drops with issue density.
+const BETA: f64 = 2.5;
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct PrincipleScore {
+    pub score: u8,
+    pub issues: usize,
+    pub weight: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct Metrics {
     pub classes: BTreeMap<String, ClassMetrics>,
@@ -170,6 +182,8 @@ pub struct Metrics {
     pub responsibility: crate::responsibility::Report,
     /// Duplicated behaviour, concepts owned elsewhere, scattered concepts, delegation.
     pub overlap: crate::overlap::Report,
+    /// Sub-score (0–100) per principle: coupling, cohesion, responsibility, architecture, uml.
+    pub principles: BTreeMap<String, PrincipleScore>,
     /// 0..100
     pub health: u8,
     /// 0..1 — drives the canvas jitter.
@@ -742,27 +756,41 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         rule_penalty += 6.0 * i.severity * i.confidence;
     }
 
-    // ---- health
-    let mut penalty = 0.0;
-    for c in &cycles {
-        penalty += 6.0 + 2.0 * c.len() as f64;
+    // ---- health: one number, from the course's principles
+    // Each principle's load is the sum of its issues' severity × confidence (cycles weigh more the
+    // larger they are), divided by the size of the design (√ of the classes judged), so one bad class
+    // in five hurts more than one in fifty. Sub-score = 100·e^(−β·load); health = weighted geometric
+    // mean, so one badly broken principle can't be hidden by the others.
+    let _ = rule_penalty;
+    let judged = classes.iter().filter(|c| !external.contains(c.name.as_str())).count().max(3) as f64;
+    let mut load: BTreeMap<&'static str, (f64, usize)> = BTreeMap::new();
+    for i in &issues {
+        let mut w = i.severity * i.confidence;
+        if i.kind == "cycle" {
+            w *= 1.0 + 0.25 * i.targets.len() as f64;
+        }
+        let e = load.entry(i.principle).or_default();
+        e.0 += w;
+        e.1 += 1;
+        // a god class is low cohesion *and* badly distributed responsibilities
+        if i.kind == "god" {
+            load.entry("responsibility").or_default().0 += w;
+        }
     }
-    penalty += 5.0 * package_cycles.len() as f64;
-    penalty += rule_penalty;
-    for (_, m) in &out.classes {
-        if m.god {
-            penalty += 8.0;
-        } else if m.lcom.unwrap_or(1) >= 2 {
-            penalty += 4.0;
-        }
-        if m.orphan {
-            penalty += 3.0;
-        }
-        if m.fan_out + 1 > high_fan_out {
-            penalty += 2.0 * (m.fan_out + 1 - high_fan_out) as f64;
+    for (n, m) in &out.classes {
+        if !external.contains(n.as_str()) && m.fan_out + 1 > high_fan_out {
+            load.entry("coupling").or_default().0 += 0.15 * (m.fan_out + 1 - high_fan_out) as f64;
         }
     }
-    let health = (100.0 - penalty).clamp(0.0, 100.0);
+    let mut health_log = 0.0;
+    for (p, weight) in PRINCIPLES {
+        let (l, n) = load.get(p).copied().unwrap_or((0.0, 0));
+        let density = l / judged.sqrt();
+        let score = 100.0 * (-BETA * density).exp();
+        health_log += weight * (score.max(1.0)).ln();
+        out.principles.insert(p.to_string(), PrincipleScore { score: score.round() as u8, issues: n, weight });
+    }
+    let health = health_log.exp().clamp(0.0, 100.0);
     issues.sort_by(|a, b| b.severity.partial_cmp(&a.severity).unwrap());
     out.cycles = cycles;
     out.cycle_edges = cycle_edges.into_iter().collect();
@@ -776,8 +804,10 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
 
 /// LCOM4 over methods that declare attribute usage or calls.
 fn lcom4(c: &Class, methods: &[&Method]) -> Option<usize> {
-    // static methods (class-level helpers) don't belong to any object's state: not part of LCOM
-    let ms: Vec<&&Method> = methods.iter().filter(|m| !m.is_abstract && !m.is_static).collect();
+    // static methods and stateless ones (no attribute use, no local calls: constants, pure delegation)
+    // don't belong to any object's state: they don't split the class, so they're not part of LCOM
+    let stateless = |m: &Method| m.uses.is_empty() && !m.calls.iter().any(|x| !x.contains('.') || x.starts_with("this.") || x.starts_with(&format!("{}.", c.name)));
+    let ms: Vec<&&Method> = methods.iter().filter(|m| !m.is_abstract && !m.is_static && !stateless(m)).collect();
     if ms.len() < 3 || !ms.iter().any(|m| !m.uses.is_empty() || !m.calls.is_empty()) {
         return None;
     }

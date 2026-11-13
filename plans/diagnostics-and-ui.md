@@ -242,7 +242,7 @@ The engine works on any `Design`: the intended design, or the imported code ("re
 - [x] D1 `overlap.rs` similarity, exclusions, class matrix and scattered concepts, with tests
 - [x] D2 `suggest_home` ranking with simulated impact, with tests
 - [x] D3 `assessments` model, `assess_class` tool, staleness hashes, merge with heuristics (confidence, disagreements)
-- [ ] D4 Import body facts, spans and fingerprints; run the engines on reality; `CodeFindings` and design-vs-code disagreements; `get_code` tool; Monopoly fixture
+- [x] D4 Import body facts, spans and fingerprints; run the engines on reality; `CodeFindings` and design-vs-code disagreements; `get_code` tool; Monopoly fixture
 - [ ] E1 Principle breakdown, `principle`/`source`/`confidence` on issues, size-normalised single health score, calibration suite
 - [ ] E2 Course checks: Demeter, feature envy, data class, fat controller, UI bypasses controller, creator, long params, UML hygiene, composite/visitor sanity
 - [ ] F1 MCP tools and skill/prompt updates
