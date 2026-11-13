@@ -142,7 +142,7 @@ export interface Design {
   feedback: { target: string; text: string; at: number }[];
   log: { rev: number; at: number; actor: string; summary: string }[];
   layout: Record<string, Record<string, Pos>>;
-  settings: { examiner: "lenient" | "strict"; show_pruned: boolean; partner: PartnerMode; brief_skipped: boolean; code_root: string | null; code_dir: string | null };
+  settings: { examiner: "lenient" | "strict"; show_pruned: boolean; partner: PartnerMode; brief_skipped: boolean; code_root: string | null; code_dir: string | null; detail?: Record<string, number> };
   rules: Rules;
 }
 

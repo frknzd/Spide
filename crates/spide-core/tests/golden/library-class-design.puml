@@ -1,0 +1,118 @@
+@startuml
+' class diagram — exported from Spide
+title Library system — Class diagram
+skinparam backgroundColor #1D1E22
+skinparam defaultFontName "Helvetica Neue"
+skinparam defaultFontColor #E6E8EE
+skinparam titleFontColor #9AA1B1
+skinparam shadowing false
+skinparam roundCorner 12
+skinparam classAttributeIconSize 0
+hide circle
+skinparam legend {
+  BackgroundColor #25272D
+  BorderColor #4B5263
+  FontColor #9AA1B1
+}
+skinparam ArrowColor #8A93A6
+skinparam ArrowFontColor #9AA1B1
+skinparam ArrowFontSize 11
+skinparam class {
+  BackgroundColor #25272D
+  HeaderBackgroundColor #2B2E35
+  BorderColor #4B5263
+  FontColor #E6E8EE
+  FontStyle bold
+  AttributeFontColor #E6E8EE
+  AttributeFontName Menlo
+  AttributeFontSize 12
+  StereotypeFontColor #9AA1B1
+}
+skinparam package {
+  BackgroundColor transparent
+  FontColor #9AA1B1
+  BorderColor #4B5263
+}
+skinparam note {
+  BackgroundColor #2B2E35
+  BorderColor #FFB454
+  FontColor #E6E8EE
+}
+
+package application #line:60A5FA {
+  class LendingService <<service>> {
+    --
+    +lend(member : Member, copy : BookCopy) : Loan
+    +giveBack(loan : Loan)
+    .. + 1 accessor, 1 private helper ..
+  }
+}
+
+package domain #line:34D399 {
+  class Catalog <<entity>> {
+    --
+    +find(isbn : String) : Book
+  }
+  class Book <<entity>> {
+    -isbn : String
+    -title : String
+    -author : String
+    --
+  }
+  class BookCopy <<entity>> {
+    -barcode : String
+    -available : boolean
+    --
+    .. + 1 accessor ..
+  }
+  class Member <<entity>> {
+    -id : String
+    -name : String
+    --
+    +canBorrow() : boolean
+    +notify(msg : String)
+  }
+  class Loan <<entity>> {
+    -due : Date
+    -returned : boolean
+    --
+    +isOverdue(today : Date) : boolean
+  }
+}
+
+package infrastructure #line:F472B6 {
+  class LoanRepository <<repository>> {
+    --
+    +save(loan : Loan)
+    +findByMember(m : Member) : List<Loan>
+  }
+  class NotificationLog {
+    --
+  }
+}
+
+package ui #line:C084FC {
+  class LoanController <<controller>> {
+    --
+    +borrow(memberId : String, isbn : String) : Loan
+  }
+}
+
+LoanController .[#FF5C6C,bold]right.> LendingService : <color:#FF5C6C>⟲ cycle</color>
+LendingService -[#FF5C6C,bold]down-> "1" LoanRepository : loans <color:#FF5C6C>⟲</color>
+LendingService -right-> "1" Catalog : catalog
+Catalog "1" *-left- "*" Book : books
+Book "1" *-right- "1..*" BookCopy
+Loan -up-> "1" BookCopy : lends
+Member "1" -[#FF5C6C,bold]left- "0..5" Loan : holds <color:#FF5C6C>⟲</color>
+Member .[#FF5C6C,bold]left.> LoanController : <color:#FF5C6C>⟲ cycle</color>
+
+legend right
+  <b>health 62/100</b>
+  dependency cycle: LendingService ⇄ Loan ⇄ LoanController ⇄ LoanRepository ⇄ Member
+  package cycle: application ⇄ domain ⇄ infrastructure ⇄ ui
+  layer violation: LendingService->LoanRepository:association — application is an inner layer; it must not depend on the outer infrastructure layer
+  layer violation: Member->LoanController:dependency — domain is an inner layer; it must not depend on the outer ui layer
+  LendingService has low cohesion (LCOM4 = 2); consider splitting it
+endlegend
+@enduml

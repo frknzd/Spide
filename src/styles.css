@@ -307,3 +307,7 @@ textarea { font: inherit; color: var(--text); background: transparent; border: n
   font: 11px Menlo, monospace; pointer-events: none; line-height: 1.45; }
 /* pause decorative animations while panning/zooming and when the window is hidden */
 .viewport.interacting *, html.paused * { animation-play-state: paused !important; }
+.detail-slider { position: fixed; left: 16px; bottom: 22px; z-index: 6; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px;
+  background: rgba(37,39,45,.8); border: 1px solid var(--line); font-size: 12px; color: var(--text); backdrop-filter: blur(8px); }
+.detail-slider input[type=range] { width: 110px; accent-color: var(--accent); }
+.detail-label { min-width: 104px; color: var(--accent); }

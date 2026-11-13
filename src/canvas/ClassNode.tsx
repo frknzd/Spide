@@ -93,8 +93,14 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
         <line x1={0} x2={w} y1={box.attrY} y2={box.attrY} stroke={border} strokeWidth={1} opacity={0.7} pointerEvents="none" />
         {p.showMethods !== false && <line x1={0} x2={w} y1={box.methY} y2={box.methY} stroke={border} strokeWidth={1} opacity={0.7} pointerEvents="none" />}
         {box.rows.map((r) => {
+          if (r.kind === "note") {
+            return (
+              <text key={"note" + r.y} x={PAD_X} y={r.y} fontFamily={FONT_SANS} fontSize={12} fontStyle="italic" fill={C.dim} pointerEvents="none">{r.text}</text>
+            );
+          }
           const member = r.kind === "attribute" ? cls.attributes.find((a) => a.name === r.name) : cls.methods.find((x) => x.name === r.name);
-          const tgt: Target = r.status === "proposed" && member?.proposal ? { kind: "proposal", id: member.proposal } : { kind: r.kind, class: cls.name, name: r.name };
+          const kind = r.kind;
+          const tgt: Target = r.status === "proposed" && member?.proposal ? { kind: "proposal", id: member.proposal } : { kind, class: cls.name, name: r.name };
           const tw = textWidth(r.text, F.member);
           return (
             <g key={r.kind + r.name + r.y} data-target={T(tgt)} data-hover={`${r.kind}:${cls.name}.${r.name}`} style={{ cursor: r.status === "pruned" ? "pointer" : "context-menu" }}>

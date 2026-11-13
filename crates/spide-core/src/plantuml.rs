@@ -6,7 +6,7 @@ use crate::derive;
 use crate::metrics::Metrics;
 use crate::model::*;
 use crate::store::validate_sequence;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 type Layout = BTreeMap<String, BTreeMap<String, Pos>>;
@@ -124,7 +124,19 @@ fn direction(layout: Option<&BTreeMap<String, Pos>>, from: &str, to: &str) -> &'
     }
 }
 
+/// What a class block shows (granularity level and design-level folding).
+#[derive(Default)]
+struct Shown {
+    /// 1 names · 2 responsibilities · 3 design · 4 full
+    level: u8,
+    hidden_attrs: BTreeSet<String>,
+}
+
 fn class_block(out: &mut String, c: &Class, methods: bool, indent: &str) {
+    class_block_at(out, c, methods, indent, &Shown { level: 4, ..Default::default() })
+}
+
+fn class_block_at(out: &mut String, c: &Class, methods: bool, indent: &str, sh: &Shown) {
     let kw = if c.is_enum() {
         "enum"
     } else if c.is_interface() {
@@ -142,7 +154,19 @@ fn class_block(out: &mut String, c: &Class, methods: bool, indent: &str) {
         .unwrap_or_default();
     let color = if c.status == Status::Overruled { format!(" #line:{}", &AMBER[1..]) } else { String::new() };
     let _ = writeln!(out, "{indent}{kw} {}{st}{color} {{", id(&c.name));
-    for a in c.attributes.iter().filter(|a| shown(a.status)) {
+    if sh.level <= 1 {
+        let _ = writeln!(out, "{indent}}}");
+        return;
+    }
+    if sh.level == 2 {
+        for r in &c.responsibilities {
+            let _ = writeln!(out, "{indent}  {{field}} <i>{}</i>", esc(r));
+        }
+        let _ = writeln!(out, "{indent}}}");
+        return;
+    }
+    let design = sh.level == 3;
+    for a in c.attributes.iter().filter(|a| shown(a.status) && !(design && !c.is_enum() && sh.hidden_attrs.contains(&a.name))) {
         if c.is_enum() {
             let _ = writeln!(out, "{indent}  {}", a.name);
             continue;
@@ -161,7 +185,18 @@ fn class_block(out: &mut String, c: &Class, methods: bool, indent: &str) {
         if !c.attributes.is_empty() || !c.is_enum() {
             let _ = writeln!(out, "{indent}  --");
         }
+        let (mut accessors, mut helpers) = (0, 0);
         for m in c.methods.iter().filter(|m| shown(m.status)) {
+            if design {
+                if crate::detail::is_accessor(&c.name, m) {
+                    accessors += 1;
+                    continue;
+                }
+                if m.visibility == Visibility::Private && !m.is_abstract {
+                    helpers += 1;
+                    continue;
+                }
+            }
             let params: Vec<String> = m.params.iter().map(|p| if p.ty.is_empty() { p.name.clone() } else { format!("{} : {}", p.name, p.ty) }).collect();
             let mut line = format!("{}{}({})", vis(m.visibility), m.name, params.join(", "));
             if let Some(r) = &m.returns {
@@ -176,11 +211,25 @@ fn class_block(out: &mut String, c: &Class, methods: bool, indent: &str) {
             }
             let _ = writeln!(out, "{indent}  {mods}{line}");
         }
+        if accessors + helpers > 0 {
+            let mut parts = vec![];
+            if accessors > 0 {
+                parts.push(format!("{accessors} accessor{}", if accessors == 1 { "" } else { "s" }));
+            }
+            if helpers > 0 {
+                parts.push(format!("{helpers} private helper{}", if helpers == 1 { "" } else { "s" }));
+            }
+            let _ = writeln!(out, "{indent}  .. + {} ..", parts.join(", "));
+        }
     }
     let _ = writeln!(out, "{indent}}}");
 }
 
 fn relation_line(r: &Relation, m: Option<&Metrics>, layout: Option<&BTreeMap<String, Pos>>) -> String {
+    relation_line_role(r, m, layout, None)
+}
+
+fn relation_line_role(r: &Relation, m: Option<&Metrics>, layout: Option<&BTreeMap<String, Pos>>, role: Option<&String>) -> String {
     let cyc = m.is_some_and(|m| m.cycle_edges.contains(&r.id));
     let lv = m.is_some_and(|m| m.layer_violations.contains(&r.id));
     let style = if cyc {
@@ -205,7 +254,7 @@ fn relation_line(r: &Relation, m: Option<&Metrics>, layout: Option<&BTreeMap<Str
     let arrow = format!("{l}{body}{style}{dir}{body}{rgt}");
     let fm = r.from_mult.as_ref().map(|m| format!(" \"{m}\"")).unwrap_or_default();
     let tm = r.to_mult.as_ref().map(|m| format!("\"{m}\" ")).unwrap_or_default();
-    let mut label = r.label.clone().map(|l| esc(&l)).unwrap_or_default();
+    let mut label = r.label.clone().or_else(|| role.cloned()).map(|l| esc(&l)).unwrap_or_default();
     if r.interaction != Interaction::Sync {
         let tag = if r.interaction == Interaction::Async { "<<async>>" } else { "<<event>>" };
         label = if label.is_empty() { tag.into() } else { format!("{tag} {label}") };
@@ -220,6 +269,21 @@ fn relation_line(r: &Relation, m: Option<&Metrics>, layout: Option<&BTreeMap<Str
 }
 
 pub fn class_diagram(d: &Design, m: &Metrics, layout: &Layout) -> String {
+    let level = d.settings.detail_for("class");
+    if level == 0 {
+        return package_diagram(d, m);
+    }
+    let (assoc_attrs, roles) = crate::detail::association_roles(d);
+    let shown_for = |c: &Class| Shown {
+        level,
+        hidden_attrs: if level == 3 {
+            let mut h = crate::detail::inherited_attributes(d, &c.name);
+            h.extend(assoc_attrs.get(&c.name).cloned().unwrap_or_default());
+            h
+        } else {
+            BTreeSet::new()
+        },
+    };
     let mut out = header(&format!("{} — Class diagram", d.name), "class diagram");
     let classes: Vec<&Class> = d.classes.iter().filter(|c| shown(c.status)).collect();
     let mut by_pkg: BTreeMap<Option<String>, Vec<&Class>> = BTreeMap::new();
@@ -239,14 +303,14 @@ pub fn class_diagram(d: &Design, m: &Metrics, layout: &Layout) -> String {
                 };
                 let _ = writeln!(out, "\npackage {}{st}{color} {{", id(p));
                 for c in cs {
-                    class_block(&mut out, c, true, "  ");
+                    class_block_at(&mut out, c, true, "  ", &shown_for(c));
                 }
                 let _ = writeln!(out, "}}");
             }
             None => {
                 out.push('\n');
                 for c in cs {
-                    class_block(&mut out, c, true, "");
+                    class_block_at(&mut out, c, true, "", &shown_for(c));
                 }
             }
         }
@@ -254,7 +318,8 @@ pub fn class_diagram(d: &Design, m: &Metrics, layout: &Layout) -> String {
     out.push('\n');
     let lay = layout.get("class");
     for r in d.live_relations() {
-        let _ = writeln!(out, "{}", relation_line(r, Some(m), lay));
+        let role = if level == 3 { roles.get(&r.id) } else { None };
+        let _ = writeln!(out, "{}", relation_line_role(r, Some(m), lay, role));
     }
     // notes for overruled decisions
     for c in classes.iter().filter(|c| c.status == Status::Overruled) {

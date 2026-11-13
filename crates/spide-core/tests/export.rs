@@ -31,6 +31,8 @@ fn fixture() -> Design {
         lay.insert(c.name.clone(), Pos { x: (i % 3) as f64 * 300.0, y: (i / 3) as f64 * 250.0, pinned: false });
     }
     d.layout.insert("class".into(), lay);
+    // the full level keeps every member (the design level is tested separately)
+    d.settings.detail.insert("class".into(), 4);
     d
 }
 
@@ -58,6 +60,29 @@ fn plantuml_exports_are_stable_and_valid() {
         golden(&name, &text);
         plantuml_accepts(&name, &text);
     }
+}
+
+#[test]
+fn class_export_follows_the_detail_level() {
+    let mut d = fixture();
+    // `loans: LoanRepository` restates a drawn association; add an accessor and a private helper
+    let lending = d.classes.iter_mut().find(|c| c.name == "LendingService").unwrap();
+    lending.methods.push(serde_json::from_value(serde_json::json!({"name": "getLoans", "returns": "LoanRepository", "uses": ["loans"]})).unwrap());
+    lending.methods.push(serde_json::from_value(serde_json::json!({"name": "check", "visibility": "private", "params": [{"name": "m", "type": "Member"}]})).unwrap());
+    d.settings.detail.insert("class".into(), 3);
+    let m = compute(&d, false);
+    let t = plantuml::export("class", &d, &m, &d.layout).unwrap();
+    golden("library-class-design.puml", &t);
+    plantuml_accepts("library-class-design.puml", &t);
+    assert!(!t.contains("loans : LoanRepository"), "association attribute folded:\n{t}");
+    assert!(!t.contains("getLoans"), "accessor folded");
+    assert!(t.contains(".. + 1 accessor, 1 private helper .."), "{t}");
+    d.settings.detail.insert("class".into(), 1);
+    let t = plantuml::export("class", &d, &compute(&d, false), &d.layout).unwrap();
+    assert!(!t.contains("+lend("), "names only");
+    d.settings.detail.insert("class".into(), 0);
+    let t = plantuml::export("class", &d, &compute(&d, false), &d.layout).unwrap();
+    assert!(t.contains("Package diagram"), "packages only");
 }
 
 #[test]

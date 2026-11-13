@@ -13,9 +13,58 @@ export interface DiagramData {
   implicit?: ImplicitEdge[];
 }
 
-export function boxesFor(classes: Class[], showMethods = true): Map<string, ClassBox> {
+const STRUCTURAL = new Set(["association", "aggregation", "composition"]);
+const typeTokens = (t: string) => t.split(/[^A-Za-z0-9_]+/).filter(Boolean);
+
+/** Attributes that only restate a drawn association (exam note: "do not add variables for associations you draw"),
+ *  keyed by class, plus the role name each such relation gets on the canvas. */
+export function associationRoles(classes: Class[], relations: Relation[]): { attrs: Map<string, Set<string>>; roles: Map<string, string> } {
+  const attrs = new Map<string, Set<string>>();
+  const roles = new Map<string, string>();
+  const byName = new Map(classes.map((c) => [c.name, c]));
+  for (const r of relations) {
+    if (!STRUCTURAL.has(r.kind) || r.status === "pruned") continue;
+    const ends: [string, string][] = [[r.from, r.to]];
+    if (r.kind === "association" && !r.directed) ends.push([r.to, r.from]);
+    for (const [owner, other] of ends) {
+      const a = byName.get(owner)?.attributes.find((x) => typeTokens(x.type).includes(other));
+      if (!a) continue;
+      attrs.set(owner, (attrs.get(owner) ?? new Set()).add(a.name));
+      if (!roles.has(r.id)) roles.set(r.id, a.name);
+    }
+  }
+  return { attrs, roles };
+}
+
+/** Attribute names each class inherits from its ancestors (not repeated at the design level). */
+function inheritedAttrs(classes: Class[], relations: Relation[]): Map<string, Set<string>> {
+  const parents = new Map<string, string[]>();
+  for (const r of relations) if (r.kind === "inheritance" && r.status !== "pruned") parents.set(r.from, [...(parents.get(r.from) ?? []), r.to]);
+  const byName = new Map(classes.map((c) => [c.name, c]));
+  const out = new Map<string, Set<string>>();
+  for (const c of classes) {
+    const seen = new Set<string>();
+    const names = new Set<string>();
+    const stack = [...(parents.get(c.name) ?? [])];
+    while (stack.length) {
+      const p = stack.pop()!;
+      if (seen.has(p)) continue;
+      seen.add(p);
+      for (const a of byName.get(p)?.attributes ?? []) names.add(a.name);
+      stack.push(...(parents.get(p) ?? []));
+    }
+    if (names.size) out.set(c.name, names);
+  }
+  return out;
+}
+
+export function boxesFor(classes: Class[], showMethods = true, level = 4, relations: Relation[] = [], purposes?: Record<string, string>): Map<string, ClassBox> {
   const m = new Map<string, ClassBox>();
-  for (const c of classes) m.set(c.name, classBox(c, { methods: showMethods }));
+  const assoc = level === 3 ? associationRoles(classes, relations).attrs : new Map<string, Set<string>>();
+  const inh = level === 3 ? inheritedAttrs(classes, relations) : new Map<string, Set<string>>();
+  for (const c of classes) {
+    m.set(c.name, classBox(c, { methods: showMethods, level, ctx: { inherited: inh.get(c.name), associations: assoc.get(c.name) }, purpose: purposes?.[c.name] }));
+  }
   return m;
 }
 
@@ -80,6 +129,10 @@ interface Props extends DiagramData {
   showPackages?: boolean;
   /** semantic zoom: 0 = packages only, 1 = class names only, ≥ 2 = as the detail level says */
   zoomCap?: number;
+  /** granularity (slider) */
+  level?: number;
+  /** draw every implicit (type/call) dependency, not just the focused class's */
+  showImplicit?: boolean;
 }
 
 export const DiagramContent = memo(function DiagramContent(p: Props) {
@@ -106,7 +159,9 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
   const bendMap = bends(p.relations);
   const inStress = (n: string) => !!p.stress && (p.stress.impacted.has(n) || p.stress.ripple.has(n));
 
-  const cap = p.zoomCap ?? 4;
+  const level = p.level ?? 4;
+  const cap = Math.min(p.zoomCap ?? 4, level);
+  const roles = level === 3 ? associationRoles(p.classes, p.relations).roles : null;
   // zoomed far out: packages become solid boxes; their classes and class edges are hidden
   const overview = cap <= 0;
   const hullOf = new Map<string, Rect>();
@@ -167,6 +222,8 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
     }
   }
   for (const e of overview ? [] : p.implicit ?? []) {
+    // implicit dependencies are clutter unless asked for (/implicit) or the class is in focus
+    if (!p.showImplicit && !(focus && (e.from === focus || e.to === focus))) continue;
     const a = rects.get(e.from);
     const b = rects.get(e.to);
     if (!a || !b) continue;
@@ -200,7 +257,10 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
     }
     edgeEls.push(
       <Edge key={r.id} from={a} to={b} kind={r.kind} directed={r.directed} fromMult={r.from_mult} toMult={r.to_mult}
-        label={r.interaction && r.interaction !== "sync" ? `«${r.interaction}»${r.label ? " " + r.label : ""}` : r.label}
+        label={(() => {
+          const l = r.label ?? roles?.get(r.id) ?? null;
+          return r.interaction && r.interaction !== "sync" ? `«${r.interaction}»${l ? " " + l : ""}` : l;
+        })()}
         bend={bendMap.get(r.id) ?? 0} style={style} warn={warn} target={T(tgt)} hoverKey={`relation:${r.id}`} />,
     );
   }
@@ -222,7 +282,7 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
               ring={p.stress?.impacted.has(c.name) ? C.cycle : p.stress?.ripple.has(c.name) ? C.warn
                 : p.drift?.missing.has(c.name) ? C.cycle : p.drift?.drifted.has(c.name) ? C.warn : null}
               ringDashed={!!p.drift?.missing.has(c.name)} phantom={!!p.drift?.phantom.has(c.name)}
-              still={p.still} layerColor={pk?.layer ? LAYER_COLOR[pk.layer] : null} compact={cap <= 1} />
+              still={p.still} layerColor={pk?.layer ? LAYER_COLOR[pk.layer] : null} compact={cap <= 1 && level >= 2} />
           );
         })}
       </g>

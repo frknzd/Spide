@@ -174,7 +174,7 @@ function MiniPreview({ pv }: { pv?: OptionPreview }) {
     const relations = d.relations.filter((r) => names.has(r.from) && names.has(r.to));
     return { classes, relations, packages: d.packages, focus };
   }, [pv]);
-  const boxes = useMemo(() => (sub ? boxesFor(sub.classes, true) : new Map()), [sub]);
+  const boxes = useMemo(() => (sub ? boxesFor(sub.classes, true, 3, sub.relations) : new Map()), [sub]);
 
   useEffect(() => {
     if (!sub) return;
@@ -203,7 +203,7 @@ function MiniPreview({ pv }: { pv?: OptionPreview }) {
   return (
     <svg className="mini" viewBox={`${x1 - pad} ${y1 - pad} ${x2 - x1 + 2 * pad} ${y2 - y1 + 2 * pad}`} preserveAspectRatio="xMidYMid meet">
       <defs><NodeDefs /></defs>
-      <DiagramContent classes={sub.classes} relations={sub.relations} packages={sub.packages} pos={pos} boxes={boxes} still showPackages={false} highlight={sub.focus} />
+      <DiagramContent level={3} classes={sub.classes} relations={sub.relations} packages={sub.packages} pos={pos} boxes={boxes} still showPackages={false} highlight={sub.focus} />
     </svg>
   );
 }

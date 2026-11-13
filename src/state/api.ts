@@ -33,6 +33,7 @@ export const api = {
   setLayout: (view: string, positions: Record<string, Pos>) => call("set_layout", { view, positions }),
   setExaminer: (strict: boolean) => call("set_examiner", { strict }),
   setShowPruned: (on: boolean) => call("set_show_pruned", { on }),
+  setDetail: (view: string, level: number) => call("set_detail", { view, level }),
   setName: (name: string) => call("set_name", { name }),
   userOps: (ops: Op[]) => call("apply_user_ops", { ops }),
   setPartner: (mode: string) => call("set_partner", { mode }),

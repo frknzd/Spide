@@ -548,6 +548,18 @@ pub struct Settings {
     pub code_root: Option<String>,
     /// Source folder last imported (re-import with /import).
     pub code_dir: Option<String>,
+    /// Granularity per view (`class`, `domain`): 0 packages · 1 names · 2 responsibilities ·
+    /// 3 design (default) · 4 full. Diagrams and exports follow it.
+    pub detail: BTreeMap<String, u8>,
+}
+
+/// Default granularity: the exam-style "design" level.
+pub const DEFAULT_DETAIL: u8 = 3;
+
+impl Settings {
+    pub fn detail_for(&self, view: &str) -> u8 {
+        self.detail.get(view).copied().unwrap_or(DEFAULT_DETAIL).min(4)
+    }
 }
 
 /// How the AI partner behaves.

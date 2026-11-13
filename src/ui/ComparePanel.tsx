@@ -35,7 +35,7 @@ export function ComparePanel({ title, kicker = "compare options", cols, snap, on
     for (const col of cols) for (const c of col.design?.classes ?? []) if (!m.has(c.name) && c.status !== "pruned") m.set(c.name, c);
     return [...m.values()];
   }, [snap, cols.map((c) => c.id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
-  const boxes = useMemo(() => boxesFor(union, true), [union]);
+  const boxes = useMemo(() => boxesFor(union, true, 3, snap.view.relations), [union]); // eslint-disable-line react-hooks/exhaustive-deps
   const [pos, setPos] = useState<Map<string, Pos> | null>(null);
   useEffect(() => {
     let alive = true;
@@ -94,7 +94,7 @@ export function ComparePanel({ title, kicker = "compare options", cols, snap, on
                 <svg className="cmp-svg" viewBox={vb} preserveAspectRatio="xMidYMid meet">
                   <defs><NodeDefs /></defs>
                   {pos && col.design && (
-                    <DiagramContent classes={col.design.classes.filter((c) => c.status !== "pruned")} relations={col.design.relations.filter((r) => r.status !== "pruned")}
+                    <DiagramContent level={3} classes={col.design.classes.filter((c) => c.status !== "pruned")} relations={col.design.relations.filter((r) => r.status !== "pruned")}
                       packages={col.design.packages} pos={pos} boxes={boxes} still highlight={changed} metrics={null} />
                   )}
                 </svg>

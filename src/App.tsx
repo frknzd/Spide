@@ -20,6 +20,8 @@ import { HoverCard } from "./ui/HoverCard";
 import { InlineEdit, type InlineEditState } from "./ui/InlineEdit";
 import { PromptBar } from "./ui/PromptBar";
 import { PerfOverlay } from "./ui/PerfOverlay";
+import { DetailSlider } from "./ui/DetailSlider";
+import { DEFAULT_DETAIL, DETAIL_LABELS } from "./canvas/visuals";
 import { perfCount } from "./state/perf";
 import { Timeline } from "./ui/Timeline";
 import { PRESETS, RulesSection } from "./ui/RulesSection";
@@ -52,6 +54,7 @@ export default function App() {
   const [preview, setPreview] = useState<Design | null>(null);
   const [focusKey, setFocusKey] = useState(0);
   const [scenario, setScenario] = useState<string | null>(null);
+  const [showImplicit, setShowImplicit] = useState(false);
   const canvasRef = useRef<CanvasApi>(null);
   const vpRef = useRef<ViewportApi | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -216,6 +219,17 @@ export default function App() {
         setTab("class");
         return void setTimeout(go, 300);
       }
+      case "/detail": {
+        const v = tab === "domain" ? "domain" : "class";
+        const n = arg === "" ? NaN : Number(arg);
+        const byName = DETAIL_LABELS.findIndex((l) => l.startsWith(arg.toLowerCase()));
+        const lvl = Number.isInteger(n) && n >= 0 && n <= 4 ? n : arg && byName >= 0 ? byName : NaN;
+        if (Number.isNaN(lvl)) return toast("error", `usage: /detail 0–4 (${DETAIL_LABELS.map((l, i) => `${i} ${l}`).join(" · ")})`);
+        return run(api.setDetail(v, lvl));
+      }
+      case "/implicit":
+        setShowImplicit((x) => !x);
+        return toast("info", showImplicit ? "implicit dependencies: only for the focused class" : "implicit dependencies: all shown");
       case "/fit": return tab === "class" || tab === "domain" ? canvasRef.current?.fit() : vpRef.current?.fit();
       case "/pruned": return run(api.setShowPruned(!view?.settings.show_pruned));
       case "/strict": return run(api.setExaminer(true).then(() => toast("info", "examiner: strict — no overruling")));
@@ -462,6 +476,7 @@ export default function App() {
   }, [pendingCount]);
 
   if (!snap || !view || !metrics) return <div className="app" />;
+  const detailOf = (v: string) => view.settings.detail?.[v] ?? DEFAULT_DETAIL;
 
   const pending = view.decisions.filter((d) => d.state === "open" || d.state === "evaluating" || d.state === "rejected");
   const stale: Partial<Record<Tab, boolean>> = { usecase: snap.derived.use_cases_stale, sequence: snap.derived.stale_sequences.length > 0 };
@@ -472,12 +487,12 @@ export default function App() {
       <div className="titlebar" data-tauri-drag-region />
       <div className="stage">
         {tab === "class" && classData && (
-          <Canvas ref={canvasRef} key="class" viewKey="class" data={classData} saved={view.layout["class"]} tension={preview ? 0 : metrics.tension}
+          <Canvas ref={canvasRef} key="class" viewKey="class" data={classData} saved={view.layout["class"]} tension={preview ? 0 : metrics.tension} level={detailOf("class")} showImplicit={showImplicit}
             onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} insetRight={pendingCount ? 450 : 0}
             stress={stressSets} drift={driftSets} onMoveToPackage={preview || drift ? undefined : onMoveToPackage} onDoubleClickTarget={preview ? undefined : onDoubleClickTarget} />
         )}
         {tab === "domain" && domainData && (
-          <Canvas ref={canvasRef} key="domain" viewKey="domain" data={domainData} saved={view.layout["domain"] ?? view.layout["class"]} showMethods={false} tension={0}
+          <Canvas ref={canvasRef} key="domain" viewKey="domain" data={domainData} saved={view.layout["domain"] ?? view.layout["class"]} showMethods={false} tension={0} level={detailOf("domain")}
             onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} />
         )}
         {tab === "package" && <PackageView snap={snap} vpRef={vpRef} onPrune={doPrune} onHover={onHover} onClickTarget={onClickTarget} />}
@@ -538,6 +553,9 @@ export default function App() {
         </div>
       </div>
 
+      {hasClasses && (tab === "class" || tab === "domain") && (
+        <DetailSlider level={detailOf(tab)} onChange={(l) => run(api.setDetail(tab, l))} />
+      )}
       {inline && <InlineEdit s={inline} onClose={() => setInline(null)} />}
       {hover && !prune && <HoverCard hoverKey={hover.key} at={hover.at} snap={snap} design={preview ?? view} metrics={metrics} />}
       {prune && (

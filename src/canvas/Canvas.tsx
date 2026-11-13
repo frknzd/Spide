@@ -24,6 +24,9 @@ interface Props {
   viewKey: string;
   saved: Record<string, Pos> | undefined;
   showMethods?: boolean;
+  /** granularity 0–4 (slider) */
+  level?: number;
+  showImplicit?: boolean;
   tension: number;
   onPrune: (targets: Target[], at: { x: number; y: number }) => void;
   onClickTarget: (t: Target) => void;
@@ -37,9 +40,9 @@ interface Props {
   onDoubleClickTarget?: (t: Target, at: { x: number; y: number }) => void;
 }
 
-const LAYER_RANK: Record<Layer, number> = { ui: 0, infrastructure: 1, application: 1, domain: 2 };
+const LAYER_RANK: Record<Layer, number> = { ui: 0, infrastructure: 0, application: 1, domain: 2 };
 
-/** Vertical band of a package: ui on top, application and infrastructure side by side, domain below. */
+/** Vertical band of a package: ui and infrastructure (outer ring) on top, application, then domain. */
 export function packageRank(pk: { layer: Layer | null } | undefined): number {
   return pk?.layer ? LAYER_RANK[pk.layer] : 1;
 }
@@ -64,7 +67,11 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
   useEffect(() => () => layout.stop(), [layout]);
   const dragging = useRef<string | null>(null);
 
-  const boxes = useMemo(() => boxesFor(p.data.classes, p.showMethods !== false), [p.data.classes, p.showMethods]);
+  const level = p.level ?? 4;
+  const boxes = useMemo(
+    () => boxesFor(p.data.classes, p.showMethods !== false, Math.max(1, level), p.data.relations),
+    [p.data.classes, p.data.relations, p.showMethods, level],
+  );
   const cm = p.data.metrics?.classes;
 
   // sync the simulation with the model
@@ -105,11 +112,18 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
       .catch((e) => console.error("layout failed", e));
   };
   const tidy = () => relayout();
+  // a different granularity changes every box: lay out again
+  const lastLevel = useRef(level);
+  useEffect(() => {
+    if (lastLevel.current === level) return;
+    lastLevel.current = level;
+    relayout();
+  }, [level]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // semantic zoom: far out, draw less (positions and box sizes stay the same)
   const [zoomCap, setZoomCap] = useState(4);
   const onTransform = (t: { k: number }) => {
-    const cap = t.k < 0.3 ? 0 : t.k < 0.6 ? 1 : 4;
+    const cap = t.k < 0.22 ? 0 : t.k < 0.42 ? 1 : 4;
     if (cap !== zoomCap) setZoomCap(cap);
   };
 
@@ -243,7 +257,7 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
       onDoubleClickTarget={(t, e) => p.onDoubleClickTarget?.(t, { x: e.clientX, y: e.clientY })}
     >
       <DiagramContent {...p.data} pos={pos} boxes={boxes} showMethods={p.showMethods} focusClass={focusClass} stress={p.stress} drift={p.drift}
-        pinned={layout.pinnedIds()} focusSet={focusSet} zoomCap={zoomCap} />
+        pinned={layout.pinnedIds()} focusSet={focusSet} zoomCap={zoomCap} level={level} showImplicit={p.showImplicit} />
     </Viewport>
   );
 }));

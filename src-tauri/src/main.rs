@@ -62,6 +62,7 @@ fn main() {
             commands::set_layout,
             commands::set_examiner,
             commands::set_show_pruned,
+            commands::set_detail,
             commands::apply_user_ops,
             commands::set_partner,
             commands::set_rules,

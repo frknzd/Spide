@@ -234,6 +234,12 @@ pub fn set_show_pruned(st: State<'_, AppState>, on: bool) -> R {
 }
 
 #[tauri::command]
+pub fn set_detail(st: State<'_, AppState>, view: String, level: u8) -> R {
+    st.lock().store.set_detail(&view, level);
+    done(&st)
+}
+
+#[tauri::command]
 pub fn set_name(st: State<'_, AppState>, name: String) -> R {
     st.lock().store.design.name = name;
     done(&st)
@@ -721,6 +727,7 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "set_brief_skipped" => set_brief_skipped(s, a.get("on").and_then(Value::as_bool).unwrap_or(false)),
         "set_show_pruned" => set_show_pruned(s, a.get("on").and_then(Value::as_bool).unwrap_or(false)),
         "set_name" => set_name(s, req("name")?),
+        "set_detail" => set_detail(s, req("view")?, a.get("level").and_then(Value::as_u64).unwrap_or(3) as u8),
         "regenerate" => regenerate(s, pi, req("view")?, str_("scenario")),
         "new_design" => new_design(s, pi, req("dir")?),
         "open_design" => open_design(s, pi, req("path")?),

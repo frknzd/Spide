@@ -536,6 +536,9 @@ impl Store {
     pub fn set_show_pruned(&mut self, on: bool) {
         self.design.settings.show_pruned = on;
     }
+    pub fn set_detail(&mut self, view: &str, level: u8) {
+        self.design.settings.detail.insert(view.to_string(), level.min(4));
+    }
     /// Architecture rules are user-owned: changed directly (undoable), never proposed.
     pub fn set_rules(&mut self, rules: crate::rules::Rules) -> Result<(), OpError> {
         if rules == self.design.rules {

@@ -79,7 +79,8 @@ const MAX_TEXT = 360;
 
 export interface Row {
   text: string;
-  kind: "attribute" | "method";
+  /** `note`: a non-member line (folded accessors, responsibilities) */
+  kind: "attribute" | "method" | "note";
   name: string;
   status: Status;
   isStatic: boolean;
@@ -103,6 +104,27 @@ export function stereotypeText(c: { stereotype: string | null; is_abstract?: boo
   return `«${s}»`;
 }
 
+/** Greedy word wrap to at most `max` lines of `width` px (the last one truncated). */
+export function wrap(text: string, width: number, max: number, font = F.member): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (const word of text.split(/\s+/)) {
+    const next = cur ? cur + " " + word : word;
+    if (textWidth(next, font) <= width || !cur) cur = next;
+    else {
+      out.push(cur);
+      cur = "  " + word;
+    }
+  }
+  if (cur) out.push(cur);
+  if (out.length > max) {
+    const kept = out.slice(0, max);
+    kept[max - 1] = truncate(kept[max - 1] + " " + out.slice(max).join(" "), font, width);
+    return kept;
+  }
+  return out;
+}
+
 export function truncate(text: string, font: string, max = MAX_TEXT): string {
   if (textWidth(text, font) <= max) return text;
   let t = text;
@@ -110,10 +132,32 @@ export function truncate(text: string, font: string, max = MAX_TEXT): string {
   return t + "…";
 }
 
+/** Granularity levels (slider): 0 packages · 1 names · 2 responsibilities · 3 design · 4 full. */
+export const DETAIL_LABELS = ["packages", "names", "responsibilities", "design", "full"] as const;
+export const DEFAULT_DETAIL = 3;
+
+export interface BoxContext {
+  /** attribute names this class inherits (an ancestor declares them): not repeated */
+  inherited?: Set<string>;
+  /** attributes that duplicate a drawn association: shown as the edge's role name instead */
+  associations?: Set<string>;
+}
+
+const ACCESSOR = /^(get|is|has|set)[A-Z_]/;
+
+/** A plain getter/setter/predicate or a constructor: folded at the design level. */
+export function isAccessor(c: { name: string }, m: Method): boolean {
+  if (m.name === c.name) return true;
+  if (!ACCESSOR.test(m.name)) return false;
+  if (m.name.startsWith("set")) return m.params.length === 1 && (m.calls ?? []).length === 0;
+  return m.params.length === 0 && (m.calls ?? []).filter((x) => !x.startsWith("this.")).length <= 1 && (m.uses ?? []).length <= 1;
+}
+
 export function classBox(
-  c: Pick<Class, "name" | "stereotype" | "is_abstract"> & { attributes: Attribute[]; methods?: Method[] },
-  opts: { methods?: boolean } = {},
+  c: Pick<Class, "name" | "stereotype" | "is_abstract"> & { attributes: Attribute[]; methods?: Method[]; responsibilities?: string[] },
+  opts: { methods?: boolean; level?: number; ctx?: BoxContext; purpose?: string | null } = {},
 ): ClassBox {
+  const level = Math.max(1, Math.min(4, opts.level ?? 4));
   const stereo = stereotypeText(c);
   const nameFont = c.is_abstract || c.stereotype === "interface" ? F.nameItalic : F.name;
   let w = textWidth(c.name, nameFont) + 2 * PAD_X + 8;
@@ -123,27 +167,66 @@ export function classBox(
   let y = headerH + 6;
   const attrY = headerH;
   const isEnum = c.stereotype === "enum" || c.stereotype === "enumeration";
-  for (const a of c.attributes) {
-    const text = truncate(isEnum ? a.name : attrText(a), F.member);
-    w = Math.max(w, textWidth(text, F.member) + 2 * PAD_X);
-    rows.push({ text, kind: "attribute", name: a.name, status: a.status, isStatic: a.is_static && !isEnum, isAbstract: false, y: y + 12 });
+  const push = (r: Omit<Row, "y">, font = F.member) => {
+    w = Math.max(w, textWidth(r.text, font) + 2 * PAD_X);
+    rows.push({ ...r, y: y + 12 });
     y += LINE;
+  };
+  const note = (text: string) => push({ text: truncate(text, F.member), kind: "note", name: text, status: "accepted", isStatic: false, isAbstract: false });
+
+  if (level === 1) {
+    return { w: Math.ceil(Math.max(w, 120)), h: headerH + 4, headerH, attrY, methY: headerH + 4, rows, stereo };
   }
-  if (c.attributes.length === 0) y += 6;
+  if (level === 2) {
+    const lines = [...(opts.purpose ? [opts.purpose] : []), ...(c.responsibilities ?? [])];
+    for (const r of lines.slice(0, 5)) wrap(`• ${r}`, 320, 3).forEach((l) => note(l));
+    if (!lines.length) note("(no responsibilities yet)");
+    if (lines.length > 5) note(`… ${lines.length - 5} more`);
+    y += 6;
+    return { w: Math.ceil(Math.max(w, 140)), h: Math.ceil(y), headerH, attrY, methY: y, rows, stereo };
+  }
+
+  const design = level === 3;
+  const ctx = opts.ctx ?? {};
+  let hiddenAttrs = 0;
+  for (const a of c.attributes) {
+    if (design && !isEnum && (ctx.inherited?.has(a.name) || ctx.associations?.has(a.name))) {
+      hiddenAttrs++;
+      continue;
+    }
+    push({ text: truncate(isEnum ? a.name : attrText(a), F.member), kind: "attribute", name: a.name, status: a.status, isStatic: a.is_static && !isEnum, isAbstract: false });
+  }
+  if (rows.length === 0) y += 6;
   y += 6;
   const methY = y;
   const showMethods = opts.methods !== false;
   if (showMethods) {
     y += 6;
+    let accessors = 0;
+    let helpers = 0;
+    let shown = 0;
     for (const m of c.methods ?? []) {
-      const text = truncate(methodText(m), F.member);
-      w = Math.max(w, textWidth(text, F.member) + 2 * PAD_X);
-      rows.push({ text, kind: "method", name: m.name, status: m.status, isStatic: m.is_static, isAbstract: m.is_abstract, y: y + 12 });
-      y += LINE;
+      if (design && m.status !== "proposed" && m.status !== "removing") {
+        if (isAccessor(c, m)) {
+          accessors++;
+          continue;
+        }
+        if (m.visibility === "private" && !m.is_abstract) {
+          helpers++;
+          continue;
+        }
+      }
+      shown++;
+      push({ text: truncate(methodText(m), F.member), kind: "method", name: m.name, status: m.status, isStatic: m.is_static, isAbstract: m.is_abstract });
     }
-    if ((c.methods ?? []).length === 0) y += 6;
+    if (accessors || helpers) {
+      const parts = [accessors && `${accessors} accessor${accessors === 1 ? "" : "s"}`, helpers && `${helpers} private helper${helpers === 1 ? "" : "s"}`].filter(Boolean);
+      note(`+ ${parts.join(", ")}`);
+    }
+    if (shown === 0 && !accessors && !helpers) y += 6;
     y += 6;
   }
+  void hiddenAttrs;
   return { w: Math.ceil(Math.max(w, 120)), h: Math.ceil(showMethods ? y : methY), headerH, attrY, methY, rows, stereo };
 }
 
