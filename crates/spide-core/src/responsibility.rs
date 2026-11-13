@@ -193,7 +193,7 @@ pub struct MethodInfo {
 
 const V_PRESENT: &[&str] = &["show", "display", "render", "paint", "draw", "refresh", "redraw", "repaint", "select", "toggle", "confirm", "prompt", "highlight", "scroll", "focus", "popup", "alert", "layout"];
 const V_PERSIST: &[&str] = &["save", "persist", "store", "load", "insert", "upsert", "commit", "rollback", "query", "flush"];
-const V_FORMAT: &[&str] = &["format", "write", "print", "escape", "serialize", "deserialize", "encode", "decode", "export", "pretty", "wrap", "indent", "quote", "stringify"];
+const V_FORMAT: &[&str] = &["format", "write", "print", "escape", "serialize", "deserialize", "export", "pretty", "wrap", "indent", "quote", "stringify"];
 const V_CREATE: &[&str] = &["create", "make", "new", "build", "construct", "of", "from", "parse", "copy", "clone", "spawn", "instantiate"];
 const V_LOGIC: &[&str] = &[
     "calculate", "compute", "count", "sum", "total", "match", "validate", "verify", "check", "apply", "filter", "sort", "merge", "aggregate", "price", "score",
@@ -331,6 +331,24 @@ pub fn classify(d: &Design, c: &Class, m: &Method, role: &str) -> MethodInfo {
         info.source = "calls".into();
         info.reason = format!("delegates to {target}.{callee}()");
     }
+    // the implementation, when known, beats names: what does the body actually do?
+    if let (Some(f), false) = (&m.code, matches!(info.source.as_str(), "explicit" | "agent")) {
+        let computes = f.loops >= 1 && f.arithmetic + f.comparisons >= 1;
+        if role == "presentation" && info.concern != "domain_logic" && computes && other_reads >= 1 {
+            info.concern = "domain_logic".into();
+            info.source = "code".into();
+            info.reason = format!(
+                "code: loops over {} data and computes ({} arithmetic, {} comparisons)",
+                reads.keys().cloned().collect::<Vec<_>>().join(", "),
+                f.arithmetic,
+                f.comparisons
+            );
+        } else if !f.ui_api.is_empty() && matches!(role, "domain" | "value" | "persistence" | "service") {
+            info.concern = "presentation".into();
+            info.source = "code".into();
+            info.reason = format!("code: uses the UI toolkit ({})", f.ui_api.join(", "));
+        }
+    }
     info.rdd = rdd_kind(m, &info.concern, &verb).into();
     info
 }
@@ -444,6 +462,7 @@ impl Report {
 fn confidence_for(source: &str) -> f64 {
     match source {
         "explicit" | "agent" => 0.95,
+        "code" => 0.9,
         "calls" | "swing_api" => 0.8,
         "signature" => 0.6,
         "name" => 0.65,

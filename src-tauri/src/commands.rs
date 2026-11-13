@@ -611,7 +611,7 @@ pub struct ImportSummary {
 
 /// Import Java sources under `dir` as the read-only "reality" model (`.spide/reality.json`).
 #[tauri::command(async)]
-pub fn import_code(st: State<'_, AppState>, dir: String) -> R<ImportSummary> {
+pub fn import_code(st: State<'_, AppState>, pi: State<'_, PiBridge>, dir: String) -> R<ImportSummary> {
     let (project, root) = {
         let s = st.lock();
         (s.project_dir.clone(), s.store.design.settings.code_root.clone())
@@ -633,12 +633,17 @@ pub fn import_code(st: State<'_, AppState>, dir: String) -> R<ImportSummary> {
         s.store.design.settings.code_dir = Some(dir);
     }
     st.changed();
+    // let the agent judge the real implementation (batched, in the background)
+    let msg = prompts::assess_code(summary.classes);
+    let _ = pi.prompt(&st, msg, Some("⌕ judging the imported code".into()));
     Ok(summary)
 }
 
 #[derive(serde::Serialize)]
 pub struct DriftReport {
     pub drift: spide_core::drift::Drift,
+    /// The code judged like the design: both health scores, code-only issues, clones, design-vs-code disagreements.
+    pub findings: spide_core::code::CodeFindings,
     /// The imported code with the design's rules applied (for drawing code-only classes).
     pub reality: Design,
     pub checklist: String,
@@ -654,7 +659,8 @@ pub fn drift(st: State<'_, AppState>) -> R<DriftReport> {
     let reality = load_reality(&project).ok_or("no code imported yet — /import a source folder first")?;
     let drift = spide_core::drift::drift(&design, &reality);
     let checklist = spide_core::drift::checklist(&drift);
-    Ok(DriftReport { reality: spide_core::drift::with_design_rules(&design, &reality), drift, checklist, code_dir: design.settings.code_dir.clone() })
+    let findings = spide_core::code::analyse(&design, &reality);
+    Ok(DriftReport { reality: spide_core::drift::with_design_rules(&design, &reality), drift, findings, checklist, code_dir: design.settings.code_dir.clone() })
 }
 
 /// What exists only in the code becomes a proposal (never removes anything from the design).
@@ -738,7 +744,7 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "set_code_root" => set_code_root(s, str_("root")),
         "drift" => return drift(s).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "drift_adopt" => drift_adopt(s),
-        "import_code" => return import_code(s, req("dir")?).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+        "import_code" => return import_code(s, pi, req("dir")?).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "export_adr" => return export_adr(s, req("dir")?).map(|v| serde_json::json!(v)),
         "export_plantuml_all" => return export_plantuml_all(s, req("dir")?).map(|v| serde_json::json!(v)),
         _ => Err(format!("unknown command {cmd}")),

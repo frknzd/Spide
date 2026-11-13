@@ -139,6 +139,16 @@ pub fn fix_issue(message: &str, rule: Option<&str>, fix_hint: Option<&str>) -> S
     )
 }
 
+pub fn assess_code(classes: usize) -> String {
+    format!(
+        "[spide · code imported]\nThe user imported the real code ({classes} classes); /drift compares it with the design. \
+         Judge the IMPLEMENTATION: for the classes that matter (start with the ones get_metrics flags, then the rest), read them \
+         with get_code and record ONE batched assess_class call with basis=code: purpose, role, and per method concern + verdict \
+         (fits|misplaced|duplicate|delegates) with a short reason based on what the body does (Information Expert, Controller, \
+         Creator, Law of Demeter, duplicated code). Then tell the user in 1–2 sentences what stands out. Don't change the design."
+    )
+}
+
 pub fn analyse_change(name: &str, description: Option<&str>) -> String {
     format!(
         "[spide · analyse change scenario]\nChange scenario: \"{name}\"{}\nRead get_design. Which classes would have to change to support it? \

@@ -687,7 +687,11 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
             "duplication",
             0.3 + (p.score - 0.6).max(0.0),
             p.score,
-            format!("{}() and {}() look like the same behaviour ({:.0}% similar: {})", p.a, p.b, p.score * 100.0, p.shared.join(", ")),
+            if p.code >= crate::overlap::DUPLICATE {
+                format!("{}() and {}() have the same implementation ({:.0}% of the normalised code matches)", p.a, p.b, p.code * 100.0)
+            } else {
+                format!("{}() and {}() look like the same behaviour ({:.0}% similar: {})", p.a, p.b, p.score * 100.0, p.shared.join(", "))
+            },
             vec![ca, cb, p.a.clone(), p.b.clone()],
             "Duplicated code is “number one in the stink parade”: every change has to be made twice, and the copies drift apart.",
             "keep one implementation in the class that owns the data (Information Expert), or in a new shared class (Pure Fabrication), and call it from both".into(),
@@ -728,6 +732,9 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         );
     }
     out.overlap = ov;
+
+    // ---- course checks (Demeter, Creator, switches, long methods, UML hygiene, …)
+    issues.extend(crate::course::check(d, ghosts));
 
     // ---- the agent's judgement: confirm, dispute or add (current assessments only)
     crate::assess::merge(d, &mut issues);

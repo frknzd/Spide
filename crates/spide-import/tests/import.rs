@@ -1,5 +1,6 @@
 use spide_core::metrics::compute;
 use spide_core::*;
+use spide_core::ops;
 use std::path::PathBuf;
 
 fn fixture() -> PathBuf {
@@ -77,6 +78,16 @@ fn smoke_on_zap_addon_if_present() {
     eprintln!("{}: {} files, {} classes, {} relations, {} skipped, {ms} ms", addon.display(), r.files, r.design.classes.len(), r.design.relations.len(), r.skipped.len());
     assert!(r.design.classes.len() > 3);
     assert!(ms < 2000, "import too slow: {ms} ms");
+    // the code judged on its own (no intended design): what stands out
+    let t = std::time::Instant::now();
+    let f = spide_core::code::analyse(&Design::default(), &r.design);
+    eprintln!("code health {} ({} ms)", f.code_health, t.elapsed().as_millis());
+    for i in f.issues.iter().take(if std::env::var("SPIDE_SMOKE_VERBOSE").is_ok() { 60 } else { 0 }) {
+        eprintln!("  [{} {:.2}/{:.2} {}] {}", i.kind, i.severity, i.confidence, i.basis, i.message);
+    }
+    for c in f.clones.iter().take(10) {
+        eprintln!("  clone {} ≈ {} ({:.2})", c.a, c.b, c.code);
+    }
 }
 
 #[test]
@@ -122,4 +133,63 @@ fn drift_between_design_and_code() {
     let same = drift(&reality, &reality);
     assert!(same.missing_in_code.is_empty() && same.members.is_empty() && same.relations_missing_in_code.is_empty());
     assert!((same.conformance - 1.0).abs() < 1e-9);
+}
+
+fn course_fixture() -> Design {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/course");
+    let r = spide_import::import_java(&dir, None).unwrap();
+    assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+    r.design
+}
+
+#[test]
+fn imports_body_facts() {
+    let d = course_fixture();
+    let m = |c: &str, n: &str| d.class(c).unwrap().methods.iter().find(|x| x.name == n).unwrap().code.clone().unwrap();
+    let land = m("Player", "landOn");
+    assert_eq!(land.switches, 1);
+    assert!(land.switch_on.contains(&"TAX".to_string()), "{:?}", land.switch_on);
+    assert!(land.ui_api.iter().any(|u| u.contains("JOptionPane")), "{:?}", land.ui_api);
+    assert!(land.file.ends_with("domain/Player.java"), "{}", land.file);
+    assert!(land.start_line > 1 && land.end_line > land.start_line);
+    let loc = m("GamePanel", "locationOf");
+    assert_eq!(loc.max_chain, 3, "{loc:?}");
+    assert!(loc.chains[0].contains("getPiece().getLocation().getName()"));
+    let worth = m("Game", "netWorth");
+    assert!(worth.loops >= 1 && worth.arithmetic >= 1 && worth.comparisons >= 1, "{worth:?}");
+    assert!(m("Game", "addPlayer").creates.contains(&"Piece".to_string()));
+    assert!(!worth.fingerprint.is_empty());
+}
+
+#[test]
+fn code_is_judged_like_the_design() {
+    let reality = course_fixture();
+    // the intended design: Player is a domain class, the panel only presents
+    let intended: Design = {
+        let ops: Vec<Op> = serde_json::from_str(
+            r#"[{"op":"add_package","name":"domain","layer":"domain"},{"op":"add_package","name":"ui","layer":"ui"},
+                {"op":"add_class","name":"Player","package":"domain","stereotype":"entity","methods":[{"name":"landOn","params":[{"name":"s","type":"Square"}],"uses":["cash"]}]},
+                {"op":"add_class","name":"Square","package":"domain","stereotype":"entity"},
+                {"op":"add_class","name":"GamePanel","package":"ui","methods":[{"name":"onNextRound","calls":["Game.playRound"]},{"name":"refresh"}]},
+                {"op":"add_class","name":"Game","package":"domain","methods":[{"name":"playRound"}]}]"#,
+        )
+        .unwrap();
+        ops::apply_all(&Design::default(), &ops, ops::Mode::Commit(Status::Accepted, None)).unwrap()
+    };
+    let f = code::analyse(&intended, &reality);
+    let kinds = |k: &str| f.issues.iter().filter(|i| i.kind == k).map(|i| i.message.clone()).collect::<Vec<_>>();
+    // the same switch on the square kind in two classes → polymorphism
+    assert!(!kinds("type_switch").is_empty(), "{:#?}", f.issues.iter().map(|i| (&i.kind, &i.message)).collect::<Vec<_>>());
+    // a chain through getters → Law of Demeter
+    assert!(kinds("demeter").iter().any(|m| m.contains("GamePanel.locationOf")));
+    // Game creates the Piece that Player keeps → Creator
+    assert!(kinds("creator").iter().any(|m| m.contains("Piece")), "{:?}", kinds("creator"));
+    // the UI computes standings, the domain shows dialogs
+    assert!(f.issues.iter().any(|i| i.kind == "misplaced_responsibility" && i.targets.contains(&"GamePanel.richestCash".to_string())));
+    assert!(f.issues.iter().any(|i| i.kind == "misplaced_responsibility" && i.targets.contains(&"Player.landOn".to_string())));
+    // two loops summing positive values are the same code
+    assert!(f.clones.iter().any(|p| (p.a.contains("totalPrice") && p.b.contains("netWorth")) || (p.b.contains("totalPrice") && p.a.contains("netWorth"))), "{:#?}", f.clones);
+    // the design says Player.landOn is domain work; the code shows a dialog
+    assert!(f.disagreements.iter().any(|x| x.class == "Player" && x.method.as_deref() == Some("landOn")), "{:#?}", f.disagreements);
+    assert!(f.code_health < 100);
 }

@@ -135,6 +135,8 @@ pub struct MethodPair {
     pub signature: f64,
     pub touches: f64,
     pub text: f64,
+    /// Similarity of the normalised implementations (code fingerprints), when both are known.
+    pub code: f64,
     /// Shared name words, e.g. ["count", "call"].
     pub shared: Vec<String>,
 }
@@ -245,7 +247,18 @@ fn similarity(a: &Features, b: &Features) -> MethodPair {
     if name < 0.34 {
         score = score.min(0.49);
     }
-    MethodPair { a: String::new(), b: String::new(), score: (score * 100.0).round() / 100.0, name, signature, touches, text, shared: vec![] }
+    // the same normalised body is duplication whatever the names say (Type-1/2 clones)
+    let code = match (a.m.code.as_ref(), b.m.code.as_ref()) {
+        (Some(x), Some(y)) if x.fingerprint.len() >= 6 && y.fingerprint.len() >= 6 => {
+            let (sa, sb): (BTreeSet<u64>, BTreeSet<u64>) = (x.fingerprint.iter().copied().collect(), y.fingerprint.iter().copied().collect());
+            sa.intersection(&sb).count() as f64 / sa.union(&sb).count() as f64
+        }
+        _ => 0.0,
+    };
+    if code > 0.0 {
+        score = score.max(code);
+    }
+    MethodPair { a: String::new(), b: String::new(), score: (score * 100.0).round() / 100.0, name, signature, touches, text, code, shared: vec![] }
 }
 
 /// Analyse live, non-external classes. Pairs below `min_score` aren't reported.
@@ -274,11 +287,20 @@ pub fn analyse_with(d: &Design, min_score: f64, ghosts: bool) -> Report {
     for f in feats.iter_mut() {
         f.ids = [intern(&mut ids, &f.name), intern(&mut ids, &f.sig), intern(&mut ids, &f.touches), intern(&mut ids, &f.text)];
     }
-    // inverted index on name words: only methods sharing a name word can score ≥ 0.5
+    // inverted index on name words: only methods sharing a name word can score ≥ 0.5 — or, with
+    // code, methods sharing fingerprint hashes (clones under different names)
     let mut by_word: std::collections::HashMap<u32, Vec<usize>> = std::collections::HashMap::new();
     for (i, f) in feats.iter().enumerate() {
         for w in &f.ids[0] {
             by_word.entry(*w).or_default().push(i);
+        }
+    }
+    let mut by_print: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+    for (i, f) in feats.iter().enumerate() {
+        if let Some(c) = f.m.code.as_ref().filter(|c| c.fingerprint.len() >= 6) {
+            for h in &c.fingerprint {
+                by_print.entry(*h).or_default().push(i);
+            }
         }
     }
     // delegation (pass-through), reported separately
@@ -316,6 +338,16 @@ pub fn analyse_with(d: &Design, min_score: f64, ghosts: bool) -> Report {
                     }
                 }
             }
+            if let Some(code) = feats[i].m.code.as_ref().filter(|c| c.fingerprint.len() >= 6) {
+                for h in &code.fingerprint {
+                    for &j in by_print.get(h).map(Vec::as_slice).unwrap_or(&[]) {
+                        if j > i && stamp[j] != i {
+                            stamp[j] = i;
+                            c.push(j);
+                        }
+                    }
+                }
+            }
             c.sort_unstable();
             c
         } else {
@@ -326,8 +358,9 @@ pub fn analyse_with(d: &Design, min_score: f64, ghosts: bool) -> Report {
             if a.class.name == b.class.name {
                 continue;
             }
-            // with too few shared name words the score stays below 0.5: skip the work
-            if min_score >= 0.49 && jaccard_ids(&a.ids[0], &b.ids[0]) < 0.34 {
+            // with too few shared name words the score stays below 0.5: skip the work (unless the code may match)
+            let has_code = a.m.code.is_some() && b.m.code.is_some();
+            if min_score >= 0.49 && !has_code && jaccard_ids(&a.ids[0], &b.ids[0]) < 0.34 {
                 continue;
             }
             // one calls the other: delegation, not duplication

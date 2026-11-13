@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser};
 
+mod facts;
+
 #[derive(Debug, Default)]
 pub struct ImportResult {
     pub design: Design,
@@ -34,6 +36,9 @@ struct RawMethod {
     /// (receiver expression kind, receiver name, method) — resolved later
     invocations: Vec<(Option<String>, String)>,
     identifiers: BTreeSet<String>,
+    /// Local variables (incl. for-each variables) and their declared types.
+    locals: Vec<(String, String)>,
+    facts: CodeFacts,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -134,6 +139,20 @@ fn collect_body(n: Node, src: &[u8], m: &mut RawMethod) {
         "identifier" => {
             m.identifiers.insert(text(n, src).to_string());
         }
+        "local_variable_declaration" => {
+            let ty = n.child_by_field_name("type").map(|t| text(t, src).to_string()).unwrap_or_default();
+            let mut dc = n.walk();
+            for dl in n.children_by_field_name("declarator", &mut dc) {
+                if let Some(name) = dl.child_by_field_name("name") {
+                    m.locals.push((text(name, src).to_string(), ty.clone()));
+                }
+            }
+        }
+        "enhanced_for_statement" => {
+            if let (Some(t), Some(name)) = (n.child_by_field_name("type"), n.child_by_field_name("name")) {
+                m.locals.push((text(name, src).to_string(), text(t, src).to_string()));
+            }
+        }
         _ => {}
     }
     let mut c = n.walk();
@@ -170,6 +189,7 @@ fn parse_method(n: Node, src: &[u8]) -> RawMethod {
     if let Some(b) = n.child_by_field_name("body") {
         collect_body(b, src, &mut m);
     }
+    m.facts = facts::facts(n, n.child_by_field_name("body"), src);
     m
 }
 
@@ -236,7 +256,7 @@ fn parse_type(n: Node, src: &[u8], pkg: &str) -> Option<RawType> {
     Some(t)
 }
 
-fn parse_file(parser: &mut Parser, path: &Path) -> Result<Vec<RawType>, String> {
+fn parse_file(parser: &mut Parser, path: &Path, dir: &Path) -> Result<Vec<RawType>, String> {
     let src = std::fs::read(path).map_err(|e| e.to_string())?;
     let tree = parser.parse(&src, None).ok_or("parse failed")?;
     let root = tree.root_node();
@@ -252,6 +272,12 @@ fn parse_file(parser: &mut Parser, path: &Path) -> Result<Vec<RawType>, String> 
     }
     if root.has_error() && out.is_empty() {
         return Err("syntax errors".into());
+    }
+    let rel = path.strip_prefix(dir).unwrap_or(path).display().to_string();
+    for t in &mut out {
+        for m in &mut t.methods {
+            m.facts.file = rel.clone();
+        }
     }
     Ok(out)
 }
@@ -294,7 +320,7 @@ pub fn import_java(dir: &Path, code_root: Option<&str>) -> Result<ImportResult, 
     let mut types: Vec<RawType> = vec![];
     let mut skipped = vec![];
     for f in &files {
-        match parse_file(&mut parser, f) {
+        match parse_file(&mut parser, f, dir) {
             Ok(ts) => types.extend(ts),
             Err(e) => skipped.push(format!("{}: {e}", f.display())),
         }
@@ -340,7 +366,8 @@ pub fn import_java(dir: &Path, code_root: Option<&str>) -> Result<ImportResult, 
             .iter()
             .filter(|m| seen_methods.insert((m.name.clone(), m.params.len())))
             .map(|m| {
-                let locals: BTreeMap<&str, &str> = m.params.iter().map(|(n, ty)| (n.as_str(), ty.as_str())).collect();
+                let locals: BTreeMap<&str, &str> =
+                    m.params.iter().chain(m.locals.iter()).filter(|(_, ty)| ty != "var").map(|(n, ty)| (n.as_str(), ty.as_str())).collect();
                 let mut calls: BTreeSet<String> = BTreeSet::new();
                 for (recv, name) in &m.invocations {
                     match recv.as_deref() {
@@ -376,6 +403,7 @@ pub fn import_java(dir: &Path, code_root: Option<&str>) -> Result<ImportResult, 
                     is_abstract: m.is_abstract && (t.kind != "class" || t.is_abstract),
                     uses,
                     calls: calls.into_iter().collect(),
+                    code: Some(m.facts.clone()),
                     ..Default::default()
                 }
             })

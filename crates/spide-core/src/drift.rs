@@ -57,6 +57,19 @@ pub fn with_design_rules(intended: &Design, reality: &Design) -> Design {
         if let Some(dp) = intended.packages.iter().find(|x| x.name == p.name && x.status.is_live()) {
             p.layer = dp.layer;
             p.container = dp.container.clone();
+            p.external = p.external || dp.external;
+            p.system = dp.system.clone();
+        }
+    }
+    // the intent (role, responsibilities, stereotype) comes from the design: the code is judged against it
+    for c in r.classes.iter_mut() {
+        if let Some(dc) = intended.live_class(&c.name) {
+            c.role = dc.role.clone();
+            c.responsibilities = dc.responsibilities.clone();
+            c.external = c.external || dc.external;
+            if c.stereotype.is_none() || matches!(c.stereotype.as_deref(), Some("abstract")) {
+                c.stereotype = dc.stereotype.clone().or(c.stereotype.take());
+            }
         }
     }
     r
@@ -142,7 +155,7 @@ pub fn adopt_ops(intended: &Design, reality: &Design) -> Vec<Op> {
             package: c.package.clone(),
             is_abstract: c.is_abstract,
             attributes: c.attributes.iter().map(|a| Attribute { status: Status::Accepted, proposal: None, origin: None, ..a.clone() }).collect(),
-            methods: c.methods.iter().map(|m| Method { status: Status::Accepted, proposal: None, origin: None, ..m.clone() }).collect(),
+            methods: c.methods.iter().map(|m| Method { status: Status::Accepted, proposal: None, origin: None, code: None, ..m.clone() }).collect(),
             responsibilities: vec![],
             rationale: Some("found in the code".into()),
             aggregate_root: false,
@@ -155,7 +168,7 @@ pub fn adopt_ops(intended: &Design, reality: &Design) -> Vec<Op> {
         for e in &md.extra_in_code {
             if let Some(m) = e.strip_suffix("()") {
                 if let Some(m) = rc.methods.iter().find(|x| x.name == m) {
-                    ops.push(Op::AddMethod { class: md.class.clone(), method: Method { status: Status::Accepted, proposal: None, origin: None, ..m.clone() } });
+                    ops.push(Op::AddMethod { class: md.class.clone(), method: Method { status: Status::Accepted, proposal: None, origin: None, code: None, ..m.clone() } });
                 }
             } else if let Some(a) = rc.attributes.iter().find(|x| &x.name == e) {
                 ops.push(Op::AddAttribute { class: md.class.clone(), attribute: Attribute { status: Status::Accepted, proposal: None, origin: None, ..a.clone() } });

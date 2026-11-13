@@ -180,7 +180,34 @@ export interface PackageMetrics {
 }
 export interface PackageDep { from: string; to: string; count: number; in_cycle: boolean; layer_violation: boolean }
 export interface ImplicitEdge { from: string; to: string; via: string; in_cycle: boolean }
-export interface Issue { kind: string; severity: number; message: string; targets: string[]; rule: string | null; explain: string; fix_hint: string | null }
+export type Principle = "coupling" | "cohesion" | "responsibility" | "architecture" | "uml";
+export interface Issue {
+  kind: string; severity: number; message: string; targets: string[]; rule: string | null; explain: string; fix_hint: string | null;
+  principle?: Principle; source?: string; confidence?: number; basis?: string;
+}
+export interface RoleInfo { role: string; source: string; evidence: string; by_stereotype: string | null; by_name: string | null; by_layer: string | null }
+export interface MethodInfo {
+  class: string; method: string; concern: string; rdd: "knowing" | "doing" | "deciding"; source: string; reason: string;
+  reads: Record<string, number>; tells: Record<string, number>;
+}
+export interface Finding { kind: string; class: string; method: string | null; severity: number; confidence: number; message: string; explain: string; fix_hint: string; source: string; home: string | null }
+export interface ResponsibilityReport {
+  classes: Record<string, { role: RoleInfo | null; concerns: Record<string, number>; purity: number }>;
+  methods: MethodInfo[];
+  findings: Finding[];
+}
+export interface MethodPair { a: string; b: string; score: number; name: number; signature: number; touches: number; text: number; code: number; shared: string[] }
+export interface OverlapReport {
+  pairs: MethodPair[];
+  delegations: { from: string; to: string }[];
+  classes: { a: string; b: string; share_a: number; share_b: number; responsibility: number; pairs: number }[];
+  scattered: { concept: string; classes: string[]; methods: string[] }[];
+  claims: { method: string; owner: string; via: string; evidence: string; shared: string[]; uses_no_own_data: boolean }[];
+  middle_men: string[];
+}
+export interface PrincipleScore { score: number; issues: number; weight: number }
+export interface MethodAssessment { name: string; concern: string | null; rdd: string | null; verdict: string; home: string | null; duplicate_of: string | null; confidence: number; reason: string }
+export interface Assessment { class: string; purpose: string | null; role: string | null; methods: MethodAssessment[]; basis: string; hash: string; at: number }
 export interface Metrics {
   classes: Record<string, ClassMetrics>;
   packages: PackageMetrics[];
@@ -194,6 +221,9 @@ export interface Metrics {
   issues: Issue[];
   scenarios: ScenarioScore[];
   changes: ChangeFootprint[];
+  responsibility?: ResponsibilityReport;
+  overlap?: OverlapReport;
+  principles?: Record<Principle, PrincipleScore>;
   health: number;
   tension: number;
 }
@@ -273,7 +303,11 @@ export interface Drift {
   rule_violations_in_code: string[];
   conformance: number;
 }
-export interface DriftReport { drift: Drift; reality: Design; checklist: string; code_dir: string | null }
+export interface CodeFindings {
+  design_health: number; code_health: number; issues: Issue[]; clones: MethodPair[];
+  disagreements: { class: string; method: string | null; design: string; code: string }[];
+}
+export interface DriftReport { drift: Drift; findings?: CodeFindings; reality: Design; checklist: string; code_dir: string | null }
 export interface ImportSummary { files: number; classes: number; relations: number; skipped: string[]; code_root: string | null }
 export interface HistoryEntry { rev: number; at: number; actor: string; summary: string }
 export type PiStatus = "starting" | "idle" | "busy" | "offline";

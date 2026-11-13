@@ -112,7 +112,9 @@ fn dispatch(st: &AppState, msg: &Value) -> Option<Value> {
         "tools/call" => {
             let name = msg.pointer("/params/name").and_then(Value::as_str).unwrap_or("");
             let args = msg.pointer("/params/arguments").cloned().unwrap_or(json!({}));
-            let outcome = {
+            let outcome = if name == "get_code" {
+                get_code(st, &args).map(|text| tools::ToolOutcome { text, changed: false })
+            } else {
                 let mut s = st.lock();
                 tools::call(&mut s.store, name, &args)
             };
@@ -134,6 +136,19 @@ fn dispatch(st: &AppState, msg: &Value) -> Option<Value> {
         Ok(r) => json!({"jsonrpc": "2.0", "id": id, "result": r}),
         Err(e) => json!({"jsonrpc": "2.0", "id": id, "error": e}),
     })
+}
+
+/// `get_code`: the imported implementation of a class/method (read-only, capped).
+fn get_code(st: &AppState, args: &Value) -> Result<String, String> {
+    let (project, dir) = {
+        let s = st.lock();
+        (s.project_dir.clone(), s.store.design.settings.code_dir.clone())
+    };
+    let dir = dir.ok_or("no code imported yet: ask the user to /import the source folder")?;
+    let reality = crate::commands::load_reality(&project).ok_or("no code imported yet")?;
+    let class = args.get("class").and_then(Value::as_str).ok_or("missing class")?;
+    let method = args.get("method").and_then(Value::as_str).filter(|m| !m.is_empty());
+    spide_core::code::snippet(&reality, std::path::Path::new(&dir), class, method)
 }
 
 /// Read-only snapshot for browser-based previews of the UI (dev aid).

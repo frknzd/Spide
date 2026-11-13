@@ -129,6 +129,10 @@ pub fn tool_list() -> Value {
                     "reason":{"type":"string"}},"required":["name","verdict","reason"]}}},
               "required":["class","purpose","methods"]}}},
           "required":["assessments"]}},
+        {"name":"get_code","description":"Read the IMPLEMENTATION of a class (or one method) from the imported code (/import), \
+           with the facts Spide extracted (lines, call chains, switches, loops, creations, UI calls). Use it to judge what the code \
+           really does before assess_class with basis=code. Read-only; long classes are capped — ask per method.",
+         "inputSchema":{"type":"object","properties":{"class":{"type":"string"},"method":{"type":"string"}},"required":["class"]}},
         {"name":"set_sequence","description":"Create/replace one sequence diagram. Participants: classes or actors. Each sync/async/create message's \
            `method` must be an existing method name on the `to` class (validated; problems are reported back and highlighted). \
            Use kind=return for replies.",
@@ -370,6 +374,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
                 true,
             )
         }
+        "get_code" => Err("get_code is answered by the Spide app (it needs the imported code)".into()),
         "set_use_cases" => {
             let m: UseCaseModel = parse(args)?;
             let warnings = store.set_use_cases(m).map_err(|e| e.0)?;

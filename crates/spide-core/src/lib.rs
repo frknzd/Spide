@@ -2,6 +2,8 @@
 
 pub mod adr;
 pub mod archunit;
+pub mod code;
+pub mod course;
 pub mod assess;
 pub mod derive;
 pub mod detail;
