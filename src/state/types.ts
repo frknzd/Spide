@@ -26,6 +26,7 @@ export interface Method {
   uses: string[];
   calls: string[];
   description: string | null;
+  concern?: string | null;
   status: Status;
   proposal: string | null;
   origin: string | null;

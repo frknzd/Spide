@@ -11,6 +11,7 @@ pub mod metrics;
 pub mod model;
 pub mod ops;
 pub mod plantuml;
+pub mod responsibility;
 pub mod png;
 pub mod rules;
 pub mod scenarios;

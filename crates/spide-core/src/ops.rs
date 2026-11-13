@@ -326,6 +326,14 @@ impl Op {
                 if present(d, name) {
                     return err(format!("class {name} already exists; use update_class / add_attribute / add_method"));
                 }
+                if let Some(r) = role {
+                    crate::responsibility::check_role(r).map_err(OpError)?;
+                }
+                for m in methods {
+                    if let Some(c) = &m.concern {
+                        crate::responsibility::check_concern(c).map_err(OpError)?;
+                    }
+                }
                 d.classes.retain(|c| c.name != *name); // replace a pruned one
                 if let Some(p) = package {
                     ensure_package(d, p, mode);
@@ -380,6 +388,9 @@ impl Op {
                 }
                 if let Some(x) = external {
                     c.external = *x;
+                }
+                if let Some(r) = role {
+                    crate::responsibility::check_role(r).map_err(OpError)?;
                 }
                 if let Some(r) = role {
                     c.role = if r.is_empty() { None } else { Some(r.clone()) };
@@ -456,6 +467,9 @@ impl Op {
                 if !valid_ident(&method.name) {
                     return err("method needs a name");
                 }
+                if let Some(c) = &method.concern {
+                    crate::responsibility::check_concern(c).map_err(OpError)?;
+                }
                 let c = live_class_mut(d, class)?;
                 if c.methods.iter().any(|m| {
                     m.name == method.name && m.params.len() == method.params.len() && m.status != Status::Pruned
@@ -466,6 +480,9 @@ impl Op {
                 c.methods.push(Method { status: st, proposal: prop, origin, ..method.clone() });
             }
             Op::UpdateMethod { class, name, method } => {
+                if let Some(c) = &method.concern {
+                    crate::responsibility::check_concern(c).map_err(OpError)?;
+                }
                 let c = live_class_mut(d, class)?;
                 let m = c
                     .methods

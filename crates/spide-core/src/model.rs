@@ -90,6 +90,10 @@ pub struct Method {
     /// Calls to other methods: `"Class.method"` or `"method"` (same class).
     pub calls: Vec<String>,
     pub description: Option<String>,
+    /// What kind of work it does, set by the agent/user when the name doesn't say it
+    /// (overrides the verb heuristics): presentation | coordination | domain_logic | persistence |
+    /// formatting | creation | accessor.
+    pub concern: Option<String>,
     pub status: Status,
     pub proposal: Option<String>,
     /// Where it came from: decision id (D…), proposal id (P…), `user` or `import`.

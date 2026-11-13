@@ -46,7 +46,8 @@ Container→container dependencies are DERIVED from class dependencies; only add
 ATTR   = {"name":"total","type":"Money","visibility?":"public|private|protected|package","is_static?":false,"multiplicity?":"0..1"}
 METHOD = {"name":"addLine","params":[{"name":"p","type":"Product"},{"name":"qty","type":"int"}],"returns?":"OrderLine","visibility?":"public",
           "is_abstract?":false,"uses?":["lines"] (attributes of the same class it touches — drives the cohesion metric),
-          "calls?":["Product.price","recalculate"] (methods it calls — drives coupling), "description?":"…"}
+          "calls?":["Product.price","recalculate"] (methods it calls — drives coupling), "description?":"…",
+          "concern?":"presentation|coordination|domain_logic|persistence|formatting|creation|accessor" (set it when the name doesn't say what it does)}
 Batches are atomic and may reference classes added earlier in the same batch."#;
 
 pub fn tool_list() -> Value {
