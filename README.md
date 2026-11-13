@@ -2,7 +2,7 @@
 
 Spide is a desktop app for designing a system live, together with an AI agent. The class diagram is the centre; the other views are derived from it.
 
-You start with an empty dark canvas and a single prompt. The agent first asks for the **brief** (goals, quality attributes, constraints, expected changes), then proposes classes and raises **design decisions**. Before a decision takes effect, you have to choose an option and **defend** it to the agent, which acts as an examiner. Every option shows its consequences before you choose. The diagram keeps showing you how clean the architecture is: hot classes glow, dependency cycles are drawn in red, and a tangled design keeps trembling while a clean one settles. You can check the design against scenarios and expected changes, branch it and rewind it, look at it as C4 context and container diagrams, and compare it with real Java code.
+You start with an empty dark canvas and a single prompt. The agent first asks for the **brief** (goals, quality attributes, constraints, expected changes), then proposes classes and raises **design decisions**. Before a decision takes effect, you have to choose an option and **defend** it to the agent, which acts as an examiner. Every option shows its consequences before you choose. The diagram keeps showing you how clean the design is — judged by the principles of the DOSS course (minimise coupling, increase cohesion, distribute responsibilities; RDD, GRASP, bad smells): hot classes glow, dependency cycles are drawn in red, methods in the wrong class point to their better home, and duplicated behaviour is measured. You can check the design against scenarios and expected changes, branch it and rewind it, look at it as C4 context and container diagrams, and compare it with real Java code.
 
 ## Run
 
@@ -42,7 +42,17 @@ Older `design.json` files (schema 1) open unchanged.
 
 - `/mode examiner | socratic | devils_advocate | sketch` (also in the brief panel). *Examiner* is the default. *Socratic* only asks questions and never changes the design. *Devil's advocate* argues against what you lean towards before accepting. *Sketch* proposes freely and keeps decisions for big forks. `/strict` and `/lenient` set how hard the examiner is.
 - **Architecture rules** live in the brief panel (and `/rules <preset>`): a style preset — `clean` (dependencies point inward), `hexagonal` (adapters never depend on each other), `layered` (downward only), `modular_monolith` (`<module>.<layer>` packages, other modules only via `<module>.api`), `none` — plus your own forbidden dependencies (`*Controller -> *Repository : go via a service`), forbidden types per layer (`Http*` in domain) and thresholds. Editing `rules` in `design.json` applies directly.
-- Every issue explains why it matters and how to fix it. In the health popover, click an issue to jump to it, or **fix with agent** to get a decision with ways to resolve it.
+- Every issue explains why it matters and how to fix it, names the course principle and reference it comes from (e.g. *GRASP Controller (Ch. 3)*), and says how sure Spide is (confidence, and whether it comes from structure, a heuristic, the agent or the code). In the health popover, click an issue to jump to it, or **fix with agent** to get a decision with ways to resolve it — for misplaced or duplicated behaviour the options are the ranked homes from `suggest_home` (the Information Expert, a new Pure Fabrication, or keeping it).
+
+### Diagnostics: what the course grades
+
+Health is **one number** (0–100): a weighted geometric mean of five principle scores — **coupling** (.25), **cohesion** (.2), **responsibilities** (.3), **architecture rules** (.15) and **UML hygiene** (.1) — each computed from its issues (severity × confidence) relative to the size of the design, so one bad class in five hurts more than one in fifty. Hover the health ring for the breakdown. The checks:
+
+- **Purpose vs behaviour.** Every class gets a role (presentation, controller, service, domain, persistence, adapter, output, creator, utility, value) from, in order: an explicit `role`, the agent's assessment, its name (`*Panel`, `*Controller`, `*Repository`, `*Writer`, …), its stereotype, its layer. Every method gets a concern (presentation, coordination, domain logic, persistence, formatting, creation, accessor) and an RDD kind (knowing, doing, deciding) from its verb, signature, `uses` and `calls` — or from its body when code is imported. Mismatches are flagged: a UI class doing domain calculations, an entity saving or formatting itself (the `Sale.save()` example), a fat controller, vague names (`*Manager`, `*Util`), name/stereotype/layer disagreeing, a class mixing several concerns.
+- **Duplication and the right home.** Method pairs get an explainable similarity (name, signature, what the bodies touch, description, and with code a normalised fingerprint). Pass-through delegation (a controller forwarding to the domain), polymorphic overrides and UI event handlers are not duplication. Spide also flags behaviour that another class claims (its data, or its stated responsibility), concepts scattered over ≥ 3 classes (shotgun surgery) and middle men. For each, `suggest_home` ranks where the behaviour belongs (Information Expert; wholes take over their parts), checks every caller may depend on it, simulates the health/coupling/cohesion effect, and offers a new Pure Fabrication class when no expert fits.
+- **Course checks.** Law of Demeter (talking to strangers), Feature Envy, data classes / no behaviour, the UI driving the domain without a controller, Creator, switches on a type code in several places (replace with Polymorphism), long methods, long parameter lists, and the exam notes on UML: argument types, no repeated inherited attributes, a Composite needs add/remove/getChildren, a Visitor with one element is a Strategy.
+- **The agent's judgement.** The agent records its own assessment per class (`assess_class`: purpose, role, a verdict per method). Agreement raises an issue's confidence; when it disagrees on a serious issue you see the disagreement and have to resolve it. Assessments go stale when the class changes.
+- **The real code.** After `/import`, the same checks run on the implementation (with body facts: lines, call chains, switches, loops, creations, UI calls, clone fingerprints). `/drift` shows *design n · code m* health, real clones, issues only the code has, and where the code contradicts the design (e.g. *design: the panel only presents; code: it loops over the report's calls and counts*). `/code Class[.method]` shows the implementation.
 
 ### On the canvas
 
@@ -50,7 +60,10 @@ Older `design.json` files (schema 1) open unchanged.
 - **Ghost proposals.** Changes from the agent show up as translucent, breathing ghosts. Click a ghost to accept it, right-click to reject it.
 - **Direct edits.** Double-click a class, attribute or method name to rename it. Drag a class onto another package to move it. `/add <Class> [in <package>]` adds a class. ⌥-click pins a class where it is (📌); pinned classes stay put, also on `/tidy`. Direct edits are yours: they apply immediately and ⌘Z undoes them.
 - **Prune.** Right-click an element to remove it, or hold the right mouse button and drag a box around several. A small box asks what you didn't like; ⏎ sends it to the agent, Esc prunes without comment. Pruned elements stay in the model, hidden by default (`/pruned` shows them), and the agent is told not to bring them back. Click a pruned element to restore it (restoring a package restores its classes).
-- **Hover** over an element for its details: members, responsibilities, rationale, metrics, and **why it's here** — the decision (question, chosen option, your defence) or proposal that introduced it. Click an element that came from a decision to see the whole decision record.
+- **Detail.** The slider bottom-left (or `/detail 0–4`) sets how much each class shows: packages · names · responsibilities · **design** (default: public behaviour with argument types; accessors, constructors and private helpers folded into one line; attributes that repeat a drawn association become the edge's role name; inherited attributes not repeated) · full. Zooming far out shows less on its own (names, then packages). Exports follow the slider. Methods the diagnostics flag always stay visible, with `↗ Home` next to them.
+- **External.** `/external <package|Class>` tags library/framework code (Spide suggests it once for packages like `zap` or `swing`): drawn as a compact strip, coupling to it counts less, and it isn't judged.
+- **Lenses.** `/lens concerns` colours method rows by what they do; `/lens overlap` draws dashed links between classes that duplicate each other and marks scattered concepts (⁂); `/lens off`. `/implicit` shows all implicit dependencies (otherwise only the hovered class's).
+- **Hover** over an element for its details: its **purpose** (the agent's sentence, the role Spide reads and why, methods in the wrong place → suggested home, what the code says), members, responsibilities, rationale, metrics, and **why it's here** — the decision (question, chosen option, your defence) or proposal that introduced it. Click an element that came from a decision to see the whole decision record.
 - **Navigate.** Drag to pan, pinch or ⌘-scroll to zoom, double-click empty space to fit. `/find <class>` zooms to a class and focuses it; `/focus <package>` zooms to a package and dims the rest; Esc clears. ⌘1–6 switch tabs, ⌘Z / ⇧⌘Z undo and redo, ⌘J opens the conversation, ⌘E exports a PNG and ⇧⌘E PlantUML.
 
 ### What the visuals mean
@@ -59,14 +72,17 @@ Older `design.json` files (schema 1) open unchanged.
 |---|---|
 | node size | coupling (fan-in + fan-out) |
 | halo colour blue → amber → red | heat: coupling, cycles, god class, low cohesion, broken rules |
-| red, animated, straining edge | the relation is part of a dependency cycle |
+| red, straining edge | the relation is part of a dependency cycle (animates briefly, then rests) |
 | amber edge `layer ↑` / `module` / `forbidden` | the relation breaks a layering, module-boundary or custom rule |
 | `«async»` / `«event»` on an edge | the dependency is not a synchronous call |
-| faint dotted edge | a hidden dependency through attribute or parameter types, or method calls, that has no drawn relation |
-| chips | `cycle`, `god class`, `LCOM n`, `rule ✗`, `orphan`, `◆ aggregate`, `only in code` |
+| faint dotted edge | a hidden dependency through attribute or parameter types, or method calls, that has no drawn relation (shown for the hovered class, or all with `/implicit`) |
+| chips | `cycle`, `god class`, `LCOM n`, `rule ✗`, `orphan`, `◆ aggregate`, `«external»`, `only in code`, `⁂ concept` (overlap lens) |
+| `↗ Home` / `⚠ kind` after a method | the method is in the wrong place (suggested home) or breaks a course rule |
+| dashed purple edge (overlap lens) | duplicated behaviour (share) or a method dealing with another class's concept |
 | red / amber ring | stress test: impacted / ripple · drift: missing in code (dashed) / differs from code |
-| trembling canvas | overall tension, i.e. 100 − health. A clean design comes to rest. |
-| health ring (next to the prompt) | 0–100. Hover over it for the issues. `→ n` shows the health after accepting pending ghosts. |
+| health ring (next to the prompt) | 0–100. Hover over it for the five principle scores and the issues per principle. `→ n` shows the health after accepting pending ghosts. |
+
+The layout is computed by ELK with packages as compound nodes (ui and infrastructure on top, application, then domain; external packages beside their users), so packages and classes never overlap. It only moves after a change, a drag or `/tidy`, then stops: an idle canvas costs no CPU. Decorative animations (ghosts, hot halos, cycles) play briefly and rest.
 
 Package names such as `domain`, `ui` or `persistence` are mapped to their layer automatically.
 
@@ -90,10 +106,12 @@ Package names such as `domain`, `ui` or `persistence` are mapped to their layer 
 ## Architecture
 
 ```
-crates/spide-core     pure Rust: model, ops, store (proposals, decisions, undo), metrics, rules,
+crates/spide-core     pure Rust: model, ops, store (proposals, decisions, undo), metrics (health per principle),
+                      responsibility (roles, concerns), overlap (duplication, delegation), home (suggested homes),
+                      course (Demeter, Creator, …), assess (agent judgement), code (implementation findings), rules,
                       impact, scenarios, drift, derived views (incl. C4), diff, agent tool API,
                       exporters (PlantUML, C4, PNG, ADR, ArchUnit)
-crates/spide-import   Java source import (tree-sitter) into a read-only design for drift checks
+crates/spide-import   Java source import (tree-sitter) into a read-only design for drift checks, with body facts
 src-tauri             Tauri v2 shell: commands, MCP server (axum), pi bridge (pi --mode rpc),
                       design.json watcher, history, branches, prompts for the agent
 src                   React + TypeScript UI: SVG canvas with d3-force physics and ELK layout
@@ -101,7 +119,7 @@ agent/spide-skill.md  the agent's instructions (examiner workflow, modelling con
 ```
 
 - The Rust store is the single source of truth. The UI only sends intents (prompt, prune, accept, defend, overrule, undo) and renders the snapshots it receives.
-- Agents change the design **only** through MCP tools: `get_design`, `get_metrics`, `get_view`, `propose_decision`, `propose_ops`, `evaluate_defense`, `set_use_cases`, `set_sequence`, `set_change_impact`. Every change becomes a proposal or a decision, and invalid ops are rejected atomically with a clear error. Forces, change scenarios, containers, external systems and links are ops too, so they go through the same proposals, undo and file watcher. Architecture rules are the user's: only the user changes them.
+- Agents change the design **only** through MCP tools: `get_design`, `get_metrics`, `get_view`, `propose_decision`, `propose_ops`, `evaluate_defense`, `set_use_cases`, `set_sequence`, `set_change_impact`. Analysis tools: `get_responsibilities`, `get_overlap`, `suggest_home`, `get_code` (read the imported implementation) and `assess_class` (record the agent's judgement); the first two take `on: "code"`. Every change becomes a proposal or a decision, and invalid ops are rejected atomically with a clear error. Forces, change scenarios, containers, external systems and links are ops too, so they go through the same proposals, undo and file watcher. Architecture rules are the user's: only the user changes them.
 - Every committed element records its origin (decision, proposal, `user` or `import`); accepted decisions keep the consequences they had.
 - Other agents can join the session. A pi you start in a terminal in the project folder picks up `.pi/mcp.json`, and any agent can also edit `design.json` directly. Spide turns such edits into ghost proposals instead of applying them silently.
 - The MCP server is a small streamable-HTTP JSON-RPC implementation (initialize, tools/list, tools/call) on `127.0.0.1` only. Every route (including the dev routes) requires a loopback `Host` header and, when a browser sends one, a local `Origin`, which blocks cross-site requests and DNS rebinding. It replaces the `rmcp` crate that was originally planned, to avoid tracking that crate's fast-changing API.
@@ -116,7 +134,11 @@ cargo test --workspace                         # core, import, app (golden files
 UPDATE_GOLDEN=1 cargo test -p spide-core       # accept changed golden output (PlantUML, ADR, ArchUnit)
 SPIDE_SMOKE_DIR=/abs/path/to/java/project cargo test -p spide-import smoke -- --nocapture   # import smoke test
 npm run typecheck
+cargo test -p spide-core calibration -- --nocapture   # health ranks the course's good/bad designs correctly
+python3 scripts/perf_probe.py "http://localhost:1420/?perf=1"   # FPS/renders while idle and panning (needs Playwright + Chrome)
 ```
+
+`?perf=1` (or `localStorage.spidePerf = "1"`) shows an overlay with frames per second, renders per second per component and the last snapshot build time.
 
 Debug builds also serve `GET /dev/snapshot` and `POST /dev/invoke/<command>` on the MCP port, so `http://localhost:1420` can drive the running app from a normal browser (used for automated UI checks). In dev, `?tab=<tab>&cmd=/command` in that URL opens a tab and runs prompt commands once the first snapshot arrives. Release builds don't expose `/dev/invoke`.
 

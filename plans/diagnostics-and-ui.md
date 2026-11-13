@@ -1,6 +1,6 @@
 # Spide: faster canvas, less clutter, diagnostics based on the course
 
-> Status: **ready for review**. The first round of questions is answered (see *Decisions*).
+> Status: **implemented**. Results and remaining manual checks: `plans/interactive-design-verification.md`.
 
 ## Context
 
@@ -137,7 +137,7 @@ The engine works on any `Design`: the intended design, or the imported code ("re
   - The results go into a `CodeFindings` report next to `Drift`: code issues, and **design-vs-code disagreements** (e.g. "design: RestExtractionPanel only presents data; code: `callsOf` loops over `EndpointReport.getCalls()` and counts → domain logic in UI").
 - New MCP tool `get_code {class, method?}` returns the source snippet (read from `settings.code_dir` through the stored span, read-only and size-capped). The LLM can then judge the real implementation and record `assess_class {basis: "code"}`.
 - Health of the code is computed the same way as for the design. `/drift` shows both scores ("design 78 · code 61").
-- Fixture: the Monopoly case study source from the course (`Chapter 4 Monopoly case study/OSS-3 Monopoly Case Study - src.zip`, unpacked into `crates/spide-import/tests/fixtures/monopoly/` if its licence allows; otherwise a small hand-written equivalent).
+- Fixture: the course's Monopoly source is GPL-3, so a small hand-written equivalent with the same smells lives in `crates/spide-import/tests/fixtures/course/`; the real source was used as a smoke test only.
 
 ### D. Overlap engine (new `crates/spide-core/src/overlap.rs`)
 - **Method similarity** is a weighted score in 0..1, with a breakdown:
@@ -246,7 +246,7 @@ The engine works on any `Design`: the intended design, or the imported code ("re
 - [x] E1 Principle breakdown, `principle`/`source`/`confidence` on issues, size-normalised single health score, calibration suite
 - [x] E2 Course checks: Demeter, feature envy, data class, fat controller, UI bypasses controller, creator, long params, UML hygiene, composite/visitor sanity
 - [x] F1 MCP tools and skill/prompt updates
-- [ ] G1 Popover scorecard, hover purpose, home markers, lenses
+- [x] G1 Popover scorecard, hover purpose, home markers, lenses
 - [ ] Docs and verification notes
 
 ## Verification
