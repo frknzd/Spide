@@ -6,6 +6,7 @@ pub mod derive;
 pub mod detail;
 pub mod diff;
 pub mod drift;
+pub mod home;
 pub mod impact;
 pub mod metrics;
 pub mod model;

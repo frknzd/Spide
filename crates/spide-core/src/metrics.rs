@@ -713,7 +713,8 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
 
 /// LCOM4 over methods that declare attribute usage or calls.
 fn lcom4(c: &Class, methods: &[&Method]) -> Option<usize> {
-    let ms: Vec<&&Method> = methods.iter().filter(|m| !m.is_abstract).collect();
+    // static methods (class-level helpers) don't belong to any object's state: not part of LCOM
+    let ms: Vec<&&Method> = methods.iter().filter(|m| !m.is_abstract && !m.is_static).collect();
     if ms.len() < 3 || !ms.iter().any(|m| !m.uses.is_empty() || !m.calls.is_empty()) {
         return None;
     }

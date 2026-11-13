@@ -199,6 +199,11 @@ pub fn impact(before: &Design, after: &Design) -> Impact {
 }
 
 /// Pruned elements don't count for consequences.
+/// The design without proposals' ghosts and pruned elements (what metrics judge).
+pub fn committed(d: &Design) -> Design {
+    committed_base(d)
+}
+
 fn committed_base(d: &Design) -> Design {
     let mut b = d.clone();
     b.classes.retain(|c| c.status != Status::Pruned);
