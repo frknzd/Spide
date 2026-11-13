@@ -141,3 +141,30 @@ fn duplicates_get_one_home_and_pure_fabrication_when_no_expert_fits() {
     assert_eq!(s.candidates[0].kind, "new", "{:#?}", s.candidates);
     assert!(s.recommended.ends_with("Formatter"), "{}", s.recommended);
 }
+
+#[test]
+fn agent_tools_answer() {
+    let mut s = Store::new(rest_extraction());
+    let names: Vec<String> = tools::tool_list().as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
+    for t in ["get_responsibilities", "get_overlap", "suggest_home", "assess_class", "get_code"] {
+        assert!(names.contains(&t.to_string()), "{t} listed");
+    }
+    let r: serde_json::Value = serde_json::from_str(&tools::call(&mut s, "get_responsibilities", &serde_json::json!({"class": "RestExtractionPanel"})).unwrap().text).unwrap();
+    assert_eq!(r["classes"][0]["role"]["role"], "presentation");
+    assert!(r["findings"].as_array().unwrap().iter().any(|f| f["message"].as_str().unwrap().contains("callsOf")));
+    let o: serde_json::Value = serde_json::from_str(&tools::call(&mut s, "get_overlap", &serde_json::json!({})).unwrap().text).unwrap();
+    assert!(o["owned_elsewhere"].as_array().unwrap().iter().any(|c| c["owner"] == "UrlPath"));
+    assert!(o["delegations"].as_array().unwrap().len() >= 5);
+    let h: serde_json::Value = serde_json::from_str(&tools::call(&mut s, "suggest_home", &serde_json::json!({"method": "Endpoint.countCalls"})).unwrap().text).unwrap();
+    assert_eq!(h["recommended"], "EndpointReport");
+    assert!(!h["candidates"][0]["ops"].as_array().unwrap().is_empty());
+    let m: serde_json::Value = serde_json::from_str(&tools::call(&mut s, "get_metrics", &serde_json::json!({})).unwrap().text).unwrap();
+    assert!(m["principles"]["responsibility"]["score"].is_number());
+    assert!(m["issues"][0]["principle"].is_string());
+    let a = tools::call(&mut s, "assess_class", &serde_json::json!({"assessments": [{"class": "UrlPath", "purpose": "path rules", "role": "value",
+        "methods": [{"name": "startsWith", "verdict": "fits", "reason": "own data"}]}]})).unwrap();
+    assert!(a.changed && a.text.contains("Recorded 1"));
+    let d: serde_json::Value = serde_json::from_str(&tools::call(&mut s, "get_design", &serde_json::json!({})).unwrap().text).unwrap();
+    assert!(!d["assessments"]["missing"].as_array().unwrap().iter().any(|x| x == "UrlPath"));
+    assert!(tools::call(&mut s, "get_code", &serde_json::json!({"class": "UrlPath"})).is_err(), "answered by the app");
+}

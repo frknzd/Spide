@@ -1,4 +1,5 @@
 //! Spide core: design model, operations, store, metrics, derivations and exporters.
+#![recursion_limit = "512"]
 
 pub mod adr;
 pub mod archunit;

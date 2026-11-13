@@ -112,8 +112,14 @@ fn dispatch(st: &AppState, msg: &Value) -> Option<Value> {
         "tools/call" => {
             let name = msg.pointer("/params/name").and_then(Value::as_str).unwrap_or("");
             let args = msg.pointer("/params/arguments").cloned().unwrap_or(json!({}));
+            let on_code = args.get("on").and_then(Value::as_str) == Some("code") && matches!(name, "get_responsibilities" | "get_overlap");
             let outcome = if name == "get_code" {
                 get_code(st, &args).map(|text| tools::ToolOutcome { text, changed: false })
+            } else if on_code {
+                judged_code(st).map(|d| tools::ToolOutcome {
+                    text: if name == "get_overlap" { tools::overlap_json(&d, &args) } else { tools::responsibilities_json(&d, &args) },
+                    changed: false,
+                })
             } else {
                 let mut s = st.lock();
                 tools::call(&mut s.store, name, &args)
@@ -136,6 +142,16 @@ fn dispatch(st: &AppState, msg: &Value) -> Option<Value> {
         Ok(r) => json!({"jsonrpc": "2.0", "id": id, "result": r}),
         Err(e) => json!({"jsonrpc": "2.0", "id": id, "error": e}),
     })
+}
+
+/// The imported code with the design's rules and intent (for `on: "code"`).
+fn judged_code(st: &AppState) -> Result<spide_core::model::Design, String> {
+    let (project, design) = {
+        let s = st.lock();
+        (s.project_dir.clone(), s.store.design.clone())
+    };
+    let reality = crate::commands::load_reality(&project).ok_or("no code imported yet: ask the user to /import the source folder")?;
+    Ok(spide_core::drift::with_design_rules(&design, &reality))
 }
 
 /// `get_code`: the imported implementation of a class/method (read-only, capped).

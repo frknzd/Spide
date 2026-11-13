@@ -129,11 +129,27 @@ pub fn examine(d: &Decision, mode: ExaminerMode, design: &Design) -> String {
     )
 }
 
-pub fn fix_issue(message: &str, rule: Option<&str>, fix_hint: Option<&str>) -> String {
+pub fn fix_issue(message: &str, rule: Option<&str>, fix_hint: Option<&str>, kind: Option<&str>, targets: &[String]) -> String {
+    let method_targets: Vec<&String> = targets.iter().filter(|t| t.contains('.')).collect();
+    let placement = matches!(kind, Some("misplaced_responsibility" | "duplication" | "concept_elsewhere" | "feature_envy" | "fat_controller" | "data_class"));
+    let how = if placement && !method_targets.is_empty() {
+        format!(
+            "This is about WHERE behaviour lives. Call suggest_home with {} and build the decision from its top candidates: \
+             the best existing home (Information Expert), a new Pure Fabrication class if offered, and — if defensible — keeping it \
+             (copy each candidate's ops; put its health before→after and why into the option's pros/cons and trade-offs).",
+            if method_targets.len() > 1 && kind == Some("duplication") {
+                format!("group: [{}]", method_targets.iter().map(|m| format!("\"{m}\"")).collect::<Vec<_>>().join(", "))
+            } else {
+                format!("method: \"{}\"", method_targets[0])
+            }
+        )
+    } else {
+        "Read get_design and get_metrics (get_responsibilities / get_overlap when it's about responsibilities or duplication).".into()
+    };
     format!(
-        "[spide · fix issue]\nThe user wants this architecture issue fixed:\n\"{message}\"{}{}\n\
-         Read get_design and get_metrics, then raise ONE propose_decision with 2–3 concrete ways to resolve it \
-         (each with ops and trade-offs against the brief). Don't pick for the user. Reply with one sentence.",
+        "[spide · fix issue]\nThe user wants this issue fixed:\n\"{message}\"{}{}\n{how}\n\
+         Then raise ONE propose_decision with 2–3 concrete ways to resolve it (each with ops and trade-offs against the brief). \
+         Don't pick for the user. Reply with one sentence.",
         rule.map(|r| format!("\nBroken rule: {r}")).unwrap_or_default(),
         fix_hint.map(|f| format!("\nTypical fix: {f}")).unwrap_or_default(),
     )

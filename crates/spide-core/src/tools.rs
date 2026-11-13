@@ -129,6 +129,27 @@ pub fn tool_list() -> Value {
                     "reason":{"type":"string"}},"required":["name","verdict","reason"]}}},
               "required":["class","purpose","methods"]}}},
           "required":["assessments"]}},
+        {"name":"get_responsibilities","description":"What each class is FOR and whether its methods fit: the role Spide reads \
+           (explicit role > your assessment > name > stereotype > layer, with the evidence), every method's concern \
+           (presentation|coordination|domain_logic|persistence|formatting|creation|accessor) and RDD kind (knowing|doing|deciding) \
+           with the reason, what it reads/tells elsewhere, and the findings (misplaced work, fat controllers, vague names, role \
+           inconsistencies, mixed concerns) with course references. on=code judges the imported implementation instead.",
+         "inputSchema":{"type":"object","properties":{"class":{"type":"string","description":"only this class"},
+            "on":{"type":"string","enum":["design","code"]}}}},
+        {"name":"get_overlap","description":"How much behaviour is duplicated or misplaced: method pairs with a similarity score and \
+           its parts (name, signature, touches = what the bodies call/use, text, code = normalised implementation), the class \
+           overlap matrix (share of A's behaviour duplicated in B), concepts another class owns (its data or stated \
+           responsibility), concepts scattered over ≥3 classes (shotgun surgery), pass-through delegation (not duplication) and \
+           middle men. Run it before proposing new members. on=code compares the imported implementation (real clones).",
+         "inputSchema":{"type":"object","properties":{"class":{"type":"string"},"min_score":{"type":"number","minimum":0,"maximum":1},
+            "on":{"type":"string","enum":["design","code"]}}}},
+        {"name":"suggest_home","description":"Where should a misplaced method (method: \"Class.method\") or a group of duplicates \
+           (group: [\"A.m\", \"B.n\"]) live? Ranked candidates: keep, move to an existing class (Information Expert share of \
+           the data it uses; wholes take over their parts), or a NEW Pure Fabrication class in the innermost legal layer. Each \
+           has legality (layer/forbidden rules for every caller), the simulated health before→after, the source's fan-out \
+           change, the receiver's LCOM4, role fit, a score, a why, and ready-to-use OPS. Turn the top 2–3 into propose_decision \
+           options (copy their ops) — the user chooses and defends.",
+         "inputSchema":{"type":"object","properties":{"method":{"type":"string"},"group":{"type":"array","items":{"type":"string"}}}}},
         {"name":"get_code","description":"Read the IMPLEMENTATION of a class (or one method) from the imported code (/import), \
            with the facts Spide extracted (lines, call chains, switches, loops, creations, UI calls). Use it to judge what the code \
            really does before assess_class with basis=code. Read-only; long classes are capped — ask per method.",
@@ -241,6 +262,8 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
                     "instability":(c.instability*100.0).round()/100.0,"lcom4":c.lcom,"members":c.members,"god":c.god})).collect::<Vec<_>>(),
                 "packages": m.packages,
                 "package_dependencies": m.package_deps,
+                "principles": m.principles,
+                "health_explained": "health = weighted geometric mean of the principle scores (coupling .25, cohesion .2, responsibility .3, architecture .15, uml .1); each issue carries principle, course source, confidence (0..1) and basis (structure|heuristic|agent|code)",
             }))
             .unwrap(), false)
         }
@@ -375,6 +398,18 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             )
         }
         "get_code" => Err("get_code is answered by the Spide app (it needs the imported code)".into()),
+        "get_responsibilities" => ok(responsibilities_json(&store.view(), args), false),
+        "get_overlap" => ok(overlap_json(&store.view(), args), false),
+        "suggest_home" => {
+            let v = store.view();
+            let methods: Vec<String> = match (args.get("method").and_then(Value::as_str), args.get("group").and_then(Value::as_array)) {
+                (_, Some(g)) if !g.is_empty() => g.iter().filter_map(Value::as_str).map(String::from).collect(),
+                (Some(m), _) => vec![m.to_string()],
+                _ => return Err("give method: \"Class.method\" or group: [\"A.m\", \"B.n\"]".into()),
+            };
+            let s = crate::home::suggest_home(&v, &methods)?;
+            ok(serde_json::to_string(&s).unwrap(), false)
+        }
         "set_use_cases" => {
             let m: UseCaseModel = parse(args)?;
             let warnings = store.set_use_cases(m).map_err(|e| e.0)?;
@@ -441,6 +476,56 @@ fn fmt_attr(a: &Attribute) -> String {
         s.push_str(" {static}");
     }
     s
+}
+
+/// `get_responsibilities` over any design (the intended one, or the judged code).
+pub fn responsibilities_json(d: &Design, args: &Value) -> String {
+    let m = compute(d, false);
+    let only = args.get("class").and_then(Value::as_str);
+    let r = &m.responsibility;
+    let classes: Vec<Value> = r
+        .classes
+        .iter()
+        .filter(|(c, _)| only.is_none_or(|o| o == c.as_str()))
+        .map(|(c, cr)| {
+            json!({
+                "class": c,
+                "role": cr.role,
+                "purpose": crate::assess::current(d, c).and_then(|a| a.purpose.clone()),
+                "concerns": cr.concerns,
+                "purity": (cr.purity * 100.0).round() / 100.0,
+                "methods": r.methods.iter().filter(|mi| &mi.class == c).map(|mi| json!({
+                    "method": mi.method, "concern": mi.concern, "rdd": mi.rdd, "source": mi.source, "reason": mi.reason,
+                    "reads": mi.reads, "tells": mi.tells})).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let findings: Vec<&crate::metrics::Issue> = m
+        .issues
+        .iter()
+        .filter(|i| i.principle == "responsibility" || i.principle == "cohesion")
+        .filter(|i| only.is_none_or(|o| i.targets.iter().any(|t| t == o || t.starts_with(&format!("{o}.")))))
+        .collect();
+    serde_json::to_string(&json!({"classes": classes, "findings": findings})).unwrap()
+}
+
+/// `get_overlap` over any design.
+pub fn overlap_json(d: &Design, args: &Value) -> String {
+    let min = args.get("min_score").and_then(Value::as_f64).unwrap_or(0.5).clamp(0.3, 1.0);
+    let only = args.get("class").and_then(Value::as_str);
+    let r = crate::overlap::analyse(d, min);
+    let mine = |s: &str| only.is_none_or(|o| s == o || s.starts_with(&format!("{o}.")));
+    serde_json::to_string(&json!({
+        "duplicate_threshold": crate::overlap::DUPLICATE,
+        "pairs": r.pairs.iter().filter(|p| mine(&p.a) || mine(&p.b)).take(40).collect::<Vec<_>>(),
+        "class_overlap": r.classes.iter().filter(|c| mine(&c.a) || mine(&c.b)).collect::<Vec<_>>(),
+        "owned_elsewhere": r.claims.iter().filter(|c| mine(&c.method) || mine(&c.owner)).collect::<Vec<_>>(),
+        "scattered_concepts": r.scattered.iter().filter(|s| only.is_none_or(|o| s.classes.iter().any(|c| c == o))).collect::<Vec<_>>(),
+        "delegations": r.delegations.iter().filter(|x| mine(&x.from) || mine(&x.to)).collect::<Vec<_>>(),
+        "middle_men": r.middle_men,
+        "how_to_read": "score ≥ 0.6 = near-duplicate. Delegation (A.m only calls B.n) is not duplication. For each duplicate or owned_elsewhere entry, call suggest_home to find the one right place.",
+    }))
+    .unwrap()
 }
 
 pub fn fmt_method(m: &Method) -> String {

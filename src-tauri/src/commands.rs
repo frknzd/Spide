@@ -209,8 +209,16 @@ pub fn analyse_change(st: State<'_, AppState>, pi: State<'_, PiBridge>, name: St
 
 /// "fix with agent" on a health issue.
 #[tauri::command]
-pub fn fix_issue(st: State<'_, AppState>, pi: State<'_, PiBridge>, message: String, rule: Option<String>, fix_hint: Option<String>) -> R {
-    let msg = prompts::fix_issue(&message, rule.as_deref(), fix_hint.as_deref());
+pub fn fix_issue(
+    st: State<'_, AppState>,
+    pi: State<'_, PiBridge>,
+    message: String,
+    rule: Option<String>,
+    fix_hint: Option<String>,
+    kind: Option<String>,
+    targets: Option<Vec<String>>,
+) -> R {
+    let msg = prompts::fix_issue(&message, rule.as_deref(), fix_hint.as_deref(), kind.as_deref(), &targets.unwrap_or_default());
     pi.prompt(&st, msg, Some(format!("🔧 {message}")))
 }
 
@@ -729,7 +737,15 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "history_fork" => history_fork(s, a.get("rev").and_then(Value::as_u64).ok_or("missing rev")?, req("name")?),
         "set_rules" => set_rules(s, serde_json::from_value(de("rules")).map_err(|e| e.to_string())?),
         "analyse_change" => analyse_change(s, pi, req("name")?),
-        "fix_issue" => fix_issue(s, pi, req("message")?, str_("rule"), str_("fix_hint")),
+        "fix_issue" => fix_issue(
+            s,
+            pi,
+            req("message")?,
+            str_("rule"),
+            str_("fix_hint"),
+            str_("kind"),
+            a.get("targets").and_then(|v| serde_json::from_value(v.clone()).ok()),
+        ),
         "set_brief_skipped" => set_brief_skipped(s, a.get("on").and_then(Value::as_bool).unwrap_or(false)),
         "set_show_pruned" => set_show_pruned(s, a.get("on").and_then(Value::as_bool).unwrap_or(false)),
         "set_name" => set_name(s, req("name")?),
