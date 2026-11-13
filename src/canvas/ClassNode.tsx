@@ -21,6 +21,8 @@ export interface ClassNodeProps {
   /** static rendering (previews/export): no animation classes */
   still?: boolean;
   layerColor?: string | null;
+  /** zoomed far out: draw the frame and a large name only (same box size, so nothing moves) */
+  compact?: boolean;
 }
 
 const T = (t: Target) => JSON.stringify(t);
@@ -56,10 +58,12 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
     <g transform={`translate(${p.x.toFixed(1)},${p.y.toFixed(1)}) scale(${p.scale.toFixed(3)}) translate(${-w / 2},${-h / 2})`} opacity={opacity}
       style={{ transition: p.still ? undefined : "opacity 220ms" }}>
       <g className={p.still ? undefined : ghost ? "node-enter node-ghost" : "node-enter"}>
-        {/* heat halo */}
+        {/* heat halo: plain strokes (no blur filter, which is expensive to repaint) */}
         {hb > 0 && !pruned && (
-          <rect x={-4} y={-4} width={w + 8} height={h + 8} rx={12} fill={hc} opacity={0.18 + heat * 0.45}
-            filter={`url(#halo${hb})`} className={p.still ? undefined : heat > 0.55 ? "halo-pulse" : undefined} pointerEvents="none" />
+          <g pointerEvents="none" className={p.still ? undefined : heat > 0.55 ? "halo-pulse" : undefined}>
+            <rect x={-7} y={-7} width={w + 14} height={h + 14} rx={14} fill="none" stroke={hc} strokeWidth={8 + heat * 6} strokeOpacity={0.07 + heat * 0.12} />
+            <rect x={-3} y={-3} width={w + 6} height={h + 6} rx={10} fill="none" stroke={hc} strokeWidth={3} strokeOpacity={0.15 + heat * 0.3} />
+          </g>
         )}
         {p.focus && <rect x={-5} y={-5} width={w + 10} height={h + 10} rx={12} fill="none" stroke={C.accent} strokeWidth={1.5} opacity={0.7} pointerEvents="none" />}
         {p.ring && <rect x={-7} y={-7} width={w + 14} height={h + 14} rx={13} fill="none" stroke={p.ring} strokeWidth={2.2} opacity={0.9} pointerEvents="none"
@@ -69,6 +73,13 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
         <rect width={w} height={h} rx={8} fill={C.node} stroke={border} strokeWidth={ghost ? 1.5 : 1.2 + heat * 1.6}
           strokeDasharray={ghost || removing ? "6 4" : undefined}
           data-target={T(target)} data-node={cls.name} data-hover={`class:${cls.name}`} style={{ cursor: ghost ? "pointer" : "grab" }} />
+        {p.compact ? (
+          <>
+            <rect width={w} height={h} rx={8} fill={p.layerColor ?? C.nodeHeader} opacity={p.layerColor ? 0.14 : 0.6} pointerEvents="none" />
+            <text x={w / 2} y={h / 2 + 8} textAnchor="middle" fontFamily={FONT_SANS} fontSize={Math.min(30, Math.max(16, (w - 16) / Math.max(4, cls.name.length) * 1.7))}
+              fontWeight={600} fontStyle={italic ? "italic" : undefined} fill={ghost ? C.ghost : C.text} pointerEvents="none">{cls.name}</text>
+          </>
+        ) : (<>
         {/* header */}
         <path d={`M0,8 a8,8 0 0 1 8,-8 h${w - 16} a8,8 0 0 1 8,8 v${box.headerH - 8} h${-w} z`} fill={p.layerColor ? p.layerColor : C.nodeHeader}
           opacity={p.layerColor ? 0.16 : 1} pointerEvents="none" />
@@ -100,6 +111,7 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
             </g>
           );
         })}
+        </>)}
         {/* status chips */}
         {ghost && <Chip x={w - 4} y={-23} text="+ proposed" color={C.ghost} anchor="end" />}
         {removing && <Chip x={w - 4} y={-23} text="− proposed removal" color={C.removing} anchor="end" />}
@@ -134,7 +146,7 @@ export function Chip({ x, y, text, color, anchor }: { x: number; y: number; text
   );
 }
 
-/** SVG defs used by nodes (halo blur filters). */
+/** SVG defs (blur filters) used by the few large highlights in the package and system views. */
 export function NodeDefs() {
   return (
     <>

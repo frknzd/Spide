@@ -1,5 +1,5 @@
-// "Living" layout: d3-force with custom forces. Clean designs settle and
-// freeze; tangled ones keep trembling, hottest nodes the most.
+// Layout physics: d3-force with custom forces. It only runs after a model change, a drag
+// or a tidy, and stops completely once it has settled (no perpetual motion: idle = no work).
 
 import { forceLink, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from "d3-force";
 import type { Pos } from "../state/types";
@@ -173,6 +173,7 @@ export class LivingLayout {
     this.onSettle = onSettle;
     this.sim = forceSimulation<SimNode, SimLink>([])
       .alphaDecay(0.035)
+      .alphaMin(0.005)
       .velocityDecay(0.42)
       .force("link", forceLink<SimNode, SimLink>([]).id((d) => d.id).distance((l) => {
         const a = l.source as SimNode;
@@ -187,19 +188,8 @@ export class LivingLayout {
       .force("cy", forceY<SimNode>(0).strength(0.012))
       .force("hier", hierarchy(() => this.links))
       .force("tidy", tidyPull())
-      .force("jitter", () => this.jitter())
       .on("tick", () => this.tick())
       .on("end", () => this.onSettle());
-  }
-
-  private jitter() {
-    if (this.tension < 0.08 || performance.now() < this.tidyUntil) return;
-    for (const n of this.nodes.values()) {
-      if (n.fx != null) continue;
-      const amp = (0.15 + n.heat) * this.tension * 1.6;
-      n.vx! += (Math.random() - 0.5) * amp;
-      n.vy! += (Math.random() - 0.5) * amp;
-    }
   }
 
   private tick() {
@@ -218,14 +208,7 @@ export class LivingLayout {
     }
     if (this.settleTimer) clearTimeout(this.settleTimer);
     this.settleTimer = setTimeout(() => this.onSettle(), 1200);
-    // a tense design never settles: persist positions now and then anyway
-    const now = performance.now();
-    if (now - this.lastSave > 6000) {
-      this.lastSave = now;
-      this.onSettle();
-    }
   }
-  private lastSave = performance.now();
 
   update(specs: NodeSpec[], links: LinkSpec[], tension: number) {
     const before = new Set(this.nodes.keys());
@@ -285,10 +268,8 @@ export class LivingLayout {
     this.sim.nodes([...next.values()]);
     (this.sim.force("link") as ReturnType<typeof forceLink<SimNode, SimLink>>).links(this.links);
     this.tension = tension;
-    this.sim.alphaTarget(tension >= 0.08 ? 0.012 + tension * 0.03 : 0);
     const kick = added || removed ? 0.6 : linksChanged ? 0.35 : changed ? 0.15 : 0;
     if (kick) this.sim.alpha(Math.max(this.sim.alpha(), kick)).restart();
-    else if (tension >= 0.08) this.sim.restart();
     this.onTick();
   }
 
@@ -308,7 +289,7 @@ export class LivingLayout {
       n.fx = null;
       n.fy = null;
     }
-    this.sim.alphaTarget(this.tension >= 0.08 ? 0.012 + this.tension * 0.03 : 0);
+    this.sim.alphaTarget(0);
   }
 
   /** Pin / unpin a node where it is. Returns the new state. */

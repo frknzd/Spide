@@ -106,6 +106,13 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
     });
   };
 
+  // semantic zoom: far out, draw less (positions and box sizes stay the same)
+  const [zoomCap, setZoomCap] = useState(4);
+  const onTransform = (t: { k: number }) => {
+    const cap = t.k < 0.3 ? 0 : t.k < 0.6 ? 1 : 4;
+    if (cap !== zoomCap) setZoomCap(cap);
+  };
+
   const [pinned, setPinned] = useState<string | null>(null);
   const [focusSet, setFocusSet] = useState<Set<string> | null>(null);
   const focus = (name: string | null) => {
@@ -214,6 +221,7 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
         p.onClickTarget(t);
       }}
       onHover={p.onHover}
+      onTransform={onTransform}
       onDragStart={(el, w) => {
         const id = el.closest("[data-node]")?.getAttribute("data-node");
         if (!id || !layout.nodes.has(id)) return false;
@@ -235,7 +243,7 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
       onDoubleClickTarget={(t, e) => p.onDoubleClickTarget?.(t, { x: e.clientX, y: e.clientY })}
     >
       <DiagramContent {...p.data} pos={pos} boxes={boxes} showMethods={p.showMethods} focusClass={focusClass} stress={p.stress} drift={p.drift}
-        pinned={layout.pinnedIds()} focusSet={focusSet} />
+        pinned={layout.pinnedIds()} focusSet={focusSet} zoomCap={zoomCap} />
     </Viewport>
   );
 }));

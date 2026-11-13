@@ -58,6 +58,18 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
     kind: "none", sx: 0, sy: 0, tx: 0, ty: 0, moved: false, target: null,
   });
   const anim = useRef<number | null>(null);
+  // while panning/zooming, CSS animations pause (see .interacting in styles.css)
+  const interactTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const markInteracting = () => {
+    const s = svgRef.current;
+    if (!s) return;
+    if (!interactTimer.current) s.classList.add("interacting");
+    else clearTimeout(interactTimer.current);
+    interactTimer.current = setTimeout(() => {
+      interactTimer.current = null;
+      svgRef.current?.classList.remove("interacting");
+    }, 200);
+  };
   const fitted = useRef(false);
 
   useEffect(() => p.onTransform?.(t), [t]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -128,6 +140,7 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
 
   const onWheel = (e: React.WheelEvent) => {
     if (anim.current) cancelAnimationFrame(anim.current);
+    markInteracting();
     const tr = tRef.current;
     if (e.ctrlKey || e.metaKey) {
       const r = svgRef.current!.getBoundingClientRect();
@@ -171,7 +184,10 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
     if (Math.hypot(dx, dy) > 4) g.moved = true;
     if (!g.moved) return;
     p.onHover?.(null, { x: e.clientX, y: e.clientY });
-    if (g.kind === "pan") setT({ ...tRef.current, x: g.tx + dx, y: g.ty + dy });
+    if (g.kind === "pan") {
+      markInteracting();
+      setT({ ...tRef.current, x: g.tx + dx, y: g.ty + dy });
+    }
     else if (g.kind === "drag") p.onDragMove?.(toWorld(e.clientX, e.clientY));
     else if (g.kind === "right") {
       const [x1, y1] = toWorld(g.sx, g.sy);

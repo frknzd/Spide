@@ -78,6 +78,8 @@ interface Props extends DiagramData {
   /** package focus: everything outside dims */
   focusSet?: Set<string> | null;
   showPackages?: boolean;
+  /** semantic zoom: 0 = packages only, 1 = class names only, ≥ 2 = as the detail level says */
+  zoomCap?: number;
 }
 
 export const DiagramContent = memo(function DiagramContent(p: Props) {
@@ -104,6 +106,12 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
   const bendMap = bends(p.relations);
   const inStress = (n: string) => !!p.stress && (p.stress.impacted.has(n) || p.stress.ripple.has(n));
 
+  const cap = p.zoomCap ?? 4;
+  // zoomed far out: packages become solid boxes; their classes and class edges are hidden
+  const overview = cap <= 0;
+  const hullOf = new Map<string, Rect>();
+  const hiddenInPkg = (n: string) => overview && !!p.classes.find((c) => c.name === n)?.package;
+
   // packages
   const pkgEls = [];
   if (p.showPackages !== false) {
@@ -120,6 +128,21 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
       const x2 = Math.max(...rs.map((r) => r.x + r.w / 2)) + 28;
       const y2 = Math.max(...rs.map((r) => r.y + r.h / 2)) + 34;
       const label = pk?.layer && pk.layer !== name ? `${name}  ·  ${pk.layer}` : name;
+      hullOf.set(name, { x: (x1 + x2) / 2, y: (y1 + y2) / 2, w: x2 - x1, h: y2 - y1 });
+      if (overview) {
+        const fs = Math.max(28, Math.min(72, (x2 - x1) / Math.max(6, name.length) * 1.2));
+        pkgEls.push(
+          <g key={"pkg" + name}>
+            <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} rx={22} fill={color} fillOpacity={0.12} stroke={color} strokeOpacity={0.6} strokeWidth={3}
+              strokeDasharray={pk?.status === "proposed" ? "10 8" : undefined} data-target={T({ kind: "package", name })} data-hover={`package:${name}`} />
+            <text x={(x1 + x2) / 2} y={(y1 + y2) / 2} textAnchor="middle" fontFamily={FONT_SANS} fontSize={fs} fontWeight={700} fill={color} pointerEvents="none">{name}</text>
+            <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 + fs * 0.9} textAnchor="middle" fontFamily={FONT_SANS} fontSize={fs * 0.5} fill={C.dim} pointerEvents="none">
+              {rs.length} class{rs.length === 1 ? "" : "es"}{pk?.layer ? ` · ${pk.layer}` : ""}
+            </text>
+          </g>,
+        );
+        continue;
+      }
       pkgEls.push(
         <g key={"pkg" + name} opacity={focus ? 0.4 : 1}>
           <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} rx={18} fill={color} fillOpacity={0.045} stroke={color} strokeOpacity={0.35}
@@ -131,7 +154,19 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
   }
 
   const edgeEls = [];
-  for (const e of p.implicit ?? []) {
+  if (overview) {
+    for (const d of p.metrics?.package_deps ?? []) {
+      const a = hullOf.get(d.from);
+      const b = hullOf.get(d.to);
+      if (!a || !b) continue;
+      const color = d.in_cycle ? C.cycle : d.layer_violation ? C.warn : C.edge;
+      edgeEls.push(
+        <Edge key={`pd${d.from}>${d.to}`} from={a} to={b} kind="dependency" directed label={`${d.count}`}
+          style={{ color, width: 2 + Math.min(d.count, 8) * 0.6, opacity: 0.9, strained: d.in_cycle }} warn={d.layer_violation ? "layer ↑" : null} />,
+      );
+    }
+  }
+  for (const e of overview ? [] : p.implicit ?? []) {
     const a = rects.get(e.from);
     const b = rects.get(e.to);
     if (!a || !b) continue;
@@ -143,6 +178,7 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
     );
   }
   for (const r of p.relations) {
+    if (hiddenInPkg(r.from) || hiddenInPkg(r.to)) continue;
     const a = rects.get(r.from);
     const b = rects.get(r.to);
     if (!a || !b) continue;
@@ -177,7 +213,7 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
         {p.classes.map((c) => {
           const pos = p.pos.get(c.name);
           const box = p.boxes.get(c.name);
-          if (!pos || !box) return null;
+          if (!pos || !box || hiddenInPkg(c.name)) return null;
           const pk = c.package ? p.packages.find((x) => x.name === c.package) : undefined;
           return (
             <ClassNode key={c.name} cls={c} box={box} x={pos.x} y={pos.y} scale={nodeScale(cm?.[c.name])} m={cm?.[c.name]}
@@ -186,7 +222,7 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
               ring={p.stress?.impacted.has(c.name) ? C.cycle : p.stress?.ripple.has(c.name) ? C.warn
                 : p.drift?.missing.has(c.name) ? C.cycle : p.drift?.drifted.has(c.name) ? C.warn : null}
               ringDashed={!!p.drift?.missing.has(c.name)} phantom={!!p.drift?.phantom.has(c.name)}
-              still={p.still} layerColor={pk?.layer ? LAYER_COLOR[pk.layer] : null} />
+              still={p.still} layerColor={pk?.layer ? LAYER_COLOR[pk.layer] : null} compact={cap <= 1} />
           );
         })}
       </g>
