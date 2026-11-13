@@ -68,18 +68,65 @@ pub struct Issue {
     pub explain: String,
     /// How it could be fixed.
     pub fix_hint: Option<String>,
+    /// coupling | cohesion | responsibility | architecture | uml
+    pub principle: &'static str,
+    /// Course reference, e.g. "GRASP Information Expert (Ch. 3)".
+    pub source: &'static str,
+    /// 0..1: how sure Spide is (structural facts 1; name heuristics lower; agent agreement raises it).
+    pub confidence: f64,
+    /// structure | heuristic | agent | heuristic + agent | code
+    pub basis: String,
 }
 
 impl Issue {
     pub fn new(kind: &'static str, severity: f64, message: String, targets: Vec<String>) -> Self {
         let (explain, fix_hint) = default_explanation(kind);
-        Issue { kind, severity, message, targets, rule: None, explain: explain.into(), fix_hint: fix_hint.map(String::from) }
+        let (principle, source) = classify_issue(kind);
+        Issue {
+            kind,
+            severity,
+            message,
+            targets,
+            rule: None,
+            explain: explain.into(),
+            fix_hint: fix_hint.map(String::from),
+            principle,
+            source,
+            confidence: 1.0,
+            basis: "structure".into(),
+        }
     }
     fn with_rule(mut self, rule: impl Into<String>, explain: impl Into<String>, fix: impl Into<String>) -> Self {
         self.rule = Some(rule.into());
         self.explain = explain.into();
         self.fix_hint = Some(fix.into());
         self
+    }
+}
+
+/// Principle (one of the course's basic OO design principles, plus architecture rules and UML
+/// hygiene) and course reference per issue kind.
+pub fn classify_issue(kind: &str) -> (&'static str, &'static str) {
+    match kind {
+        "cycle" => ("coupling", "Low Coupling · break cycles (Ch. 2)"),
+        "coupling" | "sync_chain" | "spof" => ("coupling", "Low Coupling (Ch. 2)"),
+        "demeter" => ("coupling", "Law of Demeter — don't talk to strangers (Ch. 2)"),
+        "inheritance_coupling" => ("coupling", "“Inheritance is strong coupling” (Ch. 2)"),
+        "god" | "cohesion" | "mixed_concerns" | "vague_role" => ("cohesion", "High Cohesion (Ch. 2)"),
+        "large_class" | "long_method" => ("cohesion", "Bad smells: Large Class / Long Method (Ch. 5)"),
+        "misplaced_responsibility" | "concept_elsewhere" | "feature_envy" => ("responsibility", "Information Expert · RDD (Ch. 2–3)"),
+        "fat_controller" | "ui_bypasses_controller" => ("responsibility", "GRASP Controller (Ch. 3)"),
+        "creator" => ("responsibility", "GRASP Creator (Ch. 3)"),
+        "data_class" => ("responsibility", "RDD: make objects smart, not just data (Ch. 2)"),
+        "duplication" => ("responsibility", "Bad smells: Duplicated Code (Ch. 5)"),
+        "scattered_concept" => ("responsibility", "Bad smells: Shotgun Surgery (Ch. 5)"),
+        "middle_man" => ("responsibility", "Delegation without responsibility (Ch. 5)"),
+        "type_switch" => ("responsibility", "Polymorphism instead of switches (Ch. 2–3)"),
+        "role_inconsistency" | "disagreement" => ("responsibility", "RDD roles (Ch. 2)"),
+        "change_ripple" | "chatty_scenario" | "multi_aggregate_write" => ("responsibility", "Protected Variations · Information Expert (Ch. 3)"),
+        "layer" | "module_boundary" | "forbidden_dep" | "forbidden_type" | "orphan" | "consistency" => ("architecture", "Architecture rules"),
+        "long_params" => ("uml", "Bad smells: Long Parameter List (Ch. 5)"),
+        _ => ("uml", "Exam notes: UML class diagrams (Ch. 6)"),
     }
 }
 
@@ -617,8 +664,10 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         let mut i = Issue::new(f.kind, f.severity, f.message.clone(), target);
         i.explain = f.explain.clone();
         i.fix_hint = Some(f.fix_hint.clone());
+        i.source = f.source;
+        i.confidence = f.confidence;
+        i.basis = "heuristic".into();
         issues.push(i);
-        rule_penalty += 6.0 * f.severity * f.confidence;
     }
     out.responsibility = resp;
 
@@ -628,8 +677,9 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         let mut i = Issue::new(kind, sev, msg, targets);
         i.explain = explain.into();
         i.fix_hint = Some(fix);
+        i.confidence = conf;
+        i.basis = "heuristic".into();
         issues.push(i);
-        rule_penalty += 6.0 * sev * conf;
     };
     for p in ov.pairs.iter().filter(|p| p.score >= crate::overlap::DUPLICATE) {
         let (ca, cb) = (p.a.split('.').next().unwrap_or("").to_string(), p.b.split('.').next().unwrap_or("").to_string());
@@ -678,6 +728,12 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         );
     }
     out.overlap = ov;
+
+    // ---- the agent's judgement: confirm, dispute or add (current assessments only)
+    crate::assess::merge(d, &mut issues);
+    for i in issues.iter().filter(|i| i.basis != "structure") {
+        rule_penalty += 6.0 * i.severity * i.confidence;
+    }
 
     // ---- health
     let mut penalty = 0.0;

@@ -94,10 +94,45 @@ pub struct Method {
     /// (overrides the verb heuristics): presentation | coordination | domain_logic | persistence |
     /// formatting | creation | accessor.
     pub concern: Option<String>,
+    /// What the implementation actually does (imported code only).
+    pub code: Option<CodeFacts>,
     pub status: Status,
     pub proposal: Option<String>,
     /// Where it came from: decision id (D…), proposal id (P…), `user` or `import`.
     pub origin: Option<String>,
+}
+
+/// Facts about a method body, from the imported source (never part of an intended design).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct CodeFacts {
+    /// Source file, relative to the imported folder.
+    pub file: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    /// Lines of code (non-blank, non-comment) and statements in the body.
+    pub loc: u32,
+    pub statements: u32,
+    /// Types it instantiates (`new X(…)`).
+    pub creates: Vec<String>,
+    /// Longest receiver chain (`a.getB().getC().x()` = 3) and the chains of length ≥ 3.
+    pub max_chain: u32,
+    pub chains: Vec<String>,
+    /// `switch` statements/expressions and `instanceof` checks.
+    pub switches: u32,
+    pub instanceofs: u32,
+    /// Enum constants or types it switches on (`case BCL:`).
+    pub switch_on: Vec<String>,
+    /// Arithmetic and comparison operators, loops.
+    pub arithmetic: u32,
+    pub comparisons: u32,
+    pub loops: u32,
+    /// UI toolkit calls/types it uses (javax.swing, JOptionPane, …).
+    pub ui_api: Vec<String>,
+    /// Winnowed k-gram fingerprint of the normalised body (identifiers → ID, literals → LIT).
+    pub fingerprint: Vec<u64>,
+    /// Hash of the body text (assessment staleness).
+    pub hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -658,6 +693,8 @@ pub struct Design {
     /// Architecture rules (style preset, forbidden dependencies/types, thresholds).
     pub rules: crate::rules::Rules,
     pub counter: u64,
+    /// The agent's judgement per class (purpose, role, per-method verdicts), layered on Spide's signals.
+    pub assessments: BTreeMap<String, crate::assess::Assessment>,
 }
 
 impl Default for Design {
@@ -685,6 +722,7 @@ impl Default for Design {
             settings: Settings::default(),
             rules: crate::rules::Rules::default(),
             counter: 0,
+            assessments: BTreeMap::new(),
         }
     }
 }

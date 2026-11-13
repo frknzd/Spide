@@ -148,8 +148,11 @@ pub fn role_of(d: &Design, c: &Class) -> RoleInfo {
     let by_name = role_by_name(&c.name);
     let layer = layer_of(d, c);
     let by_layer = role_by_layer(layer);
+    let agent = crate::assess::current(d, &c.name);
     let (role, source, evidence) = if let Some(r) = c.role.as_deref().filter(|r| !r.is_empty()) {
         (r.to_string(), "explicit", "set by the agent/user".to_string())
+    } else if let Some(r) = agent.and_then(|a| a.role.as_deref()).filter(|r| !r.is_empty()) {
+        (r.to_string(), "agent", agent.and_then(|a| a.purpose.clone()).unwrap_or_else(|| "the agent's assessment".into()))
     } else if let Some((r, ev)) = by_name.clone().filter(|(r, _)| *r != "utility" || by_st.is_none()) {
         // the name is the strongest intent signal (except vague names when a stereotype says more)
         (r.to_string(), "name", ev)
@@ -263,8 +266,11 @@ pub fn classify(d: &Design, c: &Class, m: &Method, role: &str) -> MethodInfo {
     let other_reads: usize = reads.values().sum();
     let other_tells: usize = tells.values().sum();
     let own_calls = m.calls.iter().filter(|x| !x.contains('.') || x.starts_with("this.")).count();
+    let agent = crate::assess::current(d, &c.name).and_then(|a| a.methods.iter().find(|x| x.name == m.name)).filter(|x| x.concern.is_some());
     let mut info = if let Some(cn) = m.concern.as_deref().filter(|x| !x.is_empty()) {
         base(cn, "explicit", "set by the agent/user".into())
+    } else if let Some(a) = agent {
+        base(a.concern.as_deref().unwrap_or(""), "agent", a.reason.clone())
     } else if detail::is_constructor(&c.name, m) {
         base("creation", "name", "constructor".into())
     } else if OBJECT_METHODS.contains(&m.name.as_str()) {
@@ -437,7 +443,7 @@ impl Report {
 
 fn confidence_for(source: &str) -> f64 {
     match source {
-        "explicit" => 0.95,
+        "explicit" | "agent" => 0.95,
         "calls" | "swing_api" => 0.8,
         "signature" => 0.6,
         "name" => 0.65,

@@ -31,8 +31,36 @@ pub fn user_prompt(text: &str, tab: &str, d: &Design) -> String {
     } else {
         out.push_str(&format!("Brief:\n{}\n", brief_digest(d)));
     }
+    out.push_str(&assessment_hint(d));
     out.push_str(&format!("\nUser: {text}"));
     out
+}
+
+/// Ask the agent (once per turn, batched) to judge classes it hasn't assessed or whose assessment is stale.
+pub fn assessment_hint(d: &Design) -> String {
+    let (stale, missing) = spide_core::assess::stale_and_missing(d);
+    if stale.is_empty() && missing.is_empty() {
+        return String::new();
+    }
+    let list = |v: &[String]| {
+        let mut s = v.iter().take(8).cloned().collect::<Vec<_>>().join(", ");
+        if v.len() > 8 {
+            s.push_str(&format!(" … (+{})", v.len() - 8));
+        }
+        s
+    };
+    let mut parts = vec![];
+    if !missing.is_empty() {
+        parts.push(format!("not assessed yet: {}", list(&missing)));
+    }
+    if !stale.is_empty() {
+        parts.push(format!("changed since your assessment: {}", list(&stale)));
+    }
+    format!(
+        "Assessments — {}. When you're done with the user's request, record your judgement with ONE batched assess_class call \
+         (purpose, role, and per method concern + verdict fits|misplaced|duplicate|delegates with a reason).\n",
+        parts.join("; ")
+    )
 }
 
 pub fn prune_feedback(targets: &[Target], text: &str, tab: &str) -> String {

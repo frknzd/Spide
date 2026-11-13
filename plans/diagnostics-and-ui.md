@@ -240,7 +240,7 @@ The engine works on any `Design`: the intended design, or the imported code ("re
 - [x] C1 `role`/`concern` model fields plus ops (`update_class`/`update_method`)
 - [x] C2 `responsibility.rs` classification, fit matrix and issues, with tests
 - [x] D1 `overlap.rs` similarity, exclusions, class matrix and scattered concepts, with tests
-- [ ] D2 `suggest_home` ranking with simulated impact, with tests
+- [x] D2 `suggest_home` ranking with simulated impact, with tests
 - [ ] D3 `assessments` model, `assess_class` tool, staleness hashes, merge with heuristics (confidence, disagreements)
 - [ ] D4 Import body facts, spans and fingerprints; run the engines on reality; `CodeFindings` and design-vs-code disagreements; `get_code` tool; Monopoly fixture
 - [ ] E1 Principle breakdown, `principle`/`source`/`confidence` on issues, size-normalised single health score, calibration suite

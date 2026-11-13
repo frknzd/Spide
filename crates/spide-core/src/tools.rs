@@ -107,6 +107,28 @@ pub fn tool_list() -> Value {
             "name":{"type":"string"},"description":{"type":"string"},
             "impacted":{"type":"array","items":{"type":"object","properties":{"class":{"type":"string"},"why":{"type":"string"}},"required":["class"]}}},
           "required":["name","impacted"]}},
+        {"name":"assess_class","description":"Record YOUR judgement of classes (batch several in one call): what each class is for \
+           (purpose, role) and, per method, what it does and whether it belongs there. Spide layers this on its own signals (names, \
+           stereotypes, verbs, calls): agreement raises an issue's confidence, a 'fits' verdict lowers it (and on serious issues shows a \
+           disagreement the user must resolve), and your 'misplaced'/'duplicate' verdicts become issues. An assessment goes stale when the \
+           class changes; get_design lists stale and missing ones. Judge by responsibilities (RDD knowing/doing/deciding, GRASP Expert, \
+           Controller, Creator, Pure Fabrication), not by taste. basis=code when you read the implementation (get_code).",
+         "inputSchema":{"type":"object","properties":{
+            "assessments":{"type":"array","items":{"type":"object","properties":{
+                "class":{"type":"string"},"purpose":{"type":"string","description":"one sentence"},
+                "role":{"type":"string","enum":["presentation","controller","service","domain","persistence","adapter","output","creator","utility","value"]},
+                "basis":{"type":"string","enum":["design","code"]},
+                "methods":{"type":"array","items":{"type":"object","properties":{
+                    "name":{"type":"string"},
+                    "concern":{"type":"string","enum":["presentation","coordination","domain_logic","persistence","formatting","creation","accessor"]},
+                    "rdd":{"type":"string","enum":["knowing","doing","deciding"]},
+                    "verdict":{"type":"string","enum":["fits","misplaced","duplicate","delegates"]},
+                    "home":{"type":"string","description":"better owner (class or new class name) if misplaced/duplicate"},
+                    "duplicate_of":{"type":"string","description":"Class.method it duplicates"},
+                    "confidence":{"type":"number","minimum":0,"maximum":1},
+                    "reason":{"type":"string"}},"required":["name","verdict","reason"]}}},
+              "required":["class","purpose","methods"]}}},
+          "required":["assessments"]}},
         {"name":"set_sequence","description":"Create/replace one sequence diagram. Participants: classes or actors. Each sync/async/create message's \
            `method` must be an existing method name on the `to` class (validated; problems are reported back and highlighted). \
            Use kind=return for replies.",
@@ -328,6 +350,26 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
                 true,
             )
         }
+        "assess_class" => {
+            #[derive(Deserialize)]
+            struct A {
+                assessments: Vec<crate::assess::Assessment>,
+            }
+            let a: A = parse(args)?;
+            let n = a.assessments.len();
+            let warnings = crate::assess::record(&mut store.design, a.assessments, crate::store::now_ms())?;
+            let m = compute(&store.view(), false);
+            let disputes = m.issues.iter().filter(|i| i.kind == "disagreement").count();
+            ok(
+                format!(
+                    "Recorded {n} assessment(s). Health now {}.{}{}",
+                    m.health,
+                    if disputes > 0 { format!(" {disputes} disagreement(s) with Spide's signals: raise them with the user.") } else { String::new() },
+                    if warnings.is_empty() { String::new() } else { format!(" Warnings: {}", warnings.join("; ")) }
+                ),
+                true,
+            )
+        }
         "set_use_cases" => {
             let m: UseCaseModel = parse(args)?;
             let warnings = store.set_use_cases(m).map_err(|e| e.0)?;
@@ -442,6 +484,15 @@ pub fn design_digest(store: &Store) -> String {
             if c.status == Status::Overruled {
                 o["overruled"] = json!(true);
             }
+            if c.external {
+                o["external"] = json!(true);
+            }
+            if let Some(r) = &c.role {
+                o["role"] = json!(r);
+            }
+            if let Some(a) = crate::assess::current(d, &c.name) {
+                o["purpose"] = json!(a.purpose);
+            }
             o
         })
         .collect();
@@ -506,9 +557,10 @@ pub fn design_digest(store: &Store) -> String {
         .packages
         .iter()
         .filter(|p| live(p.status))
-        .map(|p| json!({"name": p.name, "layer": p.layer}))
+        .map(|p| json!({"name": p.name, "layer": p.layer, "external": p.external}))
         .collect();
     let m = compute(&store.view(), false);
+    let (stale, missing) = crate::assess::stale_and_missing(d);
     let forces: Vec<Value> = d
         .live_forces()
         .map(|f| {
@@ -534,6 +586,8 @@ pub fn design_digest(store: &Store) -> String {
         },
         "health": m.health,
         "top_issues": m.issues.iter().take(6).map(|i| &i.message).collect::<Vec<_>>(),
+        "assessments": {"stale": stale, "missing": missing,
+            "hint": "assess_class (batched) for stale/missing classes when you next touch them"},
         "packages": packages,
         "classes": classes,
         "relations": relations,

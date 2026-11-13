@@ -102,3 +102,48 @@ fn dump_rest_extraction() {
         println!("! {} {:.2}/{:.2} {} → {:?}", f.kind, f.severity, f.confidence, f.message, f.home);
     }
 }
+
+#[test]
+fn agent_assessments_merge_with_signals_and_go_stale() {
+    let mut d = rest_extraction();
+    let before = metrics::compute(&d, false);
+    let flagged = |m: &metrics::Metrics, method: &str| m.issues.iter().find(|i| i.kind == "misplaced_responsibility" && i.targets.contains(&method.to_string())).cloned();
+    let base = flagged(&before, "RestExtractionPanel.callsOf").expect("heuristic finding");
+
+    // the agent agrees on callsOf and finds something the heuristics missed
+    let a: Vec<assess::Assessment> = serde_json::from_value(serde_json::json!([
+        {"class": "RestExtractionPanel", "purpose": "Shows the extraction status and passes user actions to the controller", "role": "presentation",
+         "methods": [{"name": "callsOf", "verdict": "misplaced", "home": "ApiReport", "confidence": 0.8, "reason": "counts calls of a report"}]},
+        {"class": "Endpoint", "purpose": "An endpoint with its recorded calls",
+         "methods": [{"name": "clear", "verdict": "misplaced", "home": "ApiNamespace", "confidence": 0.6, "reason": "for the test"}]}
+    ])).unwrap();
+    assess::record(&mut d, a, 1).unwrap();
+    let agreed = metrics::compute(&d, false);
+    let f = flagged(&agreed, "RestExtractionPanel.callsOf").unwrap();
+    assert!(f.confidence > base.confidence, "agreement raises confidence");
+    assert_eq!(f.basis, "heuristic + agent");
+    assert!(agreed.issues.iter().any(|i| i.basis == "agent" && i.targets.contains(&"Endpoint.clear".to_string())));
+    // LLM-first: the agent's role beats the name/stereotype heuristics (an explicit `role` beats both)
+    assert_eq!(agreed.responsibility.classes["RestExtractionPanel"].role.as_ref().unwrap().source, "agent");
+
+    // the agent disputes it → lower confidence and a visible disagreement
+    let a: Vec<assess::Assessment> = serde_json::from_value(serde_json::json!([
+        {"class": "RestExtractionPanel", "purpose": "…", "methods": [{"name": "callsOf", "verdict": "fits", "confidence": 0.9, "reason": "only formats a count for a confirm dialog"}]}
+    ])).unwrap();
+    assess::record(&mut d, a, 2).unwrap();
+    let disputed = metrics::compute(&d, false);
+    assert!(flagged(&disputed, "RestExtractionPanel.callsOf").unwrap().confidence < base.confidence);
+    assert!(disputed.issues.iter().any(|i| i.kind == "disagreement"));
+    assert!(disputed.health > agreed.health);
+
+    // the class changes → the assessment is stale and no longer counts
+    d.class_mut("RestExtractionPanel").unwrap().methods.retain(|m| m.name != "confirm");
+    let (stale, missing) = assess::stale_and_missing(&d);
+    assert!(stale.contains(&"RestExtractionPanel".to_string()));
+    assert!(missing.contains(&"ApiNamespace".to_string()));
+    let after = metrics::compute(&d, false);
+    assert!(!after.issues.iter().any(|i| i.kind == "disagreement"));
+    // unknown roles/verdicts are rejected
+    let bad: Vec<assess::Assessment> = serde_json::from_value(serde_json::json!([{"class": "Endpoint", "methods": [{"name": "clear", "verdict": "meh", "reason": ""}]}])).unwrap();
+    assert!(assess::record(&mut d, bad, 3).is_err());
+}

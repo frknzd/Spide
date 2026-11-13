@@ -2,6 +2,7 @@
 
 pub mod adr;
 pub mod archunit;
+pub mod assess;
 pub mod derive;
 pub mod detail;
 pub mod diff;
