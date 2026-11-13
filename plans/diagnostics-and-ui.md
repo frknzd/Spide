@@ -233,7 +233,7 @@ The engine works on any `Design`: the intended design, or the imported code ("re
 - [x] A0 Add the fixture `examples/rest-extraction.json` (copy of the screenshot design)
 - [x] A1 Perf overlay and baseline numbers on `examples/rest-extraction.json`
 - [x] A2 Agent feed out of `App`; memo `Canvas`/`DiagramContent`; stable callbacks
-- [ ] A3 Physics settles; filter-free halos; pause animations while interacting; LOD
+- [x] A3 Physics settles; filter-free halos; pause animations while interacting; LOD
 - [ ] B1 ELK compound layout by package and layer; overlap-removal pass
 - [ ] B2 Granularity slider (levels 0–4) and semantic-zoom clamp; association-attribute, inherited-member and accessor folding; exports follow
 - [ ] B3 `external` tag on packages and classes, ops, auto-suggestion, compact rendering, metric discount, optional link to a C4 system

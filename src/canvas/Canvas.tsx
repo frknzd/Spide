@@ -4,7 +4,7 @@ import { perfCount } from "../state/perf";
 import type { Layer, Pos, Target } from "../state/types";
 import { NodeDefs } from "./ClassNode";
 import { boxesFor, DiagramContent, rectOf, type DiagramData } from "./DiagramContent";
-import { elkLayout } from "./layout";
+import { elkCompoundLayout, type GroupSpec } from "./layout";
 import { LivingLayout } from "./physics";
 import { nodeScale } from "./visuals";
 import { Viewport, type ViewportApi, type WorldRect } from "./Viewport";
@@ -37,7 +37,12 @@ interface Props {
   onDoubleClickTarget?: (t: Target, at: { x: number; y: number }) => void;
 }
 
-const LAYER_RANK: Record<Layer, number> = { ui: 0, infrastructure: 0, application: 1, domain: 2 };
+const LAYER_RANK: Record<Layer, number> = { ui: 0, infrastructure: 1, application: 1, domain: 2 };
+
+/** Vertical band of a package: ui on top, application and infrastructure side by side, domain below. */
+export function packageRank(pk: { layer: Layer | null } | undefined): number {
+  return pk?.layer ? LAYER_RANK[pk.layer] : 1;
+}
 
 export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
   perfCount("Canvas");
@@ -83,28 +88,23 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
     const links = p.data.relations.map((r) => ({ from: r.from, to: r.to, kind: r.kind }));
     layout.update(specs, links, p.tension);
     if (fresh.length >= 3) {
-      // a batch of new classes: give them a clean layered start
-      elkLayout(specs.map((s) => ({ id: s.id, w: s.w, h: s.h })), links).then((pos) => {
-        const known = specs.filter((s) => !fresh.includes(s));
-        if (known.length) {
-          // keep existing classes where they are: shift the elk layout next to them
-          const fx = Math.max(...known.map((s) => layout.nodes.get(s.id)!.x! + s.w / 2));
-          const minx = Math.min(...fresh.map((s) => pos.get(s.id)!.x - s.w / 2));
-          const only = new Map(fresh.map((s) => [s.id, { x: pos.get(s.id)!.x - minx + fx + 120, y: pos.get(s.id)!.y }]));
-          layout.tidy(only);
-        } else layout.tidy(pos);
-        setTimeout(() => vp.current?.fit(), 1500);
-      });
+      // a batch of new classes: lay everything out again (packages as compound nodes)
+      relayout(specs);
     }
   }, [p.data, boxes, p.tension, layout]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const tidy = () => {
-    const specs = [...layout.nodes.values()].map((n) => ({ id: n.id, w: n.w, h: n.h }));
-    elkLayout(specs, p.data.relations.map((r) => ({ from: r.from, to: r.to, kind: r.kind }))).then((pos) => {
-      layout.tidy(pos);
-      setTimeout(() => vp.current?.fit(), 1500);
-    });
+  const relayout = (specs?: { id: string; w: number; h: number; pkg: string | null }[]) => {
+    const ss = specs ?? [...layout.nodes.values()].map((n) => ({ id: n.id, w: n.w, h: n.h, pkg: n.pkg }));
+    const groups: GroupSpec[] = p.data.packages.map((x) => ({ id: x.name, rank: packageRank(x) }));
+    const links = p.data.relations.map((r) => ({ from: r.from, to: r.to, kind: r.kind }));
+    elkCompoundLayout(ss.map((s) => ({ id: s.id, w: s.w, h: s.h, group: s.pkg })), links, groups)
+      .then((pos) => {
+        layout.tidy(pos);
+        setTimeout(() => vp.current?.fit(), 1500);
+      })
+      .catch((e) => console.error("layout failed", e));
   };
+  const tidy = () => relayout();
 
   // semantic zoom: far out, draw less (positions and box sizes stay the same)
   const [zoomCap, setZoomCap] = useState(4);

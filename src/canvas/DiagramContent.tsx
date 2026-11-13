@@ -130,7 +130,7 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
       const label = pk?.layer && pk.layer !== name ? `${name}  ·  ${pk.layer}` : name;
       hullOf.set(name, { x: (x1 + x2) / 2, y: (y1 + y2) / 2, w: x2 - x1, h: y2 - y1 });
       if (overview) {
-        const fs = Math.max(28, Math.min(72, (x2 - x1) / Math.max(6, name.length) * 1.2));
+        const fs = Math.max(48, Math.min(140, (x2 - x1) / Math.max(5, name.length) * 1.3));
         pkgEls.push(
           <g key={"pkg" + name}>
             <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} rx={22} fill={color} fillOpacity={0.12} stroke={color} strokeOpacity={0.6} strokeWidth={3}

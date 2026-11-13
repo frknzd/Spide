@@ -1,7 +1,7 @@
 // Layout physics: d3-force with custom forces. It only runs after a model change, a drag
 // or a tidy, and stops completely once it has settled (no perpetual motion: idle = no work).
 
-import { forceLink, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from "d3-force";
+import { forceSimulation, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from "d3-force";
 import type { Pos } from "../state/types";
 
 export interface SimNode extends SimulationNodeDatum {
@@ -64,29 +64,6 @@ function rectCollide(margin: number) {
   return force;
 }
 
-function packageCohesion(strength: number) {
-  let nodes: SimNode[] = [];
-  const force = (alpha: number) => {
-    const c = new Map<string, { x: number; y: number; n: number }>();
-    for (const n of nodes) {
-      if (!n.pkg) continue;
-      const e = c.get(n.pkg) ?? { x: 0, y: 0, n: 0 };
-      e.x += n.x!;
-      e.y += n.y!;
-      e.n++;
-      c.set(n.pkg, e);
-    }
-    for (const n of nodes) {
-      const e = n.pkg ? c.get(n.pkg) : undefined;
-      if (!e || e.n < 2) continue;
-      n.vx! += (e.x / e.n - n.x!) * strength * alpha;
-      n.vy! += (e.y / e.n - n.y!) * strength * alpha;
-    }
-  };
-  force.initialize = (n: SimNode[]) => (nodes = n);
-  return force;
-}
-
 /** Keep package hulls from overlapping: push whole packages apart. */
 function packageSeparation(margin: number) {
   let nodes: SimNode[] = [];
@@ -126,24 +103,6 @@ function packageSeparation(margin: number) {
   return force;
 }
 
-function hierarchy(links: () => SimLink[]) {
-  const force = (alpha: number) => {
-    for (const l of links()) {
-      if (l.kind !== "inheritance" && l.kind !== "realization") continue;
-      const child = l.source as SimNode;
-      const parent = l.target as SimNode;
-      const want = (child.h + parent.h) / 2 + 70;
-      const gap = child.y! - parent.y!;
-      if (gap < want) {
-        const s = (want - gap) * 0.12 * alpha;
-        child.vy! += s;
-        parent.vy! -= s;
-      }
-    }
-  };
-  return force;
-}
-
 function tidyPull() {
   let nodes: SimNode[] = [];
   const force = () => {
@@ -175,18 +134,10 @@ export class LivingLayout {
       .alphaDecay(0.035)
       .alphaMin(0.005)
       .velocityDecay(0.42)
-      .force("link", forceLink<SimNode, SimLink>([]).id((d) => d.id).distance((l) => {
-        const a = l.source as SimNode;
-        const b = l.target as SimNode;
-        return Math.max(a.w, a.h, b.w, b.h) * 0.55 + 110;
-      }).strength(0.22))
+      // Positions come from ELK (initial layout, new batches, tidy). Physics only resolves
+      // overlaps (classes and package hulls), e.g. after a drag or a single new class.
       .force("collide", rectCollide(36))
-      .force("pkg", packageCohesion(0.06))
       .force("pkgsep", packageSeparation(80))
-      .force("layer", forceY<SimNode>((d) => (d.layer ?? 1) * LAYER_GAP).strength((d) => (d.layer === null ? 0 : 0.05)))
-      .force("cx", forceX<SimNode>(0).strength(0.012))
-      .force("cy", forceY<SimNode>(0).strength(0.012))
-      .force("hier", hierarchy(() => this.links))
       .force("tidy", tidyPull())
       .on("tick", () => this.tick())
       .on("end", () => this.onSettle());
@@ -196,6 +147,13 @@ export class LivingLayout {
     if (this.tidyUntil && performance.now() > this.tidyUntil) {
       this.tidyUntil = 0;
       for (const n of this.nodes.values()) {
+        // land exactly on the target (ELK guarantees no overlaps there)
+        if (n.tx !== undefined && n.ty !== undefined && !n.pinned) {
+          n.x = n.tx;
+          n.y = n.ty;
+          n.vx = 0;
+          n.vy = 0;
+        }
         n.tx = undefined;
         n.ty = undefined;
       }
@@ -266,7 +224,6 @@ export class LivingLayout {
     const linksChanged = newLinks.length !== oldLinks.size || newLinks.some((l) => !oldLinks.has(linkKey(l)));
     this.links = newLinks.map((l) => ({ source: l.from, target: l.to, kind: l.kind }));
     this.sim.nodes([...next.values()]);
-    (this.sim.force("link") as ReturnType<typeof forceLink<SimNode, SimLink>>).links(this.links);
     this.tension = tension;
     const kick = added || removed ? 0.6 : linksChanged ? 0.35 : changed ? 0.15 : 0;
     if (kick) this.sim.alpha(Math.max(this.sim.alpha(), kick)).restart();
