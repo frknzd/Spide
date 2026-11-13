@@ -19,6 +19,8 @@ import { FeedbackPopover, type PruneState } from "./ui/FeedbackPopover";
 import { HoverCard } from "./ui/HoverCard";
 import { InlineEdit, type InlineEditState } from "./ui/InlineEdit";
 import { PromptBar } from "./ui/PromptBar";
+import { PerfOverlay } from "./ui/PerfOverlay";
+import { perfCount } from "./state/perf";
 import { Timeline } from "./ui/Timeline";
 import { PRESETS, RulesSection } from "./ui/RulesSection";
 import { PackageView } from "./views/PackageView";
@@ -31,6 +33,7 @@ const TAB_ORDER: Tab[] = ["system", "class", "domain", "package", "usecase", "se
 const TAB_TITLE: Record<Tab, string> = { system: "System (C4)", class: "Class diagram", domain: "Domain model", package: "Package diagram", usecase: "Use case diagram", sequence: "Sequence diagram" };
 
 export default function App() {
+  perfCount("App");
   const snap = useSnapshot();
   const { entries, activity } = useAgentFeed();
   const [tab, setTab] = useState<Tab>(() => (DEV_QUERY?.get("tab") as Tab | null) ?? "class");
@@ -556,6 +559,7 @@ export default function App() {
           }}
         />
       )}
+      <PerfOverlay buildMs={snap.build_ms} />
       <Toasts toasts={toasts} onDone={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
       {snap.pi_status === "offline" && snap.pi_error && <div className="pi-error" data-ui>agent: {snap.pi_error}</div>}
     </div>

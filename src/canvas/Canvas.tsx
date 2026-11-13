@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { api } from "../state/api";
+import { perfCount } from "../state/perf";
 import type { Layer, Pos, Target } from "../state/types";
 import { NodeDefs } from "./ClassNode";
 import { boxesFor, DiagramContent, rectOf, type DiagramData } from "./DiagramContent";
@@ -39,6 +40,7 @@ interface Props {
 const LAYER_RANK: Record<Layer, number> = { ui: 0, infrastructure: 0, application: 1, domain: 2 };
 
 export const Canvas = forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
+  perfCount("Canvas");
   const vp = useRef<ViewportApi>(null);
   const [, setFrame] = useState(0);
   const savedRef = useRef(p.saved);

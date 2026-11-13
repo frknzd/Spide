@@ -6,3 +6,4 @@ target/
 /.spide/
 /.pi/
 src-tauri/gen/
+/.local/

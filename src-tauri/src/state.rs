@@ -84,6 +84,8 @@ pub struct Snapshot {
     pub pi_error: Option<String>,
     pub mcp_url: String,
     pub branch: String,
+    /// Time spent building this snapshot (metrics, previews, derived views), for the perf overlay.
+    pub build_ms: f64,
 }
 
 impl AppState {
@@ -180,6 +182,7 @@ pub fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
 }
 
 pub fn build_snapshot(s: &Shared) -> Snapshot {
+    let started = std::time::Instant::now();
     let store = &s.store;
     let mut view = store.view();
     revalidate_sequences(&mut view);
@@ -232,6 +235,11 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
         .filter_map(|p| impact_of_ops(&store.design, &p.ops).ok().map(|impact| ProposalImpact { proposal: p.id.clone(), impact }))
         .collect();
     let derived = derive::derive(&view, &metrics);
+    let build_ms = started.elapsed().as_secs_f64() * 1000.0;
+    #[cfg(debug_assertions)]
+    if build_ms > 30.0 {
+        eprintln!("spide: snapshot rev {} took {build_ms:.1} ms", store.design.rev);
+    }
     Snapshot {
         rev: store.design.rev,
         view,
@@ -248,6 +256,7 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
         pi_error: s.pi_error.clone(),
         mcp_url: mcp_url(s.mcp_port),
         branch: s.branch.clone(),
+        build_ms,
     }
 }
 

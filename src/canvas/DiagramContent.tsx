@@ -1,3 +1,4 @@
+import { perfCount } from "../state/perf";
 import type { Class, ClassMetrics, ImplicitEdge, Metrics, Package, Pos, Relation, Target } from "../state/types";
 import { ClassNode } from "./ClassNode";
 import { Edge, type EdgeStyle } from "./Edge";
@@ -79,6 +80,7 @@ interface Props extends DiagramData {
 }
 
 export function DiagramContent(p: Props) {
+  perfCount("DiagramContent");
   const cm = p.metrics?.classes;
   const rects = new Map<string, Rect>();
   for (const c of p.classes) {

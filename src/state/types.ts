@@ -285,6 +285,7 @@ export interface Snapshot {
   pi_error: string | null;
   mcp_url: string;
   branch: string;
+  build_ms?: number;
 }
 export interface BranchInfo { name: string; active: boolean; classes: number; health: number }
 export interface BranchCompare { name: string; design: Design; health: number; impact: Impact }

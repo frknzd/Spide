@@ -1,0 +1,4217 @@
+{
+ "version": 1,
+ "name": "rest-extraction",
+ "rev": 5,
+ "model_rev": 4,
+ "classes": [
+  {
+   "name": "ExtensionAdaptor",
+   "stereotype": "abstract",
+   "package": "zap",
+   "is_abstract": true,
+   "attributes": [],
+   "methods": [
+    {
+     "name": "hook",
+     "params": [
+      {
+       "name": "extensionHook",
+       "type": "ExtensionHook"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getUIName",
+     "params": [],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "canUnload",
+     "params": [],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "unload",
+     "params": [],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "hasView",
+     "params": [],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "ExtensionHook",
+   "stereotype": null,
+   "package": "zap",
+   "is_abstract": false,
+   "attributes": [],
+   "methods": [
+    {
+     "name": "addProxyListener",
+     "params": [
+      {
+       "name": "listener",
+       "type": "ProxyListener"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getHookView",
+     "params": [],
+     "returns": "ExtensionHookView",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "ExtensionHookView",
+   "stereotype": null,
+   "package": "zap",
+   "is_abstract": false,
+   "attributes": [],
+   "methods": [
+    {
+     "name": "addStatusPanel",
+     "params": [
+      {
+       "name": "panel",
+       "type": "AbstractPanel"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "ProxyListener",
+   "stereotype": "interface",
+   "package": "zap",
+   "is_abstract": false,
+   "attributes": [],
+   "methods": [
+    {
+     "name": "onHttpRequestSend",
+     "params": [
+      {
+       "name": "msg",
+       "type": "HttpMessage"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": true,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onHttpResponseReceive",
+     "params": [
+      {
+       "name": "msg",
+       "type": "HttpMessage"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": true,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getArrangeableListenerOrder",
+     "params": [],
+     "returns": "int",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": true,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "HttpMessage",
+   "stereotype": null,
+   "package": "zap",
+   "is_abstract": false,
+   "attributes": [],
+   "methods": [
+    {
+     "name": "getRequestHeader",
+     "params": [],
+     "returns": "HttpRequestHeader",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getResponseHeader",
+     "params": [],
+     "returns": "HttpResponseHeader",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getResponseBody",
+     "params": [],
+     "returns": "HttpResponseBody",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "AbstractPanel",
+   "stereotype": null,
+   "package": "zap",
+   "is_abstract": false,
+   "attributes": [],
+   "methods": [],
+   "responsibilities": [],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "AbstractTableModel",
+   "stereotype": "abstract",
+   "package": "swing",
+   "is_abstract": true,
+   "attributes": [],
+   "methods": [],
+   "responsibilities": [],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "HttpMethod",
+   "stereotype": "enum",
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "GET",
+     "type": "HttpMethod",
+     "visibility": "public",
+     "is_static": true,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "POST",
+     "type": "HttpMethod",
+     "visibility": "public",
+     "is_static": true,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "PUT",
+     "type": "HttpMethod",
+     "visibility": "public",
+     "is_static": true,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "DELETE",
+     "type": "HttpMethod",
+     "visibility": "public",
+     "is_static": true,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "PATCH",
+     "type": "HttpMethod",
+     "visibility": "public",
+     "is_static": true,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "HEAD",
+     "type": "HttpMethod",
+     "visibility": "public",
+     "is_static": true,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "OPTIONS",
+     "type": "HttpMethod",
+     "visibility": "public",
+     "is_static": true,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "OTHER",
+     "type": "HttpMethod",
+     "visibility": "public",
+     "is_static": true,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "fromString",
+     "params": [
+      {
+       "name": "name",
+       "type": "String"
+      }
+     ],
+     "returns": "HttpMethod",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": "static; unknown method becomes OTHER",
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "ApiCall",
+   "stereotype": "value",
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "method",
+     "type": "HttpMethod",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "url",
+     "type": "String",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "statusCode",
+     "type": "int",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "responseHeaders",
+     "type": "String",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "responseBody",
+     "type": "String",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "time",
+     "type": "Instant",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "ApiCall",
+     "params": [
+      {
+       "name": "method",
+       "type": "HttpMethod"
+      },
+      {
+       "name": "url",
+       "type": "String"
+      },
+      {
+       "name": "statusCode",
+       "type": "int"
+      },
+      {
+       "name": "responseHeaders",
+       "type": "String"
+      },
+      {
+       "name": "responseBody",
+       "type": "String"
+      }
+     ],
+     "returns": null,
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "method",
+      "url",
+      "statusCode",
+      "responseHeaders",
+      "responseBody",
+      "time"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getMethod",
+     "params": [],
+     "returns": "HttpMethod",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "method"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getUrl",
+     "params": [],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "url"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getStatusCode",
+     "params": [],
+     "returns": "int",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "statusCode"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getResponseHeaders",
+     "params": [],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "responseHeaders"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getResponseBody",
+     "params": [],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "responseBody"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getTime",
+     "params": [],
+     "returns": "Instant",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "time"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "Immutable input format of the domain: one HTTP call"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "RecordedCall",
+   "stereotype": "value",
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "call",
+     "type": "ApiCall",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "arguments",
+     "type": "Map<String, String>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "RecordedCall",
+     "params": [
+      {
+       "name": "call",
+       "type": "ApiCall"
+      },
+      {
+       "name": "arguments",
+       "type": "Map<String, String>"
+      }
+     ],
+     "returns": null,
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "call",
+      "arguments"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getCall",
+     "params": [],
+     "returns": "ApiCall",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "call"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getArguments",
+     "params": [],
+     "returns": "Map<String, String>",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "arguments"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "A call matched to an endpoint, with its arguments computed once"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "EndpointReport",
+   "stereotype": "value",
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "template",
+     "type": "String",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "callCounts",
+     "type": "Map<HttpMethod, Integer>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "valuesSeen",
+     "type": "Map<String, Map<String, Integer>>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "calls",
+     "type": "List<RecordedCall>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "EndpointReport",
+     "params": [
+      {
+       "name": "template",
+       "type": "String"
+      },
+      {
+       "name": "callCounts",
+       "type": "Map<HttpMethod, Integer>"
+      },
+      {
+       "name": "calls",
+       "type": "List<RecordedCall>"
+      }
+     ],
+     "returns": null,
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "template",
+      "callCounts",
+      "calls",
+      "valuesSeen"
+     ],
+     "calls": [
+      "valuesSeenIn"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getTemplate",
+     "params": [],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "template"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getCallCounts",
+     "params": [],
+     "returns": "Map<HttpMethod, Integer>",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "callCounts"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getCalls",
+     "params": [],
+     "returns": "List<RecordedCall>",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "calls"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getValuesSeen",
+     "params": [],
+     "returns": "Map<String, Map<String, Integer>>",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "valuesSeen"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "valuesSeenIn",
+     "params": [
+      {
+       "name": "calls",
+       "type": "List<RecordedCall>"
+      }
+     ],
+     "returns": "Map<String, Map<String, Integer>>",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "RecordedCall.getArguments"
+     ],
+     "description": "static",
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "Immutable snapshot of one endpoint; counts values seen per variable once (D16)"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "ApiReport",
+   "stereotype": "value",
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "baseUrl",
+     "type": "String",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "endpoints",
+     "type": "List<EndpointReport>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "ApiReport",
+     "params": [
+      {
+       "name": "baseUrl",
+       "type": "String"
+      },
+      {
+       "name": "endpoints",
+       "type": "List<EndpointReport>"
+      }
+     ],
+     "returns": null,
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "baseUrl",
+      "endpoints"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getBaseUrl",
+     "params": [],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "baseUrl"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getEndpoints",
+     "params": [],
+     "returns": "List<EndpointReport>",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "endpoints"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "Immutable output snapshot of one namespace"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "UrlPath",
+   "stereotype": "value",
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "parts",
+     "type": "List<String>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "UrlPath",
+     "params": [
+      {
+       "name": "path",
+       "type": "String"
+      }
+     ],
+     "returns": null,
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "parts"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "startsWith",
+     "params": [
+      {
+       "name": "prefix",
+       "type": "UrlPath"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "parts"
+     ],
+     "calls": [
+      "size",
+      "part"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "after",
+     "params": [
+      {
+       "name": "prefix",
+       "type": "UrlPath"
+      }
+     ],
+     "returns": "UrlPath",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "parts"
+     ],
+     "calls": [
+      "size"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "size",
+     "params": [],
+     "returns": "int",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "parts"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "part",
+     "params": [
+      {
+       "name": "index",
+       "type": "int"
+      }
+     ],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "parts"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "Pure Fabrication: the one place for path rules (split, trailing slash, decoding)"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "PathSegment",
+   "stereotype": "abstract",
+   "package": "model",
+   "is_abstract": true,
+   "attributes": [],
+   "methods": [
+    {
+     "name": "matches",
+     "params": [
+      {
+       "name": "part",
+       "type": "String"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "package",
+     "is_static": false,
+     "is_abstract": true,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "addArgument",
+     "params": [
+      {
+       "name": "part",
+       "type": "String"
+      },
+      {
+       "name": "args",
+       "type": "Map<String, String>"
+      }
+     ],
+     "returns": "void",
+     "visibility": "package",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": "default: nothing",
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "LiteralSegment",
+   "stereotype": null,
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "text",
+     "type": "String",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "LiteralSegment",
+     "params": [
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "returns": null,
+     "visibility": "package",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "text"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "matches",
+     "params": [
+      {
+       "name": "part",
+       "type": "String"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "package",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "text"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "VariableSegment",
+   "stereotype": null,
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "name",
+     "type": "String",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "VariableSegment",
+     "params": [
+      {
+       "name": "name",
+       "type": "String"
+      }
+     ],
+     "returns": null,
+     "visibility": "package",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "name"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "matches",
+     "params": [
+      {
+       "name": "part",
+       "type": "String"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "package",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": "not empty",
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "addArgument",
+     "params": [
+      {
+       "name": "part",
+       "type": "String"
+      },
+      {
+       "name": "args",
+       "type": "Map<String, String>"
+      }
+     ],
+     "returns": "void",
+     "visibility": "package",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "name"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "EndpointPattern",
+   "stereotype": "value",
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "template",
+     "type": "String",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "segments",
+     "type": "List<PathSegment>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "EndpointPattern",
+     "params": [
+      {
+       "name": "template",
+       "type": "String"
+      }
+     ],
+     "returns": null,
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "template",
+      "segments"
+     ],
+     "calls": [
+      "parse"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "matches",
+     "params": [
+      {
+       "name": "path",
+       "type": "UrlPath"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "segments"
+     ],
+     "calls": [
+      "UrlPath.size",
+      "UrlPath.part",
+      "PathSegment.matches"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "argumentsOf",
+     "params": [
+      {
+       "name": "path",
+       "type": "UrlPath"
+      }
+     ],
+     "returns": "Map<String, String>",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "segments"
+     ],
+     "calls": [
+      "matches",
+      "UrlPath.part",
+      "PathSegment.addArgument"
+     ],
+     "description": "empty map when the path does not match",
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getTemplate",
+     "params": [],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "template"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "parse",
+     "params": [
+      {
+       "name": "template",
+       "type": "String"
+      }
+     ],
+     "returns": "List<PathSegment>",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "toSegment",
+      "UrlPath.size",
+      "UrlPath.part"
+     ],
+     "description": "static; checks the template, then builds the segments",
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "toSegment",
+     "params": [
+      {
+       "name": "template",
+       "type": "String"
+      },
+      {
+       "name": "part",
+       "type": "String"
+      },
+      {
+       "name": "names",
+       "type": "Set<String>"
+      }
+     ],
+     "returns": "PathSegment",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": "static; [NAME] -> VariableSegment, else LiteralSegment; refuses duplicate names",
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "Matcher for the path after the base path; only place that parses [NAME]"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "Endpoint",
+   "stereotype": "entity",
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "pattern",
+     "type": "EndpointPattern",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "calls",
+     "type": "List<RecordedCall>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "Endpoint",
+     "params": [
+      {
+       "name": "template",
+       "type": "String"
+      }
+     ],
+     "returns": null,
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "pattern"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getTemplate",
+     "params": [],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "pattern"
+     ],
+     "calls": [
+      "EndpointPattern.getTemplate"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "record",
+     "params": [
+      {
+       "name": "call",
+       "type": "ApiCall"
+      },
+      {
+       "name": "path",
+       "type": "UrlPath"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "pattern",
+      "calls"
+     ],
+     "calls": [
+      "EndpointPattern.matches",
+      "EndpointPattern.argumentsOf"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "clear",
+     "params": [],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "calls"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "createReport",
+     "params": [],
+     "returns": "EndpointReport",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "pattern",
+      "calls"
+     ],
+     "calls": [
+      "EndpointPattern.getTemplate",
+      "countCalls"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "countCalls",
+     "params": [
+      {
+       "name": "calls",
+       "type": "List<RecordedCall>"
+      },
+      {
+       "name": "method",
+       "type": "HttpMethod"
+      }
+     ],
+     "returns": "int",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "RecordedCall.getCall",
+      "ApiCall.getMethod"
+     ],
+     "description": "static",
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "Facade over its pattern and its recorded calls"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "ApiNamespace",
+   "stereotype": "entity",
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "baseUrl",
+     "type": "String",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "scheme",
+     "type": "String",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "host",
+     "type": "String",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "port",
+     "type": "int",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "extracting",
+     "type": "boolean",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "basePath",
+     "type": "UrlPath",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "endpoints",
+     "type": "List<Endpoint>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "ApiNamespace",
+     "params": [
+      {
+       "name": "baseUrl",
+       "type": "String"
+      }
+     ],
+     "returns": null,
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "baseUrl",
+      "scheme",
+      "host",
+      "port",
+      "basePath"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getBaseUrl",
+     "params": [],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "baseUrl"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "isExtracting",
+     "params": [],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extracting"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "addEndpoint",
+     "params": [
+      {
+       "name": "template",
+       "type": "String"
+      }
+     ],
+     "returns": "Endpoint",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "endpoints",
+      "baseUrl"
+     ],
+     "calls": [
+      "Endpoint.getTemplate",
+      "withoutTrailingSlash"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "removeEndpoint",
+     "params": [
+      {
+       "name": "template",
+       "type": "String"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "endpoints"
+     ],
+     "calls": [
+      "Endpoint.getTemplate",
+      "withoutTrailingSlash"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "start",
+     "params": [],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extracting"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "stop",
+     "params": [],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extracting"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "record",
+     "params": [
+      {
+       "name": "call",
+       "type": "ApiCall"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extracting",
+      "endpoints"
+     ],
+     "calls": [
+      "ApiCall.getUrl",
+      "pathAfterBasePath",
+      "Endpoint.record"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "clear",
+     "params": [],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "endpoints"
+     ],
+     "calls": [
+      "Endpoint.clear"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "clearEndpoint",
+     "params": [
+      {
+       "name": "template",
+       "type": "String"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "endpoints"
+     ],
+     "calls": [
+      "Endpoint.getTemplate",
+      "Endpoint.clear",
+      "withoutTrailingSlash"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "createReport",
+     "params": [],
+     "returns": "ApiReport",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "baseUrl",
+      "endpoints"
+     ],
+     "calls": [
+      "Endpoint.createReport"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "sameOrigin",
+     "params": [
+      {
+       "name": "url",
+       "type": "URI"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "scheme",
+      "host",
+      "port"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "pathAfterBasePath",
+     "params": [
+      {
+       "name": "url",
+       "type": "String"
+      }
+     ],
+     "returns": "UrlPath",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "basePath"
+     ],
+     "calls": [
+      "sameOrigin",
+      "UrlPath.startsWith",
+      "UrlPath.after"
+     ],
+     "description": "null when the URL is not of this API",
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "withoutTrailingSlash",
+     "params": [
+      {
+       "name": "path",
+       "type": "String"
+      }
+     ],
+     "returns": "String",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": "static; /posts and /posts/ are the same endpoint",
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "Expert for origin and base path; owns endpoints and extracting state"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "ExtractionObserver",
+   "stereotype": "interface",
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [],
+   "methods": [
+    {
+     "name": "callRecorded",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": true,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "RestExtractor",
+   "stereotype": "controller",
+   "package": "model",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "namespaces",
+     "type": "List<ApiNamespace>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "observers",
+     "type": "List<ExtractionObserver>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "addNamespace",
+     "params": [
+      {
+       "name": "baseUrl",
+       "type": "String"
+      }
+     ],
+     "returns": "ApiNamespace",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "namespaces"
+     ],
+     "calls": [
+      "ApiNamespace.getBaseUrl"
+     ],
+     "description": "refuses a duplicate base URL",
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "addEndpoint",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      },
+      {
+       "name": "template",
+       "type": "String"
+      }
+     ],
+     "returns": "Endpoint",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "ApiNamespace.addEndpoint"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "removeNamespace",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "namespaces"
+     ],
+     "calls": [
+      "ApiNamespace.stop"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "removeEndpoint",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      },
+      {
+       "name": "template",
+       "type": "String"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "ApiNamespace.removeEndpoint"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "clear",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "ApiNamespace.clear"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "clearEndpoint",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      },
+      {
+       "name": "template",
+       "type": "String"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "ApiNamespace.clearEndpoint"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "startExtraction",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "ApiNamespace.start"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "stopExtraction",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "ApiNamespace.stop"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "record",
+     "params": [
+      {
+       "name": "call",
+       "type": "ApiCall"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "namespaces"
+     ],
+     "calls": [
+      "ApiNamespace.record",
+      "notifyObservers"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getReport",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      }
+     ],
+     "returns": "ApiReport",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "ApiNamespace.createReport"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "addObserver",
+     "params": [
+      {
+       "name": "observer",
+       "type": "ExtractionObserver"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "observers"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "notifyObservers",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      }
+     ],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "observers"
+     ],
+     "calls": [
+      "ExtractionObserver.callRecorded"
+     ],
+     "description": "a failing observer is logged, the others still run",
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "Facade controller at the domain border: only delegates to namespaces, notifies observers"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "RestTrafficListener",
+   "stereotype": null,
+   "package": "adapter",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "extractor",
+     "type": "RestExtractor",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "MAX_BODY_LENGTH",
+     "type": "int",
+     "visibility": "private",
+     "is_static": true,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "RestTrafficListener",
+     "params": [
+      {
+       "name": "extractor",
+       "type": "RestExtractor"
+      }
+     ],
+     "returns": null,
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extractor"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onHttpRequestSend",
+     "params": [
+      {
+       "name": "msg",
+       "type": "HttpMessage"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onHttpResponseReceive",
+     "params": [
+      {
+       "name": "msg",
+       "type": "HttpMessage"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extractor"
+     ],
+     "calls": [
+      "toApiCall",
+      "RestExtractor.record"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getArrangeableListenerOrder",
+     "params": [],
+     "returns": "int",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "toApiCall",
+     "params": [
+      {
+       "name": "msg",
+       "type": "HttpMessage"
+      }
+     ],
+     "returns": "ApiCall",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "HttpMessage.getRequestHeader",
+      "HttpMessage.getResponseHeader",
+      "HttpMethod.fromString",
+      "bodyOf"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "bodyOf",
+     "params": [
+      {
+       "name": "msg",
+       "type": "HttpMessage"
+      }
+     ],
+     "returns": "String",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "MAX_BODY_LENGTH"
+     ],
+     "calls": [
+      "HttpMessage.getResponseBody",
+      "HttpMessage.getResponseHeader",
+      "isBinary"
+     ],
+     "description": "static; cut above 64 KB, binary replaced by a mark",
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "isBinary",
+     "params": [
+      {
+       "name": "header",
+       "type": "HttpResponseHeader"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": "static",
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "Adapter/Indirection: turns ZAP HttpMessages into ApiCalls; never blocks traffic"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "ExtensionRestExtraction",
+   "stereotype": null,
+   "package": "adapter",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "trafficListener",
+     "type": "RestTrafficListener",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "panel",
+     "type": "RestExtractionPanel",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "extractor",
+     "type": "RestExtractor",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "NAME",
+     "type": "String",
+     "visibility": "public",
+     "is_static": true,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "hook",
+     "params": [
+      {
+       "name": "extensionHook",
+       "type": "ExtensionHook"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "trafficListener",
+      "panel",
+      "extractor"
+     ],
+     "calls": [
+      "ExtensionHook.addProxyListener",
+      "ExtensionHook.getHookView",
+      "ExtensionHookView.addStatusPanel",
+      "RestExtractor.addObserver"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getUIName",
+     "params": [],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getDescription",
+     "params": [],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "canUnload",
+     "params": [],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "ZAP entry point: wires listener, panel and extractor"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "ApiDocumentationWriter",
+   "stereotype": "service",
+   "package": "ui",
+   "is_abstract": false,
+   "attributes": [],
+   "methods": [
+    {
+     "name": "write",
+     "params": [
+      {
+       "name": "report",
+       "type": "ApiReport"
+      }
+     ],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "ApiReport.getBaseUrl",
+      "ApiReport.getEndpoints",
+      "writeEndpoint",
+      "escape"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "formatBody",
+     "params": [
+      {
+       "name": "responseHeaders",
+       "type": "String"
+      },
+      {
+       "name": "body",
+       "type": "String"
+      }
+     ],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "isJson",
+      "prettyJson"
+     ],
+     "description": "plain text, not HTML: indented when JSON",
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "writeEndpoint",
+     "params": [
+      {
+       "name": "endpoint",
+       "type": "EndpointReport"
+      }
+     ],
+     "returns": "String",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "EndpointReport.getTemplate",
+      "EndpointReport.getCallCounts",
+      "EndpointReport.getCalls",
+      "writeValues",
+      "writeCall",
+      "escape"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "writeValues",
+     "params": [
+      {
+       "name": "endpoint",
+       "type": "EndpointReport"
+      }
+     ],
+     "returns": "String",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "EndpointReport.getValuesSeen",
+      "escape"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "writeCall",
+     "params": [
+      {
+       "name": "call",
+       "type": "RecordedCall"
+      }
+     ],
+     "returns": "String",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "RecordedCall.getCall",
+      "RecordedCall.getArguments",
+      "ApiCall.getMethod",
+      "ApiCall.getStatusCode",
+      "ApiCall.getResponseHeaders",
+      "escape",
+      "block"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "escape",
+     "params": [
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "returns": "String",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "isJson",
+     "params": [
+      {
+       "name": "responseHeaders",
+       "type": "String"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "prettyJson",
+     "params": [
+      {
+       "name": "body",
+       "type": "String"
+      }
+     ],
+     "returns": "String",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": "body unchanged if it is not whole JSON",
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "block",
+     "params": [
+      {
+       "name": "label",
+       "type": "String"
+      },
+      {
+       "name": "value",
+       "type": "String"
+      }
+     ],
+     "returns": "String",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "escape",
+      "wrap"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "wrap",
+     "params": [
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "returns": "String",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": "cuts lines above 100 chars",
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "Writes escaped HTML documentation of an ApiReport; no bodies (D15)",
+    "Formats one body for the detail view"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "CallTableModel",
+   "stereotype": null,
+   "package": "ui",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "rows",
+     "type": "List<Row>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "setEndpoints",
+     "params": [
+      {
+       "name": "endpoints",
+       "type": "List<EndpointReport>"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "rows"
+     ],
+     "calls": [
+      "EndpointReport.getTemplate",
+      "EndpointReport.getCalls"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getCallAt",
+     "params": [
+      {
+       "name": "row",
+       "type": "int"
+      }
+     ],
+     "returns": "RecordedCall",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "rows"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "rowOf",
+     "params": [
+      {
+       "name": "call",
+       "type": "RecordedCall"
+      }
+     ],
+     "returns": "int",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "rows"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "matches",
+     "params": [
+      {
+       "name": "row",
+       "type": "int"
+      },
+      {
+       "name": "method",
+       "type": "HttpMethod"
+      },
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "rows"
+     ],
+     "calls": [
+      "getValueAt",
+      "RecordedCall.getCall",
+      "ApiCall.getMethod"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getRowCount",
+     "params": [],
+     "returns": "int",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "rows"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getColumnCount",
+     "params": [],
+     "returns": "int",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getColumnName",
+     "params": [
+      {
+       "name": "column",
+       "type": "int"
+      }
+     ],
+     "returns": "String",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getColumnClass",
+     "params": [
+      {
+       "name": "column",
+       "type": "int"
+      }
+     ],
+     "returns": "Class<?>",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "getValueAt",
+     "params": [
+      {
+       "name": "row",
+       "type": "int"
+      },
+      {
+       "name": "column",
+       "type": "int"
+      }
+     ],
+     "returns": "Object",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "rows"
+     ],
+     "calls": [
+      "RecordedCall.getCall",
+      "RecordedCall.getArguments",
+      "ApiCall.getTime",
+      "ApiCall.getMethod",
+      "ApiCall.getStatusCode"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "Rows of the Calls table, merged by time; filter on method and text"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "name": "RestExtractionPanel",
+   "stereotype": null,
+   "package": "ui",
+   "is_abstract": false,
+   "attributes": [
+    {
+     "name": "showFullBody",
+     "type": "boolean",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "extractor",
+     "type": "RestExtractor",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "writer",
+     "type": "ApiDocumentationWriter",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "callModel",
+     "type": "CallTableModel",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "reportOutOfDate",
+     "type": "AtomicBoolean",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "redrawTimer",
+     "type": "Timer",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "reports",
+     "type": "Map<ApiNamespace, ApiReport>",
+     "visibility": "private",
+     "is_static": false,
+     "multiplicity": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "methods": [
+    {
+     "name": "RestExtractionPanel",
+     "params": [
+      {
+       "name": "extractor",
+       "type": "RestExtractor"
+      }
+     ],
+     "returns": null,
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extractor",
+      "writer",
+      "callModel"
+     ],
+     "calls": [],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "callRecorded",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      }
+     ],
+     "returns": "void",
+     "visibility": "public",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "reportOutOfDate"
+     ],
+     "calls": [],
+     "description": "proxy thread: only marks the report out of date",
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onAddNamespace",
+     "params": [],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extractor",
+      "reports"
+     ],
+     "calls": [
+      "RestExtractor.addNamespace",
+      "RestExtractor.getReport"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onAddEndpoint",
+     "params": [],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extractor"
+     ],
+     "calls": [
+      "RestExtractor.addEndpoint",
+      "Endpoint.getTemplate",
+      "showReport"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onStartStop",
+     "params": [],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extractor"
+     ],
+     "calls": [
+      "ApiNamespace.isExtracting",
+      "RestExtractor.startExtraction",
+      "RestExtractor.stopExtraction",
+      "refreshTree"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onRemove",
+     "params": [],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extractor",
+      "reports"
+     ],
+     "calls": [
+      "callsOf",
+      "confirm",
+      "RestExtractor.removeNamespace",
+      "RestExtractor.removeEndpoint",
+      "refreshTree",
+      "showReport"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onClear",
+     "params": [],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extractor"
+     ],
+     "calls": [
+      "callsOf",
+      "confirm",
+      "RestExtractor.clear",
+      "RestExtractor.clearEndpoint",
+      "refreshTree",
+      "showReport"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onSelectNamespace",
+     "params": [],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "showReport"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onSelectCall",
+     "params": [],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "showFullBody",
+      "writer",
+      "callModel"
+     ],
+     "calls": [
+      "CallTableModel.getCallAt",
+      "RecordedCall.getCall",
+      "ApiCall.getResponseHeaders",
+      "ApiCall.getResponseBody",
+      "ApiDocumentationWriter.formatBody"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onToggleFullBody",
+     "params": [],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "showFullBody"
+     ],
+     "calls": [
+      "onSelectCall"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onFilter",
+     "params": [],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "callModel"
+     ],
+     "calls": [
+      "CallTableModel.matches"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "showReport",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      }
+     ],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extractor",
+      "writer",
+      "reports"
+     ],
+     "calls": [
+      "RestExtractor.getReport",
+      "ApiReport.getEndpoints",
+      "EndpointReport.getTemplate",
+      "showCalls",
+      "onSelectCall",
+      "ApiDocumentationWriter.write"
+     ],
+     "description": "filters to the selected endpoint; writes HTML only when the Documentation tab is shown",
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "showCalls",
+     "params": [
+      {
+       "name": "report",
+       "type": "ApiReport"
+      }
+     ],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "callModel"
+     ],
+     "calls": [
+      "ApiReport.getEndpoints",
+      "CallTableModel.setEndpoints",
+      "CallTableModel.rowOf"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "redrawIfOutOfDate",
+     "params": [],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "reportOutOfDate",
+      "redrawTimer"
+     ],
+     "calls": [
+      "refreshTree",
+      "showReport"
+     ],
+     "description": "Swing timer every 500 ms",
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "refreshTree",
+     "params": [],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extractor",
+      "reports"
+     ],
+     "calls": [
+      "RestExtractor.getReport"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "onSelectTab",
+     "params": [],
+     "returns": "void",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [
+      "onSelectNamespace"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "confirm",
+     "params": [
+      {
+       "name": "message",
+       "type": "String"
+      }
+     ],
+     "returns": "boolean",
+     "visibility": "package",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [],
+     "calls": [],
+     "description": "asks before recorded calls are lost",
+     "status": "accepted",
+     "proposal": null
+    },
+    {
+     "name": "callsOf",
+     "params": [
+      {
+       "name": "ns",
+       "type": "ApiNamespace"
+      },
+      {
+       "name": "template",
+       "type": "String"
+      }
+     ],
+     "returns": "int",
+     "visibility": "private",
+     "is_static": false,
+     "is_abstract": false,
+     "uses": [
+      "extractor"
+     ],
+     "calls": [
+      "RestExtractor.getReport",
+      "ApiReport.getEndpoints",
+      "EndpointReport.getTemplate",
+      "EndpointReport.getCalls"
+     ],
+     "description": null,
+     "status": "accepted",
+     "proposal": null
+    }
+   ],
+   "responsibilities": [
+    "Status panel: user actions go to the controller; shows report values only"
+   ],
+   "rationale": "Import of US10 class diagram v3 (doss-group-09/diagrams/US10 class diagram v3.puml), transcribed faithfully. Association role names are also added as private attributes so the cohesion metric works.",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  }
+ ],
+ "relations": [
+  {
+   "id": "ExtensionRestExtraction->ExtensionAdaptor:inheritance",
+   "from": "ExtensionRestExtraction",
+   "to": "ExtensionAdaptor",
+   "kind": "inheritance",
+   "label": null,
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "ExtensionRestExtraction->ExtensionHook:dependency",
+   "from": "ExtensionRestExtraction",
+   "to": "ExtensionHook",
+   "kind": "dependency",
+   "label": "use",
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "ExtensionRestExtraction->ExtensionHookView:dependency",
+   "from": "ExtensionRestExtraction",
+   "to": "ExtensionHookView",
+   "kind": "dependency",
+   "label": "use",
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RestTrafficListener->ProxyListener:realization",
+   "from": "RestTrafficListener",
+   "to": "ProxyListener",
+   "kind": "realization",
+   "label": null,
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RestTrafficListener->HttpMessage:dependency",
+   "from": "RestTrafficListener",
+   "to": "HttpMessage",
+   "kind": "dependency",
+   "label": "use",
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RestExtractionPanel->AbstractPanel:inheritance",
+   "from": "RestExtractionPanel",
+   "to": "AbstractPanel",
+   "kind": "inheritance",
+   "label": null,
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "ExtensionRestExtraction->RestTrafficListener:association",
+   "from": "ExtensionRestExtraction",
+   "to": "RestTrafficListener",
+   "kind": "association",
+   "label": "trafficListener",
+   "from_mult": null,
+   "to_mult": "1",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "ExtensionRestExtraction->RestExtractionPanel:association",
+   "from": "ExtensionRestExtraction",
+   "to": "RestExtractionPanel",
+   "kind": "association",
+   "label": "panel",
+   "from_mult": null,
+   "to_mult": "0..1",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "ExtensionRestExtraction->RestExtractor:association",
+   "from": "ExtensionRestExtraction",
+   "to": "RestExtractor",
+   "kind": "association",
+   "label": "extractor",
+   "from_mult": null,
+   "to_mult": "1",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RestTrafficListener->RestExtractor:association",
+   "from": "RestTrafficListener",
+   "to": "RestExtractor",
+   "kind": "association",
+   "label": "extractor",
+   "from_mult": null,
+   "to_mult": "1",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RestTrafficListener->ApiCall:dependency",
+   "from": "RestTrafficListener",
+   "to": "ApiCall",
+   "kind": "dependency",
+   "label": "create",
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RestExtractionPanel->RestExtractor:association",
+   "from": "RestExtractionPanel",
+   "to": "RestExtractor",
+   "kind": "association",
+   "label": "extractor",
+   "from_mult": null,
+   "to_mult": "1",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RestExtractionPanel->ApiDocumentationWriter:association",
+   "from": "RestExtractionPanel",
+   "to": "ApiDocumentationWriter",
+   "kind": "association",
+   "label": "writer",
+   "from_mult": null,
+   "to_mult": "1",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RestExtractionPanel->CallTableModel:association",
+   "from": "RestExtractionPanel",
+   "to": "CallTableModel",
+   "kind": "association",
+   "label": "callModel",
+   "from_mult": null,
+   "to_mult": "1",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "CallTableModel->AbstractTableModel:inheritance",
+   "from": "CallTableModel",
+   "to": "AbstractTableModel",
+   "kind": "inheritance",
+   "label": null,
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "CallTableModel->EndpointReport:dependency",
+   "from": "CallTableModel",
+   "to": "EndpointReport",
+   "kind": "dependency",
+   "label": "use",
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "CallTableModel->RecordedCall:dependency",
+   "from": "CallTableModel",
+   "to": "RecordedCall",
+   "kind": "dependency",
+   "label": "use",
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RestExtractionPanel->ExtractionObserver:realization",
+   "from": "RestExtractionPanel",
+   "to": "ExtractionObserver",
+   "kind": "realization",
+   "label": null,
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "ApiDocumentationWriter->ApiReport:dependency",
+   "from": "ApiDocumentationWriter",
+   "to": "ApiReport",
+   "kind": "dependency",
+   "label": "use",
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RestExtractor->ExtractionObserver:association",
+   "from": "RestExtractor",
+   "to": "ExtractionObserver",
+   "kind": "association",
+   "label": "observers",
+   "from_mult": null,
+   "to_mult": "0..*",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RestExtractor->ApiNamespace:composition",
+   "from": "RestExtractor",
+   "to": "ApiNamespace",
+   "kind": "composition",
+   "label": "namespaces",
+   "from_mult": "1",
+   "to_mult": "0..*",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "ApiNamespace->Endpoint:composition",
+   "from": "ApiNamespace",
+   "to": "Endpoint",
+   "kind": "composition",
+   "label": "endpoints {ordered}",
+   "from_mult": "1",
+   "to_mult": "0..*",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "ApiNamespace->UrlPath:association",
+   "from": "ApiNamespace",
+   "to": "UrlPath",
+   "kind": "association",
+   "label": "basePath",
+   "from_mult": null,
+   "to_mult": "1",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "ApiNamespace->ApiReport:dependency",
+   "from": "ApiNamespace",
+   "to": "ApiReport",
+   "kind": "dependency",
+   "label": "create",
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "Endpoint->EndpointPattern:composition",
+   "from": "Endpoint",
+   "to": "EndpointPattern",
+   "kind": "composition",
+   "label": "pattern",
+   "from_mult": "1",
+   "to_mult": "1",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "Endpoint->RecordedCall:composition",
+   "from": "Endpoint",
+   "to": "RecordedCall",
+   "kind": "composition",
+   "label": "calls",
+   "from_mult": "1",
+   "to_mult": "0..*",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "Endpoint->EndpointReport:dependency",
+   "from": "Endpoint",
+   "to": "EndpointReport",
+   "kind": "dependency",
+   "label": "create",
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "EndpointPattern->PathSegment:composition",
+   "from": "EndpointPattern",
+   "to": "PathSegment",
+   "kind": "composition",
+   "label": "segments {ordered}",
+   "from_mult": "1",
+   "to_mult": "1..*",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "EndpointPattern->UrlPath:dependency",
+   "from": "EndpointPattern",
+   "to": "UrlPath",
+   "kind": "dependency",
+   "label": "use",
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "LiteralSegment->PathSegment:inheritance",
+   "from": "LiteralSegment",
+   "to": "PathSegment",
+   "kind": "inheritance",
+   "label": null,
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "VariableSegment->PathSegment:inheritance",
+   "from": "VariableSegment",
+   "to": "PathSegment",
+   "kind": "inheritance",
+   "label": null,
+   "from_mult": null,
+   "to_mult": null,
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "ApiReport->EndpointReport:composition",
+   "from": "ApiReport",
+   "to": "EndpointReport",
+   "kind": "composition",
+   "label": "endpoints {ordered}",
+   "from_mult": "1",
+   "to_mult": "0..*",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "EndpointReport->RecordedCall:association",
+   "from": "EndpointReport",
+   "to": "RecordedCall",
+   "kind": "association",
+   "label": "calls",
+   "from_mult": null,
+   "to_mult": "0..*",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RecordedCall->ApiCall:association",
+   "from": "RecordedCall",
+   "to": "ApiCall",
+   "kind": "association",
+   "label": "call",
+   "from_mult": null,
+   "to_mult": "1",
+   "directed": true,
+   "rationale": null,
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  },
+  {
+   "id": "RestExtractionPanel->ApiReport:association",
+   "from": "RestExtractionPanel",
+   "to": "ApiReport",
+   "kind": "association",
+   "label": "reports (last per namespace)",
+   "from_mult": null,
+   "to_mult": "0..*",
+   "directed": true,
+   "rationale": "panel caches the last report of every namespace for the tree labels; it also builds a filtered ApiReport for a selected endpoint",
+   "status": "accepted",
+   "proposal": null,
+   "feedback": null
+  }
+ ],
+ "packages": [
+  {
+   "name": "zap",
+   "layer": null,
+   "description": null,
+   "status": "accepted",
+   "proposal": null
+  },
+  {
+   "name": "swing",
+   "layer": null,
+   "description": null,
+   "status": "accepted",
+   "proposal": null
+  },
+  {
+   "name": "adapter",
+   "layer": "infrastructure",
+   "description": null,
+   "status": "accepted",
+   "proposal": null
+  },
+  {
+   "name": "ui",
+   "layer": "ui",
+   "description": null,
+   "status": "accepted",
+   "proposal": null
+  },
+  {
+   "name": "model",
+   "layer": "domain",
+   "description": null,
+   "status": "accepted",
+   "proposal": null
+  }
+ ],
+ "proposals": [],
+ "decisions": [
+  {
+   "id": "D3",
+   "question": "Who registers the panel as an ExtractionObserver of the RestExtractor?",
+   "context": "In v3, ExtensionRestExtraction.hook() wires the observer. On main, the RestExtractionPanel constructor calls extractor.addObserver(this) itself. One of the two (diagram or code) has to give way.",
+   "options": [
+    {
+     "id": "A",
+     "label": "Panel registers itself (as on main)",
+     "summary": "The RestExtractionPanel constructor calls extractor.addObserver(this). hook() only creates the parts and hooks them into ZAP.",
+     "ops": [
+      {
+       "op": "update_method",
+       "class": "ExtensionRestExtraction",
+       "name": "hook",
+       "method": {
+        "name": "hook",
+        "params": [
+         {
+          "name": "extensionHook",
+          "type": "ExtensionHook"
+         }
+        ],
+        "returns": "void",
+        "visibility": "public",
+        "is_static": false,
+        "is_abstract": false,
+        "uses": [
+         "trafficListener",
+         "panel",
+         "extractor"
+        ],
+        "calls": [
+         "ExtensionAdaptor.hasView",
+         "ExtensionHook.addProxyListener",
+         "ExtensionHook.getHookView",
+         "ExtensionHookView.addStatusPanel"
+        ],
+        "description": "panel only created when ZAP has a GUI",
+        "status": "accepted",
+        "proposal": null
+       }
+      },
+      {
+       "op": "update_method",
+       "class": "RestExtractionPanel",
+       "name": "RestExtractionPanel",
+       "method": {
+        "name": "RestExtractionPanel",
+        "params": [
+         {
+          "name": "extractor",
+          "type": "RestExtractor"
+         }
+        ],
+        "returns": null,
+        "visibility": "public",
+        "is_static": false,
+        "is_abstract": false,
+        "uses": [
+         "extractor",
+         "writer",
+         "callModel",
+         "redrawTimer"
+        ],
+        "calls": [
+         "RestExtractor.addObserver",
+         "onSelectNamespace"
+        ],
+        "description": null,
+        "status": "accepted",
+        "proposal": null
+       }
+      }
+     ],
+     "pros": [
+      "Matches the code: no refactor needed",
+      "A panel is always subscribed once it exists, so it can't be forgotten",
+      "hook() stays a pure ZAP-wiring method"
+     ],
+     "cons": [
+      "Leaks 'this' from a constructor to an object that calls it on proxy threads",
+      "The panel decides its own subscription, which hides the dependency direction from the composition root"
+     ]
+    },
+    {
+     "id": "B",
+     "label": "Extension wires it in hook() (as v3)",
+     "summary": "hook() creates the panel, then calls extractor.addObserver(panel). The panel constructor does not subscribe itself.",
+     "ops": [
+      {
+       "op": "update_method",
+       "class": "ExtensionRestExtraction",
+       "name": "hook",
+       "method": {
+        "name": "hook",
+        "params": [
+         {
+          "name": "extensionHook",
+          "type": "ExtensionHook"
+         }
+        ],
+        "returns": "void",
+        "visibility": "public",
+        "is_static": false,
+        "is_abstract": false,
+        "uses": [
+         "trafficListener",
+         "panel",
+         "extractor"
+        ],
+        "calls": [
+         "ExtensionAdaptor.hasView",
+         "ExtensionHook.addProxyListener",
+         "ExtensionHook.getHookView",
+         "ExtensionHookView.addStatusPanel",
+         "RestExtractor.addObserver"
+        ],
+        "description": "panel only created and subscribed when ZAP has a GUI",
+        "status": "accepted",
+        "proposal": null
+       }
+      },
+      {
+       "op": "update_method",
+       "class": "RestExtractionPanel",
+       "name": "RestExtractionPanel",
+       "method": {
+        "name": "RestExtractionPanel",
+        "params": [
+         {
+          "name": "extractor",
+          "type": "RestExtractor"
+         }
+        ],
+        "returns": null,
+        "visibility": "public",
+        "is_static": false,
+        "is_abstract": false,
+        "uses": [
+         "extractor",
+         "writer",
+         "callModel",
+         "redrawTimer"
+        ],
+        "calls": [
+         "onSelectNamespace"
+        ],
+        "description": null,
+        "status": "accepted",
+        "proposal": null
+       }
+      }
+     ],
+     "pros": [
+      "All wiring lives in one composition root",
+      "No 'this' escaping from a constructor",
+      "The panel can be built in tests without subscribing"
+     ],
+     "cons": [
+      "The code on main must change",
+      "A second place that builds a panel could forget to subscribe it"
+     ]
+    }
+   ],
+   "state": "open",
+   "chosen": null,
+   "custom": null,
+   "attempts": [],
+   "applied_ops": []
+  }
+ ],
+ "use_cases": {
+  "system": null,
+  "actors": [],
+  "use_cases": [],
+  "generated_rev": null
+ },
+ "sequences": [],
+ "feedback": [],
+ "log": [],
+ "layout": {},
+ "settings": {
+  "examiner": "lenient",
+  "show_pruned": false
+ },
+ "counter": 3
+}
