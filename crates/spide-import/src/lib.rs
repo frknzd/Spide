@@ -397,6 +397,9 @@ pub fn import_java(dir: &Path, code_root: Option<&str>) -> Result<ImportResult, 
             responsibilities: vec![],
             rationale: None,
             aggregate_root: false,
+            // a type outside the code root is someone else's code
+            external: !root.is_empty() && t.java_package != root && !t.java_package.starts_with(&format!("{root}.")),
+            role: None,
         });
         // structure: inheritance, realization, associations through fields
         let mut targets: BTreeSet<(String, RelationKind)> = BTreeSet::new();

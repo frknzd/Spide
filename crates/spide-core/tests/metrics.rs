@@ -183,3 +183,30 @@ mod rules_in_metrics {
         assert!(mb[0].message.contains("Order->Invoice"));
     }
 }
+
+#[test]
+fn external_packages_are_suggested_once_and_discounted() {
+    let d = design(
+        r#"[{"op":"add_package","name":"ui","layer":"ui"},{"op":"add_package","name":"lib"},
+            {"op":"add_class","name":"Panel","package":"ui"},
+            {"op":"add_class","name":"A","package":"lib"},{"op":"add_class","name":"B","package":"lib"},
+            {"op":"add_class","name":"C","package":"lib"},{"op":"add_class","name":"D","package":"lib"},
+            {"op":"add_class","name":"E","package":"lib"},{"op":"add_class","name":"F","package":"lib"},
+            {"op":"add_relation","from":"Panel","to":"A","kind":"inheritance"},
+            {"op":"add_relation","from":"Panel","to":"B","kind":"dependency"},{"op":"add_relation","from":"Panel","to":"C","kind":"dependency"},
+            {"op":"add_relation","from":"Panel","to":"D","kind":"dependency"},{"op":"add_relation","from":"Panel","to":"E","kind":"dependency"},
+            {"op":"add_relation","from":"Panel","to":"F","kind":"dependency"}]"#,
+    );
+    let before = compute(&d, false);
+    assert_eq!(before.classes["Panel"].fan_out, 6);
+    let mut s = Store::new(d);
+    assert_eq!(s.external_candidates(), vec!["lib".to_string()]);
+    let id = s.suggest_externals().expect("proposal");
+    assert!(s.suggest_externals().is_none(), "suggested only once");
+    s.accept_proposal(&id).unwrap();
+    assert!(s.design.is_external("A"));
+    let after = compute(&s.design, false);
+    assert_eq!(after.classes["Panel"].fan_out, 0, "coupling to a stable library is discounted");
+    assert!(after.health >= before.health);
+    assert!(!after.issues.iter().any(|i| i.targets.contains(&"A".to_string())), "external classes aren't judged");
+}

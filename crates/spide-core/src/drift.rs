@@ -146,6 +146,8 @@ pub fn adopt_ops(intended: &Design, reality: &Design) -> Vec<Op> {
             responsibilities: vec![],
             rationale: Some("found in the code".into()),
             aggregate_root: false,
+            external: c.external,
+            role: None,
         });
     }
     for md in &dr.members {

@@ -58,12 +58,20 @@ function inheritedAttrs(classes: Class[], relations: Relation[]): Map<string, Se
   return out;
 }
 
-export function boxesFor(classes: Class[], showMethods = true, level = 4, relations: Relation[] = [], purposes?: Record<string, string>): Map<string, ClassBox> {
+/** Names of classes that are external themselves or live in an external package. */
+export function externalClasses(classes: Class[], packages: Package[]): Set<string> {
+  const ext = new Set(packages.filter((p) => p.external).map((p) => p.name));
+  return new Set(classes.filter((c) => c.external || (c.package && ext.has(c.package))).map((c) => c.name));
+}
+
+export function boxesFor(classes: Class[], showMethods = true, level = 4, relations: Relation[] = [], purposes?: Record<string, string>, external?: Set<string>): Map<string, ClassBox> {
   const m = new Map<string, ClassBox>();
   const assoc = level === 3 ? associationRoles(classes, relations).attrs : new Map<string, Set<string>>();
   const inh = level === 3 ? inheritedAttrs(classes, relations) : new Map<string, Set<string>>();
   for (const c of classes) {
-    m.set(c.name, classBox(c, { methods: showMethods, level, ctx: { inherited: inh.get(c.name), associations: assoc.get(c.name) }, purpose: purposes?.[c.name] }));
+    // external classes: a compact header (they aren't designed here), unless everything is shown
+    const lvl = external?.has(c.name) && level < 4 ? 1 : level;
+    m.set(c.name, classBox(c, { methods: showMethods, level: lvl, ctx: { inherited: inh.get(c.name), associations: assoc.get(c.name) }, purpose: purposes?.[c.name] }));
   }
   return m;
 }
@@ -177,12 +185,12 @@ export const DiagramContent = memo(function DiagramContent(p: Props) {
     }
     for (const [name, rs] of byPkg) {
       const pk = p.packages.find((x) => x.name === name);
-      const color = pk?.layer ? LAYER_COLOR[pk.layer] : "#8a93a6";
+      const color = pk?.layer ? LAYER_COLOR[pk.layer] : pk?.external ? "#6b7280" : "#8a93a6";
       const x1 = Math.min(...rs.map((r) => r.x - r.w / 2)) - 28;
       const y1 = Math.min(...rs.map((r) => r.y - r.h / 2)) - 40;
       const x2 = Math.max(...rs.map((r) => r.x + r.w / 2)) + 28;
       const y2 = Math.max(...rs.map((r) => r.y + r.h / 2)) + 34;
-      const label = pk?.layer && pk.layer !== name ? `${name}  ·  ${pk.layer}` : name;
+      const label = [name, pk?.layer && pk.layer !== name ? pk.layer : null, pk?.external ? "«external»" : null, pk?.system ?? null].filter(Boolean).join("  ·  ");
       hullOf.set(name, { x: (x1 + x2) / 2, y: (y1 + y2) / 2, w: x2 - x1, h: y2 - y1 });
       if (overview) {
         const fs = Math.max(48, Math.min(140, (x2 - x1) / Math.max(5, name.length) * 1.3));

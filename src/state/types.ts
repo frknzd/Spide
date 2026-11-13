@@ -40,6 +40,10 @@ export interface Class {
   responsibilities: string[];
   rationale: string | null;
   aggregate_root: boolean;
+  /** belongs to an external library/system */
+  external?: boolean;
+  /** intended purpose (agent/user) */
+  role?: string | null;
   status: Status;
   proposal: string | null;
   feedback: string | null;
@@ -61,7 +65,10 @@ export interface Relation {
   feedback: string | null;
   origin: string | null;
 }
-export interface Package { name: string; layer: Layer | null; description: string | null; container: string | null; status: Status; proposal: string | null }
+export interface Package {
+  name: string; layer: Layer | null; description: string | null; container: string | null; status: Status; proposal: string | null;
+  external?: boolean; system?: string | null;
+}
 export type Op = { op: string; [k: string]: unknown };
 export interface Proposal { id: string; ops: Op[]; rationale: string | null; source: string }
 export interface Tradeoff { force: string; effect: string; note: string | null }

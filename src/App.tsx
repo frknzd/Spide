@@ -227,6 +227,15 @@ export default function App() {
         if (Number.isNaN(lvl)) return toast("error", `usage: /detail 0–4 (${DETAIL_LABELS.map((l, i) => `${i} ${l}`).join(" · ")})`);
         return run(api.setDetail(v, lvl));
       }
+      case "/external": {
+        if (!view || !arg) return toast("error", "usage: /external <package|Class> — toggles the external tag");
+        const pk = view.packages.find((p) => p.name.toLowerCase() === arg.toLowerCase());
+        if (pk) return run(api.userOps([{ op: "update_package", name: pk.name, external: !pk.external }]).then(() => toast("info", `${pk.name}: ${pk.external ? "ours again" : "external"}`)));
+        const name = findClass(view, arg);
+        const c = name ? view.classes.find((x) => x.name === name) : null;
+        if (!c) return toast("error", `no package or class matches “${arg}”`);
+        return run(api.userOps([{ op: "update_class", name: c.name, external: !c.external }]).then(() => toast("info", `${c.name}: ${c.external ? "ours again" : "external"}`)));
+      }
       case "/implicit":
         setShowImplicit((x) => !x);
         return toast("info", showImplicit ? "implicit dependencies: only for the focused class" : "implicit dependencies: all shown");

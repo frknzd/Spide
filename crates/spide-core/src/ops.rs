@@ -25,6 +25,10 @@ pub enum Op {
         rationale: Option<String>,
         #[serde(default)]
         aggregate_root: bool,
+        #[serde(default)]
+        external: bool,
+        #[serde(default)]
+        role: Option<String>,
     },
     UpdateClass {
         name: String,
@@ -40,6 +44,11 @@ pub enum Op {
         rationale: Option<String>,
         #[serde(default)]
         aggregate_root: Option<bool>,
+        #[serde(default)]
+        external: Option<bool>,
+        /// "" clears it
+        #[serde(default)]
+        role: Option<String>,
     },
     RenameClass { from: String, to: String },
     RemoveClass { name: String },
@@ -93,6 +102,20 @@ pub enum Op {
         layer: Option<Layer>,
         #[serde(default)]
         description: Option<String>,
+        #[serde(default)]
+        external: bool,
+        #[serde(default)]
+        system: Option<String>,
+    },
+    UpdatePackage {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        external: Option<bool>,
+        /// C4 external system ("" clears it)
+        #[serde(default)]
+        system: Option<String>,
     },
     SetLayer { package: String, layer: Option<Layer> },
     RemovePackage { name: String },
@@ -236,6 +259,11 @@ impl Op {
             Op::UpdateRelation { from, to, kind, .. } => format!("update {from} —{}→ {to}", kind.as_str()),
             Op::RemoveRelation { from, to, .. } => format!("remove {from} → {to}"),
             Op::AddPackage { name, .. } => format!("add package {name}"),
+            Op::UpdatePackage { name, external, .. } => match external {
+                Some(true) => format!("mark {name} external"),
+                Some(false) => format!("mark {name} as ours"),
+                None => format!("update package {name}"),
+            },
             Op::SetLayer { package, layer } => format!("layer of {package} = {layer:?}"),
             Op::RemovePackage { name } => format!("remove package {name}"),
             Op::MoveToPackage { class, package } => {
@@ -272,7 +300,7 @@ impl Op {
             Op::AddRelation { from, to, .. } | Op::UpdateRelation { from, to, .. } | Op::RemoveRelation { from, to, .. } => {
                 vec![from.clone(), to.clone()]
             }
-            Op::AddPackage { .. } | Op::SetLayer { .. } | Op::RemovePackage { .. } => vec![],
+            Op::AddPackage { .. } | Op::UpdatePackage { .. } | Op::SetLayer { .. } | Op::RemovePackage { .. } => vec![],
             Op::AddForce { .. } | Op::UpdateForce { .. } | Op::RemoveForce { .. } => vec![],
             Op::AddChangeScenario { .. } | Op::RemoveChangeScenario { .. } => vec![],
             Op::AddSystem { .. }
@@ -291,7 +319,7 @@ impl Op {
         let prop = mode.proposal();
         let origin = mode.origin();
         match self {
-            Op::AddClass { name, stereotype, package, is_abstract, attributes, methods, responsibilities, rationale, aggregate_root } => {
+            Op::AddClass { name, stereotype, package, is_abstract, attributes, methods, responsibilities, rationale, aggregate_root, external, role } => {
                 if !valid_ident(name) {
                     return err(format!("invalid class name {name:?}"));
                 }
@@ -316,13 +344,15 @@ impl Op {
                     responsibilities: responsibilities.clone(),
                     rationale: rationale.clone(),
                     aggregate_root: *aggregate_root,
+                    external: *external,
+                    role: role.clone().filter(|r| !r.is_empty()),
                     status: st,
                     proposal: prop,
                     feedback: None,
                     origin,
                 });
             }
-            Op::UpdateClass { name, stereotype, package, is_abstract, responsibilities, rationale, aggregate_root } => {
+            Op::UpdateClass { name, stereotype, package, is_abstract, responsibilities, rationale, aggregate_root, external, role } => {
                 if let Some(p) = package {
                     if !present(d, name) {
                         return err(format!("unknown class {name}"));
@@ -347,6 +377,12 @@ impl Op {
                 }
                 if let Some(a) = aggregate_root {
                     c.aggregate_root = *a;
+                }
+                if let Some(x) = external {
+                    c.external = *x;
+                }
+                if let Some(r) = role {
+                    c.role = if r.is_empty() { None } else { Some(r.clone()) };
                 }
                 mark_changed(c, mode);
             }
@@ -531,7 +567,7 @@ impl Op {
                     d.relations.retain(|r| !matches(r));
                 }
             }
-            Op::AddPackage { name, layer, description } => {
+            Op::AddPackage { name, layer, description, external, system } => {
                 if !valid_ident(name) {
                     return err("package needs a name");
                 }
@@ -546,10 +582,31 @@ impl Op {
                     layer: *layer,
                     description: description.clone(),
                     container: None,
+                    external: *external,
+                    system: system.clone().filter(|s| !s.is_empty()),
                     status: st,
                     proposal: prop,
                     origin,
                 });
+            }
+            Op::UpdatePackage { name, description, external, system } => {
+                let p = d
+                    .packages
+                    .iter_mut()
+                    .find(|p| p.name == *name && p.status != Status::Pruned)
+                    .ok_or_else(|| OpError(format!("unknown package {name}")))?;
+                if let Some(x) = description {
+                    p.description = Some(x.clone());
+                }
+                if let Some(x) = external {
+                    p.external = *x;
+                }
+                if let Some(x) = system {
+                    p.system = if x.is_empty() { None } else { Some(x.clone()) };
+                }
+                if mode.is_ghost() {
+                    p.proposal = prop;
+                }
             }
             Op::SetLayer { package, layer } => {
                 let p = d
@@ -867,6 +924,7 @@ fn ensure_package(d: &mut Design, name: &str, mode: Mode) {
         status: mode.status(),
         proposal: mode.proposal(),
         origin: mode.origin(),
+        ..Default::default()
     });
 }
 

@@ -123,6 +123,7 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
         {removing && <Chip x={w - 4} y={-23} text="− proposed removal" color={C.removing} anchor="end" />}
         {st === "overruled" && <Chip x={w - 4} y={-23} text="⚠ overruled" color={C.warn} anchor="end" />}
         {cls.aggregate_root && st !== "pruned" && <Chip x={4} y={-23} text="◆ aggregate" color={C.dim} />}
+        {cls.external && st !== "pruned" && <Chip x={4} y={-23} text="«external»" color={C.faint} />}
         {pruned && (
           <>
             <line x1={-6} y1={h / 2} x2={w + 6} y2={h / 2} stroke={C.cycle} strokeWidth={2} />

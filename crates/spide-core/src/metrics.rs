@@ -334,16 +334,24 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
     }
 
     let many = classes.len() >= 3;
+    // external (library/system) classes: coupling to them is discounted, and they aren't judged
+    let external: BTreeSet<&str> = classes.iter().filter(|c| d.is_external(&c.name)).map(|c| c.name.as_str()).collect();
     for c in &classes {
         let n = c.name.as_str();
-        let fan_out = out_set.get(n).map_or(0, |s| s.len());
-        let fan_in = in_set.get(n).map_or(0, |s| s.len());
+        if external.contains(n) {
+            let fan_in = in_set.get(n).map_or(0, |s| s.len());
+            out.classes.insert(n.to_string(), ClassMetrics { fan_in, members: c.attributes.len() + c.methods.len(), ..Default::default() });
+            continue;
+        }
+        let fan_out = out_set.get(n).map_or(0, |s| s.iter().filter(|t| !external.contains(*t)).count());
+        let fan_in = in_set.get(n).map_or(0, |s| s.iter().filter(|t| !external.contains(*t)).count());
         let instability = if fan_in + fan_out == 0 { 0.0 } else { fan_out as f64 / (fan_in + fan_out) as f64 };
         let attrs: Vec<&Attribute> = c.attributes.iter().filter(|a| counts(a.status, ghosts)).collect();
         let methods: Vec<&Method> = c.methods.iter().filter(|m| counts(m.status, ghosts)).collect();
         let members = attrs.len() + methods.len();
         let lcom = lcom4(c, &methods);
-        let orphan = many && fan_in == 0 && fan_out == 0;
+        let connected = out_set.get(n).is_some_and(|s| !s.is_empty()) || in_set.get(n).is_some_and(|s| !s.is_empty());
+        let orphan = many && !connected;
         let cyc = scc_of.contains_key(n);
         let lv = viol_count.get(n).copied().unwrap_or(0);
 
@@ -558,6 +566,13 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
         for k in live_containers.iter().filter(|k| !k.datastore) {
             if !d.packages.iter().any(|p| counts(p.status, ghosts) && p.container.as_deref() == Some(k.name.as_str())) {
                 consistency(format!("container {} has no packages", k.name), k.name.clone());
+            }
+        }
+    }
+    for p in d.packages.iter().filter(|p| counts(p.status, ghosts)) {
+        if let Some(sys) = &p.system {
+            if !d.systems.iter().any(|x| counts(x.status, ghosts) && &x.name == sys) {
+                consistency(format!("package {} belongs to external system {sys}, which isn't in the context diagram", p.name), p.name.clone());
             }
         }
     }

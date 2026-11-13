@@ -98,6 +98,7 @@ impl AppState {
                 Ok(d) => {
                     store.load(d);
                     store.release_stuck_evaluations();
+                    store.suggest_externals();
                     last_written = Some(s);
                 }
                 Err(e) => eprintln!("spide: could not parse {}: {e}", path.display()),
@@ -138,6 +139,7 @@ impl AppState {
     pub fn changed(&self) {
         let snap = {
             let mut s = self.lock();
+            s.store.suggest_externals();
             save(&mut s);
             build_snapshot(&s)
         };

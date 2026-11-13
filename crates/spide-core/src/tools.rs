@@ -15,8 +15,10 @@ you change the design exclusively through these tools. Everything you add is a P
 const OPS_DOC: &str = r#"Each op is an object with an "op" field:
 - {"op":"add_class","name":"Order","stereotype?":"entity|value|enum|interface|abstract|service|controller|repository|…","package?":"domain","is_abstract?":false,"aggregate_root?":false,
    "attributes?":[ATTR…],"methods?":[METHOD…],"responsibilities?":["…"],"rationale?":"why it exists"}
-- {"op":"update_class","name":"Order", any of "stereotype","package","is_abstract","responsibilities","rationale","aggregate_root"}
+- {"op":"update_class","name":"Order", any of "stereotype","package","is_abstract","responsibilities","rationale","aggregate_root","external","role"}
    aggregate_root = consistency boundary (one transaction changes one aggregate; Spide flags scenarios that change several).
+   external = the class belongs to a library/framework (not designed here). role = intended purpose:
+   presentation|controller|service|domain|persistence|adapter|output|creator|utility ("" clears it).
 - {"op":"rename_class","from":"A","to":"B"}            - {"op":"remove_class","name":"A"}
 - {"op":"add_attribute","class":"Order","attribute":ATTR}   - {"op":"update_attribute","class":"Order","name":"total","attribute":ATTR}
 - {"op":"remove_attribute","class":"Order","name":"total"}
@@ -27,7 +29,8 @@ const OPS_DOC: &str = r#"Each op is an object with an "op" field:
    Direction: composition/aggregation from=WHOLE to=PART; inheritance/realization from=CHILD to=PARENT; association/dependency from=CLIENT to=SUPPLIER.
 - {"op":"update_relation","from","to","kind", any of "label","from_mult","to_mult","directed","interaction"}
 - {"op":"remove_relation","from":"A","to":"B","kind?":"…"}
-- {"op":"add_package","name":"domain","layer?":"ui|application|domain|infrastructure"}  - {"op":"set_layer","package":"…","layer":"…"|null}
+- {"op":"add_package","name":"domain","layer?":"ui|application|domain|infrastructure","external?":false,"system?":"C4 system name"}  - {"op":"set_layer","package":"…","layer":"…"|null}
+- {"op":"update_package","name":"zap", any of "description","external","system"}  (external = a library/framework's package, e.g. one you extend)
 - {"op":"move_to_package","class":"Order","package":"domain"}   - {"op":"remove_package","name":"…"}
 - {"op":"add_force","name":"Evolvability","kind":"goal|quality|constraint|change","priority?":1|2|3,"description?":"…"}  (the brief)
 - {"op":"update_force","name":"…", any of "rename","kind","priority","description"}   - {"op":"remove_force","name":"…"}

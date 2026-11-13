@@ -193,6 +193,47 @@ impl Store {
         })
     }
 
+    /// Packages that look like an external library: no layer, nothing in them depends on classes
+    /// outside them, and something else depends on them (e.g. `zap`, `swing`).
+    pub fn external_candidates(&self) -> Vec<String> {
+        let d = &self.design;
+        let pkg_of = |c: &str| d.class(c).filter(|c| c.status.is_live()).and_then(|c| c.package.clone());
+        d.packages
+            .iter()
+            .filter(|p| p.status.is_live() && !p.external && p.layer.is_none() && !d.settings.external_suggested.contains(&p.name))
+            .filter(|p| d.classes.iter().any(|c| c.status.is_live() && c.package.as_deref() == Some(p.name.as_str())))
+            .filter(|p| {
+                let mine = |c: &str| pkg_of(c).as_deref() == Some(p.name.as_str());
+                let rels: Vec<&Relation> = d.live_relations().collect();
+                !rels.iter().any(|r| mine(&r.from) && !mine(&r.to)) && rels.iter().any(|r| !mine(&r.from) && mine(&r.to))
+            })
+            .map(|p| p.name.clone())
+            .collect()
+    }
+
+    /// Suggest (once per package) marking library-like packages external, as a ghost proposal.
+    pub fn suggest_externals(&mut self) -> Option<String> {
+        let cands = self.external_candidates();
+        if cands.is_empty() {
+            return None;
+        }
+        self.design.settings.external_suggested.extend(cands.iter().cloned());
+        let ops = cands
+            .iter()
+            .map(|n| Op::UpdatePackage { name: n.clone(), description: None, external: Some(true), system: None })
+            .collect();
+        let why = format!(
+            "{} look{} like an external library: no layer, and nothing in {} depends on your classes. Marked external, \
+             {} drawn compactly and coupling to {} counts less (coupling to stable libraries is not a problem; to unstable elements it is).",
+            cands.join(", "),
+            if cands.len() == 1 { "s" } else { "" },
+            if cands.len() == 1 { "it" } else { "them" },
+            if cands.len() == 1 { "it is" } else { "they are" },
+            if cands.len() == 1 { "it" } else { "them" },
+        );
+        self.propose_ops(ops, Some(why), "spide").ok()
+    }
+
     pub fn accept_proposal(&mut self, id: &str) -> Result<(), OpError> {
         let p = self
             .design

@@ -3,7 +3,7 @@ import { api } from "../state/api";
 import { perfCount } from "../state/perf";
 import type { Layer, Pos, Target } from "../state/types";
 import { NodeDefs } from "./ClassNode";
-import { boxesFor, DiagramContent, rectOf, type DiagramData } from "./DiagramContent";
+import { boxesFor, DiagramContent, externalClasses, rectOf, type DiagramData } from "./DiagramContent";
 import { elkCompoundLayout, type GroupSpec } from "./layout";
 import { LivingLayout } from "./physics";
 import { nodeScale } from "./visuals";
@@ -68,9 +68,10 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
   const dragging = useRef<string | null>(null);
 
   const level = p.level ?? 4;
+  const external = useMemo(() => externalClasses(p.data.classes, p.data.packages), [p.data.classes, p.data.packages]);
   const boxes = useMemo(
-    () => boxesFor(p.data.classes, p.showMethods !== false, Math.max(1, level), p.data.relations),
-    [p.data.classes, p.data.relations, p.showMethods, level],
+    () => boxesFor(p.data.classes, p.showMethods !== false, Math.max(1, level), p.data.relations, undefined, external),
+    [p.data.classes, p.data.relations, p.showMethods, level, external],
   );
   const cm = p.data.metrics?.classes;
 
@@ -102,7 +103,7 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
 
   const relayout = (specs?: { id: string; w: number; h: number; pkg: string | null }[]) => {
     const ss = specs ?? [...layout.nodes.values()].map((n) => ({ id: n.id, w: n.w, h: n.h, pkg: n.pkg }));
-    const groups: GroupSpec[] = p.data.packages.map((x) => ({ id: x.name, rank: packageRank(x) }));
+    const groups: GroupSpec[] = p.data.packages.map((x) => ({ id: x.name, rank: packageRank(x), external: !!x.external }));
     const links = p.data.relations.map((r) => ({ from: r.from, to: r.to, kind: r.kind }));
     elkCompoundLayout(ss.map((s) => ({ id: s.id, w: s.w, h: s.h, group: s.pkg })), links, groups)
       .then((pos) => {

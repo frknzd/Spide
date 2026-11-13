@@ -110,6 +110,12 @@ pub struct Class {
     pub rationale: Option<String>,
     /// Consistency boundary: one transaction should change at most one aggregate.
     pub aggregate_root: bool,
+    /// Belongs to an external library/system (not designed here): drawn compactly, coupling to it
+    /// counts less, and it is left out of the responsibility checks.
+    pub external: bool,
+    /// Intended purpose, set by the agent or user (overrides the name/stereotype heuristics):
+    /// presentation | controller | service | domain | persistence | adapter | output | creator | utility.
+    pub role: Option<String>,
     pub status: Status,
     pub proposal: Option<String>,
     /// Where it came from: decision id (D…), proposal id (P…), `user` or `import`.
@@ -271,6 +277,10 @@ pub struct Package {
     pub description: Option<String>,
     /// Container (deployable unit) this package runs in.
     pub container: Option<String>,
+    /// An external library/system's package (e.g. a framework you build on).
+    pub external: bool,
+    /// C4 external system this package belongs to (an `ExternalSystem` name).
+    pub system: Option<String>,
     pub status: Status,
     pub proposal: Option<String>,
     /// Where it came from: decision id (D…), proposal id (P…), `user` or `import`.
@@ -551,6 +561,8 @@ pub struct Settings {
     /// Granularity per view (`class`, `domain`): 0 packages · 1 names · 2 responsibilities ·
     /// 3 design (default) · 4 full. Diagrams and exports follow it.
     pub detail: BTreeMap<String, u8>,
+    /// Packages Spide already suggested marking external (suggested once).
+    pub external_suggested: Vec<String>,
 }
 
 /// Default granularity: the exam-style "design" level.
@@ -676,6 +688,12 @@ impl Default for Design {
 impl Design {
     pub fn class(&self, name: &str) -> Option<&Class> {
         self.classes.iter().find(|c| c.name == name)
+    }
+    /// The class is external itself or lives in an external package.
+    pub fn is_external(&self, class: &str) -> bool {
+        self.class(class).is_some_and(|c| {
+            c.external || c.package.as_deref().is_some_and(|p| self.packages.iter().any(|x| x.name == p && x.external && x.status != Status::Pruned))
+        })
     }
     pub fn class_mut(&mut self, name: &str) -> Option<&mut Class> {
         self.classes.iter_mut().find(|c| c.name == name)

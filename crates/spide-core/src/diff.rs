@@ -24,9 +24,26 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
     // packages
     for p in new.packages.iter().filter(|p| p.status.is_live()) {
         match old.packages.iter().find(|o| o.name == p.name && o.status.is_live()) {
-            None => adds_pkg.push(Op::AddPackage { name: p.name.clone(), layer: p.layer, description: p.description.clone() }),
-            Some(o) if o.layer != p.layer => adds_pkg.push(Op::SetLayer { package: p.name.clone(), layer: p.layer }),
-            _ => {}
+            None => adds_pkg.push(Op::AddPackage {
+                name: p.name.clone(),
+                layer: p.layer,
+                description: p.description.clone(),
+                external: p.external,
+                system: p.system.clone(),
+            }),
+            Some(o) => {
+                if o.layer != p.layer {
+                    adds_pkg.push(Op::SetLayer { package: p.name.clone(), layer: p.layer });
+                }
+                if o.external != p.external || o.system != p.system {
+                    adds_pkg.push(Op::UpdatePackage {
+                        name: p.name.clone(),
+                        description: None,
+                        external: (o.external != p.external).then_some(p.external),
+                        system: (o.system != p.system).then(|| p.system.clone().unwrap_or_default()),
+                    });
+                }
+            }
         }
     }
 
@@ -44,6 +61,8 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
                 responsibilities: c.responsibilities.clone(),
                 rationale: c.rationale.clone(),
                 aggregate_root: c.aggregate_root,
+                external: c.external,
+                role: c.role.clone(),
             }),
             Some(o) => {
                 if o.stereotype != c.stereotype
@@ -52,6 +71,8 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
                     || o.responsibilities != c.responsibilities
                     || (o.rationale != c.rationale && c.rationale.is_some())
                     || o.aggregate_root != c.aggregate_root
+                    || o.external != c.external
+                    || o.role != c.role
                 {
                     members.push(Op::UpdateClass {
                         name: c.name.clone(),
@@ -61,6 +82,8 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
                         responsibilities: (o.responsibilities != c.responsibilities).then(|| c.responsibilities.clone()),
                         rationale: if o.rationale != c.rationale { c.rationale.clone() } else { None },
                         aggregate_root: (o.aggregate_root != c.aggregate_root).then_some(c.aggregate_root),
+                        external: (o.external != c.external).then_some(c.external),
+                        role: (o.role != c.role).then(|| c.role.clone().unwrap_or_default()),
                     });
                 }
                 let oa: Vec<&Attribute> = o.attributes.iter().filter(|a| a.status.is_live()).collect();
