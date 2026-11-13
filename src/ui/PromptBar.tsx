@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PiStatus } from "../state/types";
+import { useAgentActivity } from "../state/store";
 
 export const COMMANDS: { cmd: string; help: string }[] = [
   { cmd: "/undo", help: "undo (⌘Z)" },
@@ -45,12 +46,12 @@ export const COMMANDS: { cmd: string; help: string }[] = [
 interface Props {
   onSubmit: (text: string) => void;
   status: PiStatus;
-  activity: string | null;
   placeholder: string;
   focusKey: number;
 }
 
 export function PromptBar(p: Props) {
+  const activity = useAgentActivity();
   const [text, setText] = useState("");
   const [hist, setHist] = useState<string[]>([]);
   const [hi, setHi] = useState(-1);
@@ -124,7 +125,7 @@ export function PromptBar(p: Props) {
           }}
         />
       </div>
-      <div className="prompt-activity">{p.activity ?? (p.status === "offline" ? "agent offline — /agent restart" : "")}</div>
+      <div className="prompt-activity">{activity ?? (p.status === "offline" ? "agent offline — /agent restart" : "")}</div>
     </div>
   );
 }

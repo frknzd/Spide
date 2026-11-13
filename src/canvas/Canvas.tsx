@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { api } from "../state/api";
 import { perfCount } from "../state/perf";
 import type { Layer, Pos, Target } from "../state/types";
@@ -39,7 +39,7 @@ interface Props {
 
 const LAYER_RANK: Record<Layer, number> = { ui: 0, infrastructure: 0, application: 1, domain: 2 };
 
-export const Canvas = forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
+export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
   perfCount("Canvas");
   const vp = useRef<ViewportApi>(null);
   const [, setFrame] = useState(0);
@@ -238,6 +238,6 @@ export const Canvas = forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
         pinned={layout.pinnedIds()} focusSet={focusSet} />
     </Viewport>
   );
-});
+}));
 
 const dragOffset = { current: [0, 0] as [number, number] };

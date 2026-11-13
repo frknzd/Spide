@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatEntry } from "../state/store";
+import { useAgentEntries } from "../state/store";
+import { perfCount } from "../state/perf";
 
 /** The agent's latest answer, floating above the prompt; fades after a while. */
-export function AnswerBubble({ entries, history, onCloseHistory }: { entries: ChatEntry[]; history: boolean; onCloseHistory: () => void }) {
+export function AnswerBubble({ history, onCloseHistory }: { history: boolean; onCloseHistory: () => void }) {
+  perfCount("AnswerBubble");
+  const entries = useAgentEntries();
   const last = [...entries].reverse().find((e) => e.role !== "user");
   const [visible, setVisible] = useState(false);
   const [hover, setHover] = useState(false);

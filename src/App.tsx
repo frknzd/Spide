@@ -5,7 +5,7 @@ import type { DiagramData } from "./canvas/DiagramContent";
 import type { ViewportApi } from "./canvas/Viewport";
 import { standaloneSvg } from "./export/svg";
 import { api } from "./state/api";
-import { on, useAgentFeed, useSnapshot } from "./state/store";
+import { on, useSnapshot } from "./state/store";
 import type { Design, DriftReport, Tab, Target } from "./state/types";
 import { AnswerBubble } from "./ui/AnswerBubble";
 import { BriefPanel, MODES } from "./ui/BriefPanel";
@@ -35,7 +35,6 @@ const TAB_TITLE: Record<Tab, string> = { system: "System (C4)", class: "Class di
 export default function App() {
   perfCount("App");
   const snap = useSnapshot();
-  const { entries, activity } = useAgentFeed();
   const [tab, setTab] = useState<Tab>(() => (DEV_QUERY?.get("tab") as Tab | null) ?? "class");
   const [hover, setHover] = useState<{ key: string; at: { x: number; y: number } } | null>(null);
   const [prune, setPrune] = useState<PruneState | null>(null);
@@ -71,7 +70,7 @@ export default function App() {
   const hasClasses = !!view && view.classes.length > 0;
 
   // ------------------------------------------------------------ actions
-  const doPrune = useCallback(
+  const doPrune = useStableCallback(
     (targets: Target[], at: { x: number; y: number }) => {
       const proposals = targets.filter((t) => t.kind === "proposal") as { kind: "proposal"; id: string }[];
       // phantoms (code-only classes in the drift view) can't be pruned
@@ -81,10 +80,9 @@ export default function App() {
         .catch((e) => toast("error", String(e)));
       setHover(null);
     },
-    [toast, drift],
   );
 
-  const onClickTarget = useCallback(
+  const onClickTarget = useStableCallback(
     (t: Target) => {
       if (!view) return;
       if (t.kind === "proposal") return void run(api.accept(t.id));
@@ -96,11 +94,10 @@ export default function App() {
         setTab("sequence");
       }
     },
-    [view, run],
   );
 
   // direct edits: double-click to rename, drop a class onto another package
-  const onDoubleClickTarget = useCallback(
+  const onDoubleClickTarget = useStableCallback(
     (t: Target, at: { x: number; y: number }) => {
       if (!view) return;
       const cls = (n: string) => view.classes.find((c) => c.name === n && c.status !== "pruned" && c.status !== "proposed");
@@ -117,7 +114,6 @@ export default function App() {
       }
       setHover(null);
     },
-    [view, run],
   );
   const onMoveToPackage = useCallback(
     (cls: string, pkg: string) => run(api.userOps([{ op: "move_to_package", class: cls, package: pkg }]).then(() => toast("info", `moved ${cls} to ${pkg} (⌘Z to undo)`))),
@@ -534,10 +530,10 @@ export default function App() {
         <ProposalBar count={view.proposals.length} onAccept={() => run(api.acceptAll())}
           onReject={() => run(Promise.all(view.proposals.map((p) => api.reject(p.id))))} />
         {timeline && <Timeline rev={snap.rev} onPreview={setPreview} onClose={() => setTimeline(false)} run={run} toast={toast} />}
-        <AnswerBubble entries={entries} history={history} onCloseHistory={() => setHistory(false)} />
+        <AnswerBubble history={history} onCloseHistory={() => setHistory(false)} />
         <div className="prompt-row">
           {hasClasses && <HealthRing metrics={metrics} ghost={snap.ghost_health} onFix={(i) => run(api.fixIssue(i))} onFocus={focusIssue} />}
-          <PromptBar onSubmit={submit} status={snap.pi_status} activity={activity} placeholder={placeholder} focusKey={focusKey} />
+          <PromptBar onSubmit={submit} status={snap.pi_status} placeholder={placeholder} focusKey={focusKey} />
           {hasClasses && <div className="health-spacer" />}
         </div>
       </div>
@@ -564,6 +560,13 @@ export default function App() {
       {snap.pi_status === "offline" && snap.pi_error && <div className="pi-error" data-ui>agent: {snap.pi_error}</div>}
     </div>
   );
+}
+
+/** A callback with a stable identity that always runs the latest closure (keeps memoised children from re-rendering). */
+function useStableCallback<A extends unknown[], R>(f: (...a: A) => R): (...a: A) => R {
+  const ref = useRef(f);
+  ref.current = f;
+  return useCallback((...a: A) => ref.current(...a), []);
 }
 
 /** Is the target currently pruned (so a click restores it)? */

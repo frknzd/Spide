@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { perfCount } from "../state/perf";
 import type { Class, ClassMetrics, ImplicitEdge, Metrics, Package, Pos, Relation, Target } from "../state/types";
 import { ClassNode } from "./ClassNode";
@@ -79,7 +80,7 @@ interface Props extends DiagramData {
   showPackages?: boolean;
 }
 
-export function DiagramContent(p: Props) {
+export const DiagramContent = memo(function DiagramContent(p: Props) {
   perfCount("DiagramContent");
   const cm = p.metrics?.classes;
   const rects = new Map<string, Rect>();
@@ -191,4 +192,4 @@ export function DiagramContent(p: Props) {
       </g>
     </>
   );
-}
+});

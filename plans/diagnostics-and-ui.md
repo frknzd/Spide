@@ -231,7 +231,7 @@ The engine works on any `Design`: the intended design, or the imported code ("re
 
 ## Steps
 - [x] A0 Add the fixture `examples/rest-extraction.json` (copy of the screenshot design)
-- [ ] A1 Perf overlay and baseline numbers on `examples/rest-extraction.json`
+- [x] A1 Perf overlay and baseline numbers on `examples/rest-extraction.json`
 - [ ] A2 Agent feed out of `App`; memo `Canvas`/`DiagramContent`; stable callbacks
 - [ ] A3 Physics settles; filter-free halos; pause animations while interacting; LOD
 - [ ] B1 ELK compound layout by package and layer; overlap-removal pass
