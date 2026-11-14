@@ -23,7 +23,7 @@ fn hover_cards_reserve_height_even_for_short_content_and_fit_small_canvases() {
                 });
             }
             let rect = card.unwrap();
-            let expected = 700.0f32.min(height - 16.0);
+            let expected = 250.0f32.min(height - 16.0);
             assert!((rect.height() - expected).abs() < 2.0, "{key}: expected {expected}, got {}", rect.height());
             assert!(rect.top() >= bounds.top() && rect.bottom() <= bounds.bottom(), "{key}: {rect:?}");
         }

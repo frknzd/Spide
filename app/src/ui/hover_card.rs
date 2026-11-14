@@ -702,17 +702,17 @@ pub fn body(ui: &mut Ui, key: &str, cx: &CardCtx, pinned: bool, selected: &Optio
 pub fn show(ctx: &egui::Context, key: &str, at: Point, pinned: bool, bounds: egui::Rect, cx: &CardCtx, selected: &Option<String>, actions: &mut Vec<CardAction>) -> Option<egui::Rect> {
     let id = egui::Id::unique("hovercard");
     // Reserve real vertical space, rather than a larger maximum that short cards shrink out of.
-    // 700 px is 3.5× the old 200 px default; smaller canvases remain the hard limit.
+    // 250 px keeps hover cards compact; smaller canvases remain the hard limit.
     let b = Bounds { left: bounds.left(), top: bounds.top(), right: bounds.right(), bottom: bounds.bottom() };
-    let pl = place_card(at, (360.0, 700.0), &b);
+    let pl = place_card(at, (360.0, 250.0), &b);
     let mut shown = true;
     let resp = egui::Area::new(id)
         .order(egui::Order::Tooltip)
         .fixed_pos(egui::pos2(pl.left, pl.top))
         .interactable(pinned)
-        .default_size(egui::vec2(360.0, 700.0f32.min(pl.max_height)))
+        .default_size(egui::vec2(360.0, 250.0f32.min(pl.max_height)))
         .show(ctx, |ui| {
-            ui.set_height(700.0f32.min(pl.max_height));
+            ui.set_height(250.0f32.min(pl.max_height));
             egui::Frame::new()
                 .fill(Color32::from_rgba_unmultiplied(29, 32, 38, 250))
                 .stroke(Stroke::new(1.0, css::LINE_STRONG))
@@ -722,7 +722,7 @@ pub fn show(ctx: &egui::Context, key: &str, at: Point, pinned: bool, bounds: egu
                 .show(ui, |ui| {
                     ui.set_width((360.0f32.min(pl.max_width) - 28.0).max(1.0));
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    let max_h = (700.0f32.min(pl.max_height) - 24.0).max(1.0);
+                    let max_h = (250.0f32.min(pl.max_height) - 24.0).max(1.0);
                     egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, false]).show(ui, |ui| {
                         if pinned {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
