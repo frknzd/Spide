@@ -4636,6 +4636,7 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "spide-core",
+ "tempfile",
  "tree-sitter",
  "tree-sitter-java",
 ]

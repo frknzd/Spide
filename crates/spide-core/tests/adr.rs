@@ -25,16 +25,11 @@ fn adrs_for_decided_decisions() {
     )
     .unwrap();
     let d1 = s.propose_decision("How do we vary loan rules?".into(), Some("Each term brings a new loan type.".into()), opts).unwrap();
-    s.submit_defense(&d1, Some("A".into()), None, "it's cleaner".into()).unwrap();
-    s.evaluate_defense(&d1, false, "Cleaner how? Name the force.".into(), None).unwrap();
-    s.submit_defense(&d1, Some("A".into()), None, "new loan types only add a LoanPolicy class (Open/Closed), serving Evolvability".into()).unwrap();
-    s.evaluate_defense(&d1, true, "Convincing: you tied it to the expected change.".into(), None).unwrap();
+    s.approve_decision(&d1, s.design.rev, "New loan types only add a LoanPolicy class, serving Evolvability.".into()).unwrap();
 
     let opts: Vec<DecisionOption> = serde_json::from_str(r#"[{"label":"Member holds loans","ops":[{"op":"add_relation","from":"Member","to":"Loan","kind":"aggregation"}]}]"#).unwrap();
     let d2 = s.propose_decision("Who knows a member's loans?".into(), None, opts).unwrap();
-    s.submit_defense(&d2, Some("A".into()), None, "Information Expert".into()).unwrap();
-    s.evaluate_defense(&d2, false, "Then Loan must not know Member too.".into(), None).unwrap();
-    s.overrule(&d2).unwrap();
+    s.approve_decision(&d2, s.design.rev, String::new()).unwrap();
     // an open decision produces no ADR
     let opts: Vec<DecisionOption> = serde_json::from_str(r#"[{"label":"x","ops":[]}]"#).unwrap();
     s.propose_decision("Still open?".into(), None, opts).unwrap();

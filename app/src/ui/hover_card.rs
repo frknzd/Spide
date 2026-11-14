@@ -23,6 +23,7 @@ pub enum CardAction {
     Close,
     /// show another method's facts inside the evidence section
     Select(Option<String>),
+    Code { class: String, method: String },
 }
 
 fn c32(c: spide_diagram::visuals::Rgb) -> Color32 {
@@ -290,6 +291,11 @@ fn member_evidence(ui: &mut Ui, member: &spide_core::model::Method, qualified: &
     let find = |key: &str| -> Vec<&spide_core::model::Method> { cx.design.classes.iter().flat_map(|c| c.methods.iter().filter(move |m| format!("{}.{}", c.name, m.name) == key)).collect() };
     egui::CollapsingHeader::new(RichText::new("Code facts & similarity").font(sans(12.5)).color(css::DIM)).id_salt(("evidence", qualified)).show(ui, |ui| {
         facts(ui, member);
+        if let Some(class) = qualified.strip_suffix(&format!(".{}", member.name)) {
+            if widgets::link(ui, "Open source implementation").clicked() {
+                actions.push(CardAction::Code { class: class.into(), method: member.name.clone() });
+            }
+        }
         widgets::small_faint(ui, "Similarity covers the loaded/imported model; it is not the probability of a defect.");
         if pairs.is_empty() {
             widgets::faint(ui, "No reported similarity matches.");
@@ -326,6 +332,9 @@ pub fn body(ui: &mut Ui, key: &str, cx: &CardCtx, pinned: bool, selected: &Optio
     let Some((kind, rest)) = key.split_once(':') else { return false };
     let design = cx.design;
     let metrics = cx.metrics;
+    if cx.snap.source.attachment.is_some() && cx.snap.source.status != "current" {
+        wrap(ui, format!("Source evidence is {} — current code-length health evidence unavailable", cx.snap.source.status), 12.0, css::WARN);
+    }
     match kind {
         "class" => {
             let Some(c) = design.classes.iter().find(|x| x.name == rest) else { return false };
@@ -430,9 +439,9 @@ pub fn body(ui: &mut Ui, key: &str, cx: &CardCtx, pinned: bool, selected: &Optio
             }
         }
         "attribute" | "method" => {
-            let Some(dot) = rest.find('.') else { return false };
-            let (cls, name) = (&rest[..dot], &rest[dot + 1..]);
-            let c = design.classes.iter().find(|x| x.name == cls);
+            let c = design.classes.iter().filter(|c| rest.starts_with(&format!("{}.", c.name))).max_by_key(|c| c.name.len());
+            let Some(owner) = c else { return false };
+            let (cls, name) = (owner.name.as_str(), &rest[owner.name.len() + 1..]);
             let diags = member_diagnostics(Some(metrics), &design.classes);
             if kind == "attribute" {
                 let Some(a) = c.and_then(|c| c.attributes.iter().find(|x| x.name == name)) else { return false };
@@ -692,7 +701,9 @@ pub fn body(ui: &mut Ui, key: &str, cx: &CardCtx, pinned: bool, selected: &Optio
 #[allow(clippy::too_many_arguments)]
 pub fn show(ctx: &egui::Context, key: &str, at: Point, pinned: bool, bounds: egui::Rect, cx: &CardCtx, selected: &Option<String>, actions: &mut Vec<CardAction>) -> Option<egui::Rect> {
     let id = egui::Id::unique("hovercard");
-    let size = ctx.data(|d| d.get_temp::<egui::Vec2>(id.with("size"))).unwrap_or(egui::vec2(360.0, 200.0));
+    let member = key.starts_with("method:") || key.starts_with("attribute:");
+    let size_id = id.with(("size", key));
+    let size = ctx.data(|d| d.get_temp::<egui::Vec2>(size_id)).unwrap_or(egui::vec2(360.0, if member { 460.0 } else { 200.0 }));
     let b = Bounds { left: bounds.left(), top: bounds.top(), right: bounds.right(), bottom: bounds.bottom() };
     let pl = place_card(at, (360.0, size.y), &b);
     let mut shown = true;
@@ -708,9 +719,9 @@ pub fn show(ctx: &egui::Context, key: &str, at: Point, pinned: bool, bounds: egu
                 .inner_margin(Margin::symmetric(14, 12))
                 .shadow(egui::Shadow { offset: [0, 14], blur: 50, spread: 0, color: Color32::from_black_alpha(128) })
                 .show(ui, |ui| {
-                    ui.set_width(360.0 - 28.0);
+                    ui.set_width((360.0f32.min(pl.max_width) - 28.0).max(1.0));
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    let max_h = pl.max_height.min(ctx.content_rect().height() * 0.7) - 24.0;
+                    let max_h = if member { pl.max_height } else { pl.max_height.min(ctx.content_rect().height() * 0.7) } - 24.0;
                     egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
                         if pinned {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
@@ -723,6 +734,6 @@ pub fn show(ctx: &egui::Context, key: &str, at: Point, pinned: bool, bounds: egu
                     });
                 });
         });
-    ctx.data_mut(|d| d.insert_temp(id.with("size"), resp.response.rect.size()));
+    ctx.data_mut(|d| d.insert_temp(size_id, resp.response.rect.size()));
     shown.then_some(resp.response.rect)
 }

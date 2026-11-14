@@ -22,7 +22,10 @@ pub fn send_prompt(st: &AppState, pi: &PiBridge, text: String, tab: String) -> R
     if text.is_empty() {
         return Ok(());
     }
-    let msg = prompts::user_prompt(&text, &tab, &st.lock().store.design);
+    let msg = {
+        let s = st.lock();
+        format!("{}\n[spide source context]\n{}", prompts::user_prompt(&text, &tab, &s.store.design), crate::source_tracking::context(&s))
+    };
     pi.prompt(generation, &st, msg, Some(text))
 }
 
@@ -49,6 +52,27 @@ pub fn accept_proposal(st: &AppState, id: String, expected_rev: Option<u64>) -> 
       state.store.accept_proposal(&id).map_err(|e| e.0)?;
     }
     done(&st)
+}
+
+pub fn approve_decision(st: &AppState, id: String, rev: u64, notes: String) -> R {
+    st.lock().store.approve_decision(&id, rev, notes).map_err(|e| e.0)?;
+    done(st)
+}
+
+pub fn select_decision_option(st: &AppState, id: String, option: String, rev: u64) -> R {
+    st.lock().store.select_decision_option(&id, &option, rev).map_err(|e| e.0)?;
+    done(st)
+}
+
+pub fn revise_decision(st: &AppState, pi: &PiBridge, id: String, rev: u64, notes: String) -> R {
+    let generation = pi.ticket();
+    let msg = {
+        let s = st.lock();
+        if s.store.design.rev != rev { return Err("Workspace changed; review again.".into()); }
+        let dec = s.store.design.decisions.iter().find(|d| d.id == id && d.is_pending()).ok_or("Decision is closed")?;
+        format!("[spide · request revision · decision {id}]\nRevise this decision's concrete plan using propose_ops with decision/option IDs, or propose a replacement decision. Do NOT apply anything. No defence is required.\nDecision: {}\nUser guidance: {notes}\nSource context: {}", serde_json::to_string(dec).unwrap(), crate::source_tracking::context(&s))
+    };
+    pi.prompt(generation, st, msg, Some(format!("Revise {id}")))
 }
 
 pub fn accept_all(st: &AppState) -> R {
@@ -131,15 +155,8 @@ pub fn submit_defense(
     custom: Option<String>,
     defense: String,
 ) -> R {
-    let generation = pi.ticket();
-    let msg = {
-        let mut s = st.lock();
-        s.store.submit_defense(&id, option, custom, defense).map_err(|e| e.0)?;
-        let dec = s.store.design.decisions.iter().find(|d| d.id == id).cloned().unwrap();
-        prompts::examine(&dec, s.store.design.settings.examiner, &s.store.design)
-    };
-    st.changed();
-    pi.prompt(generation, &st, msg, Some(format!("⚖ defending {id}")))
+    let _ = (st, pi, id, option, custom, defense);
+    Err("Defence is no longer required. Review and approve the saved design plan.".into())
 }
 
 pub fn overrule(st: &AppState, id: String) -> R {
@@ -293,6 +310,8 @@ fn switch_project(st: &AppState, pi: &PiBridge, dir: PathBuf, design: Option<Des
     pi.shutdown();
     {
         let mut s = st.lock();
+        s.source = crate::source_tracking::load(&dir);
+        s.implementations = crate::source_implementation::load(&dir);
         s.project_dir = dir.clone();
         s.last_written = None;
         s.last_history = None;
@@ -310,6 +329,8 @@ fn switch_project(st: &AppState, pi: &PiBridge, dir: PathBuf, design: Option<Des
         s.store.load(d);
     }
     crate::watcher::watch(st, &dir);
+    crate::source_tracking::watch(st);
+    crate::source_tracking::refresh_async(st);
     st.changed();
     pi.restart(st)
 }
@@ -590,6 +611,10 @@ fn reality_path(project: &std::path::Path) -> PathBuf {
 }
 
 pub fn load_reality(project: &std::path::Path) -> Option<Design> {
+    if project.join(".spide/source.json").exists() {
+        let source = crate::source_tracking::load(project);
+        return source.attachment.and(source.snapshot);
+    }
     std::fs::read_to_string(reality_path(project)).ok().and_then(|t| Design::from_json(&t).ok())
 }
 
@@ -610,7 +635,6 @@ pub fn import_code(st: &AppState, pi: &PiBridge, dir: String) -> R<ImportSummary
         (s.project_dir.clone(), s.store.design.settings.code_root.clone())
     };
     let r = spide_import::import_java(std::path::Path::new(&dir), root.as_deref())?;
-    crate::state::write_atomic(&reality_path(&project), &r.design.to_json()).map_err(|e| e.to_string())?;
     let summary = ImportSummary {
         files: r.files,
         classes: r.design.classes.len(),
@@ -623,6 +647,7 @@ pub fn import_code(st: &AppState, pi: &PiBridge, dir: String) -> R<ImportSummary
         if s.project_dir != project || pi.ticket() != generation {
             return Err("project/session changed during import; assessment cancelled".into());
         }
+        crate::state::write_atomic(&reality_path(&project), &r.design.to_json()).map_err(|e| e.to_string())?;
         if s.store.design.settings.code_root.is_none() {
             s.store.set_code_root(summary.code_root.clone());
         }
@@ -651,7 +676,10 @@ pub fn drift(st: &AppState) -> R<DriftReport> {
         let s = st.lock();
         (s.project_dir.clone(), s.store.design.clone())
     };
-    let reality = load_reality(&project).ok_or("no code imported yet — /import a source folder first")?;
+    let reality = {
+        let s = st.lock();
+        crate::source_tracking::mapped(&design, &s.source)
+    }.or_else(|| load_reality(&project)).ok_or("No active source snapshot; attach Java source first")?;
     let drift = spide_core::drift::drift(&design, &reality);
     let checklist = spide_core::drift::checklist(&drift);
     let findings = spide_core::code::analyse(&design, &reality);
@@ -664,8 +692,12 @@ pub fn code_snippet(st: &AppState, class: String, method: Option<String>) -> R<S
         let s = st.lock();
         (s.project_dir.clone(), s.store.design.settings.code_dir.clone())
     };
-    let dir = dir.ok_or("no code imported yet — /import a source folder first")?;
-    let reality = load_reality(&project).ok_or("no code imported yet")?;
+    let (root, mapped) = {
+        let s = st.lock();
+        (s.source.attachment.as_ref().map(|a| a.repository.display().to_string()), crate::source_tracking::mapped(&s.store.design, &s.source))
+    };
+    let dir = root.or(dir).ok_or("No active source attachment")?;
+    let reality = mapped.or_else(|| load_reality(&project)).ok_or("No active source snapshot")?;
     spide_core::code::snippet(&reality, std::path::Path::new(&dir), &class, method.as_deref())
 }
 

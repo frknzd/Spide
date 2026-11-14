@@ -213,10 +213,10 @@ pub fn member_diagnostics(m: Option<&Metrics>, classes: &[Class]) -> Members {
     for i in &m.issues {
         let targets: BTreeSet<&String> = i.targets.iter().collect();
         for t in targets {
-            let Some(dot) = t.find('.').filter(|d| *d > 0) else { continue };
-            let cls = &t[..dot];
-            let name = t[dot + 1..].trim_end_matches("()");
-            let Some(c) = by_name.get(cls) else { continue };
+            let Some((cls, c)) = by_name.iter().filter(|(name, _)| t.starts_with(&format!("{name}."))).max_by_key(|(name, _)| name.len()) else { continue };
+            let cls = *cls;
+            let raw = &t[cls.len() + 1..];
+            let name = if c.methods.iter().any(|m| m.name == raw) || c.attributes.iter().any(|a| a.name == raw) { raw } else { raw.strip_suffix("()").unwrap_or(raw) };
             let attr = c.attributes.iter().any(|a| a.name == name);
             let meth = c.methods.iter().any(|x| x.name == name);
             let kind = match (attr, meth) {

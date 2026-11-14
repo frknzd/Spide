@@ -412,7 +412,7 @@ pub fn panel(ui: &mut Ui, st: &mut DecisionUi, pending: &[&Decision], snap: &Sna
     }
 }
 
-fn mini_preview(ui: &mut Ui, st: &mut DecisionUi, pv: Option<&OptionPreview>, decision: &str, option: &str, m: &EguiMeasure) {
+pub(super) fn mini_preview(ui: &mut Ui, st: &mut DecisionUi, pv: Option<&OptionPreview>, decision: &str, option: &str, m: &EguiMeasure) {
     let w = ui.available_width();
     let box_msg = |ui: &mut Ui, text: &str, color: Color32, h: f32| {
         egui::Frame::new().fill(css::BG).stroke(Stroke::new(1.0, css::LINE)).corner_radius(8).inner_margin(Margin::same(8)).show(ui, |ui| {

@@ -9,6 +9,8 @@ mod pi_bridge;
 mod pi_control;
 mod prompts;
 mod state;
+mod source_tracking;
+mod source_implementation;
 mod terminal;
 mod ui;
 mod watcher;
@@ -39,6 +41,8 @@ fn main() -> eframe::Result {
         Err(e) => eprintln!("spide: MCP server: {e}"),
     }
     watcher::watch(&st, &project);
+    source_tracking::watch(&st);
+    source_tracking::refresh_async(&st);
     let pi = Arc::new(PiBridge::new());
     {
         let (st, pi) = (st.clone(), pi.clone());

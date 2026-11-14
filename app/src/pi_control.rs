@@ -119,7 +119,7 @@ impl Control {
                             Some("context") => {
                                 let s = st.lock();
                                 let tab = self.tab.lock().unwrap();
-                                Ok(json!({"text": crate::prompts::user_prompt(payload["text"].as_str().unwrap_or(""), &tab, &s.store.design)}))
+                                Ok(json!({"text": format!("{}\n[spide source context]\n{}", crate::prompts::user_prompt(payload["text"].as_str().unwrap_or(""), &tab, &s.store.design), crate::source_tracking::context(&s))}))
                             }
                             Some("command") => {
                                 let project = st.lock().project_dir.display().to_string();
@@ -142,7 +142,7 @@ impl Control {
                         Some("settled") => {
                             st.lock().pi_status = PiStatus::Idle;
                             let stuck = st.lock().store.release_stuck_evaluations();
-                            if stuck > 0 { st.changed(); st.toast("error", "The examiner didn't give a verdict — defend again."); }
+                            if stuck > 0 { st.changed(); st.toast("error", "A legacy decision was reopened for review; no defence is required."); }
                             else { st.emit(); }
                         }
                         Some("shutdown") => { st.lock().pi_status = PiStatus::Starting; st.emit(); }

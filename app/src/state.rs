@@ -20,6 +20,9 @@ pub enum PiStatus {
 
 pub struct Shared {
     pub store: Store,
+    pub source: crate::source_tracking::SourceState,
+    pub implementations: Vec<crate::source_implementation::Task>,
+    pub pi_generation: u64,
     pub project_dir: PathBuf,
     /// Content we last wrote to design.json (to ignore our own file events).
     pub last_written: Option<String>,
@@ -66,6 +69,8 @@ pub struct ProposalImpact {
 #[derive(Serialize)]
 pub struct Snapshot {
     pub rev: u64,
+    pub source: crate::source_tracking::SourceState,
+    pub implementations: Vec<crate::source_implementation::Task>,
     /// Design with pending proposals applied as ghosts.
     pub view: Design,
     /// Metrics over accepted elements.
@@ -112,6 +117,9 @@ impl AppState {
         AppState {
             inner: Arc::new(Mutex::new(Shared {
                 store,
+                source: crate::source_tracking::load(&project_dir),
+                implementations: crate::source_implementation::load(&project_dir),
+                pi_generation: 0,
                 project_dir,
                 last_written,
                 pi_status: PiStatus::Starting,
@@ -138,6 +146,7 @@ impl AppState {
         let snap = {
             let mut s = self.lock();
             s.store.suggest_externals();
+            crate::source_implementation::invalidate(&mut s);
             save(&mut s);
             build_snapshot(&s)
         };
@@ -146,7 +155,11 @@ impl AppState {
 
     /// Broadcast without saving (status changes).
     pub fn emit(&self) {
-        let snap = self.snapshot();
+        let snap = {
+            let mut s = self.lock();
+            crate::source_implementation::invalidate(&mut s);
+            build_snapshot(&s)
+        };
         self.events.send(UiEvent::Snapshot(Arc::new(snap)));
     }
 
@@ -185,8 +198,15 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
     let started = std::time::Instant::now();
     let store = &s.store;
     let mut view = store.view();
+    let mut accepted = store.design.clone();
+    if s.source.status == "current" {
+        if let Some(code) = crate::source_tracking::mapped(&store.design, &s.source) {
+            view = spide_core::source::with_bound_length_evidence(&view, &code, &s.source.bindings);
+            accepted = spide_core::source::with_bound_length_evidence(&accepted, &code, &s.source.bindings);
+        }
+    }
     revalidate_sequences(&mut view);
-    let metrics = compute(&view, false);
+    let metrics = compute(&accepted, false);
     let (ghost_health, ghost_metrics) = if store.design.proposals.is_empty() {
         (None, None)
     } else {
@@ -203,7 +223,10 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
             let focus: Vec<String> = o.ops.iter().flat_map(|op| op.touched_classes()).collect();
             let impact = impact_of_ops(&store.design, &o.ops).ok();
             match store.preview(&o.ops, &tag) {
-                Ok(p) => {
+                Ok(mut p) => {
+                    if s.source.status == "current" {
+                        if let Some(code) = crate::source_tracking::mapped(&store.design, &s.source) { p = spide_core::source::with_bound_length_evidence(&p, &code, &s.source.bindings); }
+                    }
                     let h = compute(&p, true).health;
                     previews.push(OptionPreview {
                         decision: d.id.clone(),
@@ -242,6 +265,8 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
     }
     Snapshot {
         rev: store.design.rev,
+        source: s.source.clone(),
+        implementations: s.implementations.clone(),
         view,
         metrics,
         ghost_health,

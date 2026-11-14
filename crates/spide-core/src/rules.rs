@@ -52,11 +52,13 @@ pub struct Thresholds {
     pub high_fan_out: usize,
     /// Sync messages per sequence before it counts as chatty.
     pub max_scenario_hops: usize,
+    /// Nonblank, non-comment Java body lines before a long-method warning.
+    pub max_method_lines: u32,
 }
 
 impl Default for Thresholds {
     fn default() -> Self {
-        Thresholds { god_members: 16, god_responsibilities: 4, high_fan_out: 6, max_scenario_hops: 12 }
+        Thresholds { god_members: 16, god_responsibilities: 4, high_fan_out: 6, max_scenario_hops: 12, max_method_lines: 30 }
     }
 }
 

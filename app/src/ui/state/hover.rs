@@ -39,7 +39,7 @@ impl HoverStore {
             return Some(c.to_string());
         }
         let member = k.strip_prefix("method:").or_else(|| k.strip_prefix("attribute:"))?;
-        member.rfind('.').map(|i| member[..i].to_string())
+        member.split('(').next().unwrap_or(member).rfind('.').map(|i| member[..i].to_string())
     }
     /// A pinned card stays put and accepts the pointer until it is closed.
     pub fn pin(&mut self, key: &str) {
@@ -123,8 +123,8 @@ pub fn place_card(at: Point, size: (f32, f32), b: &Bounds) -> Placement {
     Placement {
         left: (b.left + pad).max(x.min(b.right - width - pad)),
         top: (b.top + pad).max((at.y + 12.0).min(b.bottom - height - pad)),
-        max_width: (b.right - b.left - 2.0 * pad).max(80.0),
-        max_height: (b.bottom - b.top - 2.0 * pad).max(80.0),
+        max_width: (b.right - b.left - 2.0 * pad).max(0.0),
+        max_height: (b.bottom - b.top - 2.0 * pad).max(0.0),
     }
 }
 
@@ -158,6 +158,20 @@ mod tests {
         t += 0.0011;
         s.tick(t);
         assert!(s.snapshot().is_none());
+    }
+
+    #[test]
+    fn tall_member_cards_fit_at_every_canvas_edge() {
+        let b = Bounds { left: 300.0, top: 100.0, right: 900.0, bottom: 700.0 };
+        for at in [p(300.0, 100.0), p(900.0, 100.0), p(300.0, 700.0), p(900.0, 700.0)] {
+            let r = place_card(at, (360.0, 580.0), &b);
+            assert!(r.top >= b.top + 8.0 && r.top + 580.0 <= b.bottom - 8.0);
+            assert!(r.left >= b.left + 8.0 && r.left + 360.0 <= b.right - 8.0);
+        }
+        let b = Bounds { left: 0.0, top: 0.0, right: 250.0, bottom: 300.0 };
+        let r = place_card(p(240.0, 290.0), (360.0, 580.0), &b);
+        assert_eq!(r.max_width, 234.0);
+        assert_eq!(r.max_height, 284.0);
     }
 
     #[test]

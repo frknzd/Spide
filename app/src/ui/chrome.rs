@@ -389,7 +389,7 @@ pub fn zoom_group(ui: &mut Ui) -> Option<Zoom> {
 
 /// "Review proposals (N)" dock button (bottom centre of the canvas).
 pub fn proposal_bar(ui: &mut Ui, count: usize) -> bool {
-    let b = egui::Button::new(RichText::new(format!("Review proposals ({count})")).font(sans(12.0)).color(css::TEXT)).fill(css::PANEL_SOLID).stroke(Stroke::NONE).corner_radius(18).min_size(Vec2::new(0.0, 36.0));
+    let b = egui::Button::new(RichText::new(format!("Review decisions ({count})")).font(sans(12.0)).color(css::TEXT)).fill(css::PANEL_SOLID).stroke(Stroke::NONE).corner_radius(18).min_size(Vec2::new(0.0, 36.0));
     let r = ui.add(b);
     // dashed ghost border
     let pts = super::paint::rounded_rect_points(r.rect, 18.0);
@@ -462,9 +462,9 @@ pub fn welcome(ui: &mut Ui, at: Rect) -> Option<WelcomeAction> {
             ui.spacing_mut().item_spacing.y = 10.0;
             widgets::kicker(ui, "Your next design starts here");
             ui.label(RichText::new("Make the architecture clear.").font(bold(21.0)).color(css::TEXT));
-            widgets::para(ui, "Describe your goals to pi. Explore its proposals on the canvas, then choose and defend the design that fits.", 13.0, css::DIM);
+            widgets::para(ui, "Describe your goals to pi. Review the alternatives and approve the design that fits. Notes are optional.", 13.0, css::DIM);
             ui.horizontal_wrapped(|ui| {
-                for (n, t) in [("01", "Set the brief"), ("02", "Explore options"), ("03", "Defend your design")] {
+                for (n, t) in [("01", "Set the brief"), ("02", "Explore options"), ("03", "Approve your design")] {
                     egui::Frame::new().fill(css::RAISED).stroke(Stroke::new(1.0, css::LINE)).corner_radius(12).inner_margin(Margin::symmetric(9, 3)).show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;

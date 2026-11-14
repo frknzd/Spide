@@ -70,6 +70,7 @@ struct Walk<'a> {
 impl Walk<'_> {
     fn visit(&mut self, n: Node) {
         let k = n.kind();
+        if matches!(k, "class_declaration" | "interface_declaration" | "enum_declaration" | "record_declaration" | "class_body" | "method_declaration") { return; }
         if (k.ends_with("_statement") && k != "labeled_statement") || k == "local_variable_declaration" {
             self.f.statements += 1;
         }
@@ -175,6 +176,21 @@ pub fn winnow(tokens: &[String]) -> Vec<u64> {
     out.into_iter().collect()
 }
 
+/// Count syntax-token-bearing body lines, not comment text or nested type/method bodies.
+fn code_rows(n: Node, src: &[u8], rows: &mut BTreeSet<usize>) {
+    if matches!(n.kind(), "line_comment" | "block_comment" | "class_declaration" | "interface_declaration" | "enum_declaration" | "record_declaration" | "method_declaration" | "class_body") { return; }
+    if n.child_count() == 0 {
+        if !matches!(n.kind(), "{" | "}") {
+            for (line, value) in text(n, src).lines().enumerate() {
+                if !value.trim().is_empty() { rows.insert(n.start_position().row + line); }
+            }
+        }
+    } else {
+        let mut cursor = n.walk();
+        for child in n.children(&mut cursor) { code_rows(child, src, rows); }
+    }
+}
+
 /// Facts for a method declaration node (`body` may be missing for abstract methods).
 pub fn facts(decl: Node, body: Option<Node>, src: &[u8]) -> CodeFacts {
     let mut w = Walk { src, f: CodeFacts::default(), creates: BTreeSet::new(), switch_on: BTreeSet::new(), ui: BTreeSet::new(), tokens: vec![] };
@@ -182,11 +198,9 @@ pub fn facts(decl: Node, body: Option<Node>, src: &[u8]) -> CodeFacts {
     w.f.end_line = decl.end_position().row as u32 + 1;
     if let Some(b) = body {
         let t = text(b, src);
-        w.f.loc = t
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with("//") && !l.starts_with('*') && !l.starts_with("/*") && *l != "{" && *l != "}")
-            .count() as u32;
+        let mut rows = BTreeSet::new();
+        code_rows(b, src, &mut rows);
+        w.f.loc = rows.len() as u32;
         w.f.hash = format!("{:016x}", fnv64(t));
         w.visit(b);
     }

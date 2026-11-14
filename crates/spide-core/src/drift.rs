@@ -13,6 +13,8 @@ pub struct MemberDrift {
     pub missing_in_code: Vec<String>,
     /// In the code, not in the design.
     pub extra_in_code: Vec<String>,
+    /// Same member identity but changed type/signature/modifiers.
+    pub changed: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Default, PartialEq)]
@@ -103,8 +105,21 @@ pub fn drift(intended: &Design, reality: &Design) -> Drift {
         let missing: Vec<String> = dn.difference(&rn).cloned().collect();
         let extra: Vec<String> = rn.difference(&dn).cloned().collect();
         score += if dn.is_empty() { 0.5 } else { 0.5 * (dn.len() - missing.len()) as f64 / dn.len() as f64 };
-        if !missing.is_empty() || !extra.is_empty() {
-            out.members.push(MemberDrift { class: c.name.clone(), missing_in_code: missing, extra_in_code: extra });
+        let mut changed = vec![];
+        for a in &c.attributes {
+            if let Some(b) = r.attributes.iter().find(|b| b.name == a.name) {
+                if (a.ty.as_str(), a.visibility, a.is_static) != (b.ty.as_str(), b.visibility, b.is_static) { changed.push(a.name.clone()); }
+            }
+        }
+        for a in &c.methods {
+            let matches: Vec<_> = r.methods.iter().filter(|b| b.name == a.name).collect();
+            if matches.len() == 1 {
+                let b = matches[0];
+                if crate::source::signature(a) != crate::source::signature(b) || a.returns != b.returns || a.visibility != b.visibility || a.is_static != b.is_static || a.is_abstract != b.is_abstract { changed.push(format!("{}()", a.name)); }
+            }
+        }
+        if !missing.is_empty() || !extra.is_empty() || !changed.is_empty() {
+            out.members.push(MemberDrift { class: c.name.clone(), missing_in_code: missing, extra_in_code: extra, changed });
         }
         if c.package != r.package {
             out.packages.push(PackageDrift { class: c.name.clone(), design: c.package.clone(), code: r.package.clone() });
@@ -213,6 +228,7 @@ pub fn checklist(dr: &Drift) -> String {
         for x in &m.missing_in_code {
             o.push_str(&format!("- [ ] add `{}.{x}`\n", m.class));
         }
+        for x in &m.changed { o.push_str(&format!("- [ ] reconcile signature/type of `{}.{x}`\n", m.class)); }
     }
     for r in &dr.relations_missing_in_code {
         o.push_str(&format!("- [ ] `{}` should {} `{}`\n", r.from, match r.kind {

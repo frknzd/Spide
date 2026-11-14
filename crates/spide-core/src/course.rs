@@ -37,15 +37,15 @@ pub fn code_checks(d: &Design, ghosts: bool) -> Vec<Issue> {
                     "ask the first object to do the work (Tell, don't ask), or add a method on it that hides the chain",
                 ));
             }
-            if f.loc > 30 {
+            if f.loc > d.rules.thresholds.max_method_lines {
                 out.push(issue(
                     "long_method",
                     0.25,
                     0.9,
                     "code",
-                    format!("{key}() is {} lines long", f.loc),
+                    format!("{key}() is {} code lines (threshold {}; {}:{})", f.loc, d.rules.thresholds.max_method_lines, f.file, f.start_line),
                     vec![c.name.clone(), key.clone()],
-                    "The longer a method is, the harder it is to understand; long methods usually do several things.",
+                    "Long methods often mix responsibilities and reduce cohesion. This is a heuristic, not proof of a defect. Counts nonblank, non-comment body lines, excluding brace-only lines and nested type bodies.",
                     "Extract Method for each part (and move parts to the classes whose data they use)",
                 ));
             }

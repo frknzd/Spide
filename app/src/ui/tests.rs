@@ -45,6 +45,38 @@ pub fn shot(h: &mut Harness<'static, SpideApp>, name: &str) {
 }
 
 #[test]
+fn unified_review_approves_a_large_collapsed_plan_with_empty_notes() {
+    use egui_kittest::kittest::Queryable;
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(dir.path(), (1440.0, 720.0));
+    let st = h.state().backend.st.clone();
+    let ops = (0..100).map(|n| serde_json::from_value(serde_json::json!({"op":"add_class","name":format!("Example{n}")})).unwrap()).collect();
+    st.lock().store.propose_ops(ops, Some("Large plan".into()), "agent").unwrap(); st.changed();
+    steps(&mut h, 90);
+    assert!(st.lock().store.design.classes.is_empty());
+    h.get_by_label("Approve design").click();
+    steps(&mut h, 30);
+    assert_eq!(st.lock().store.design.classes.len(), 100);
+    assert!(st.lock().store.design.decisions[0].notes.is_empty());
+    assert!(!dir.path().join(".spide/source.json").exists(), "pure design must not create a source attachment");
+}
+
+#[test]
+fn source_panel_is_optional_and_accessible_for_scoped_java() {
+    let dir = project("library"); let repo = tempfile::tempdir().unwrap();
+    std::fs::write(repo.path().join("Book.java"), "public class Book { public void read() {} }").unwrap();
+    let a = crate::source_tracking::Attachment { repository: repo.path().canonicalize().unwrap(), roots: vec![".".into()], exclusions: vec![] };
+    let imported = spide_import::import_java(repo.path(), None).unwrap();
+    let source = crate::source_tracking::SourceState { attachment: Some(a.clone()), snapshot: Some(imported.design), files: crate::source_tracking::inventory(&a).unwrap(), status: "current".into(), ..Default::default() };
+    crate::source_tracking::persist(dir.path(), &source).unwrap();
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    h.state_mut().source_open = true;
+    steps(&mut h, 60);
+    assert!(h.state().source_open);
+    shot(&mut h, "source-scoped-java");
+}
+
+#[test]
 fn renders_every_tab_of_the_examples() {
     for ex in ["library", "rest-extraction"] {
         let dir = project(ex);

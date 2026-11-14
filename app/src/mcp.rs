@@ -103,12 +103,33 @@ fn dispatch(st: &AppState, msg: &Value) -> Option<Value> {
             }))
         }
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({"tools": tools::tool_list()})),
+        "tools/list" => {
+            let mut list = tools::tool_list();
+            list.as_array_mut().unwrap().extend([
+                json!({"name":"get_source_context","description":"Read optional attached repository scope, exact Java symbols/locations, explicit bindings, source freshness, drift/conflicts and implementation task status. Observation grants no write approval.","inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true}}),
+                json!({"name":"begin_implementation","description":"Consume a separately user-approved implementation authorization immediately before editing. If stale, cancelled or already begun, STOP; cannot grant approval itself.","inputSchema":{"type":"object","properties":{"task_id":{"type":"string"}},"required":["task_id"]}}),
+            ]);
+            Ok(json!({"tools":list}))
+        },
         "tools/call" => {
             let name = msg.pointer("/params/name").and_then(Value::as_str).unwrap_or("");
             let args = msg.pointer("/params/arguments").cloned().unwrap_or(json!({}));
             let on_code = args.get("on").and_then(Value::as_str) == Some("code") && matches!(name, "get_responsibilities" | "get_overlap");
-            let outcome = if name == "get_code" {
+            let outcome = if name == "get_source_context" {
+                Ok(tools::ToolOutcome { text: crate::source_tracking::context(&st.lock()).to_string(), changed: false })
+            } else if name == "begin_implementation" {
+                crate::source_implementation::begin(st, args["task_id"].as_str().unwrap_or("")).map(|text| tools::ToolOutcome { text, changed: false })
+            } else if name == "get_metrics" {
+                Ok(tools::ToolOutcome { text: serde_json::to_string(&st.snapshot().metrics).unwrap(), changed: false })
+            } else if name == "get_design" {
+                let mut s = st.lock();
+                tools::call(&mut s.store, name, &args).map(|mut outcome| {
+                    if let Ok(mut value) = serde_json::from_str::<Value>(&outcome.text) {
+                        value["source_context"] = crate::source_tracking::context(&s); outcome.text = value.to_string();
+                    }
+                    outcome
+                })
+            } else if name == "get_code" {
                 get_code(st, &args).map(|text| tools::ToolOutcome { text, changed: false })
             } else if on_code {
                 judged_code(st).map(|d| tools::ToolOutcome {
@@ -145,21 +166,15 @@ fn judged_code(st: &AppState) -> Result<spide_core::model::Design, String> {
         let s = st.lock();
         (s.project_dir.clone(), s.store.design.clone())
     };
-    let reality = crate::commands::load_reality(&project).ok_or("no code imported yet: ask the user to /import the source folder")?;
+    let reality = { let s = st.lock(); crate::source_tracking::mapped(&design, &s.source) }.or_else(|| crate::commands::load_reality(&project)).ok_or("No active source snapshot")?;
     Ok(spide_core::drift::with_design_rules(&design, &reality))
 }
 
 /// `get_code`: the imported implementation of a class/method (read-only, capped).
 fn get_code(st: &AppState, args: &Value) -> Result<String, String> {
-    let (project, dir) = {
-        let s = st.lock();
-        (s.project_dir.clone(), s.store.design.settings.code_dir.clone())
-    };
-    let dir = dir.ok_or("no code imported yet: ask the user to /import the source folder")?;
-    let reality = crate::commands::load_reality(&project).ok_or("no code imported yet")?;
     let class = args.get("class").and_then(Value::as_str).ok_or("missing class")?;
     let method = args.get("method").and_then(Value::as_str).filter(|m| !m.is_empty());
-    spide_core::code::snippet(&reality, std::path::Path::new(&dir), class, method)
+    crate::commands::code_snippet(st, class.into(), method.map(str::to_string))
 }
 
 #[cfg(test)]

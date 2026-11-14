@@ -80,6 +80,8 @@ pub struct Param {
 #[serde(default)]
 pub struct Method {
     pub name: String,
+    /// Portable source identity; local repository path is stored separately.
+    pub source: Option<SourceSymbol>,
     pub params: Vec<Param>,
     pub returns: Option<String>,
     pub visibility: Visibility,
@@ -100,6 +102,16 @@ pub struct Method {
     pub proposal: Option<String>,
     /// Where it came from: decision id (D…), proposal id (P…), `user` or `import`.
     pub origin: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct SourceSymbol {
+    /// Fully qualified Java type or type#method(parameter types).
+    pub symbol: String,
+    pub file: String,
+    pub start_line: u32,
+    pub end_line: u32,
 }
 
 /// Facts about a method body, from the imported source (never part of an intended design).
@@ -139,6 +151,7 @@ pub struct CodeFacts {
 #[serde(default)]
 pub struct Class {
     pub name: String,
+    pub source: Option<SourceSymbol>,
     /// e.g. `interface`, `abstract`, `entity`, `service`, `controller`, `repository`, `enum`
     pub stereotype: Option<String>,
     pub package: Option<String>,
@@ -442,6 +455,10 @@ pub struct Attempt {
 #[serde(default)]
 pub struct Decision {
     pub id: String,
+    /// Internal editable operation plan (legacy P IDs remain stable aliases).
+    pub plan: Option<String>,
+    /// Optional user guidance, never an examiner gate.
+    pub notes: String,
     pub question: String,
     pub context: Option<String>,
     pub options: Vec<DecisionOption>,
@@ -668,6 +685,9 @@ pub struct Pos {
 #[serde(default)]
 pub struct Design {
     pub version: u32,
+    /// Version of the unified review migration, independent of source schema.
+    #[serde(default)]
+    pub review_version: u32,
     pub name: String,
     pub rev: u64,
     /// Revision of the last change to the class model (drives staleness of derived views).
@@ -704,6 +724,7 @@ impl Default for Design {
     fn default() -> Self {
         Design {
             version: SCHEMA_VERSION,
+            review_version: 1,
             name: "Untitled design".into(),
             rev: 0,
             model_rev: 0,

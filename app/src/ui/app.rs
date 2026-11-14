@@ -4,7 +4,7 @@
 use super::brief::{self, BriefOut, BriefUi};
 use super::canvas::{CanvasInput, CanvasOut, ClassCanvas};
 use super::chrome::{self, HealthAction, HealthState, Tab, Toast, TAB_ORDER};
-use super::decisions::{self, CompareCol, CompareUi, DecisionOut, DecisionUi};
+use super::decisions::{self, CompareCol, CompareUi, DecisionUi};
 use super::export::{self, DialogOut, ExportDialog, ExportSettings, ExportState, Format};
 use super::hover_card::{self, CardAction, CardCtx};
 use super::overlays::{self, InlineAction, InlineEdit, InlineKind, Palette, PaletteAction, PruneAction, PruneState};
@@ -99,6 +99,8 @@ pub struct SpideApp {
     pub branch_cmp: Option<BranchCmp>,
     pub stress: Option<String>,
     pub review_active: bool,
+    pub source_open: bool,
+    pub source_ui: super::source::SourceUi,
     pub selected_proposal: Option<String>,
     pub proposal_canvas: Option<Design>,
     pub proposal_ui: ProposalUi,
@@ -246,6 +248,8 @@ impl SpideApp {
             branch_cmp: None,
             stress: None,
             review_active: false,
+            source_open: false,
+            source_ui: Default::default(),
             selected_proposal: None,
             proposal_canvas: None,
             proposal_ui: ProposalUi { drafts, ..Default::default() },
@@ -386,6 +390,17 @@ impl SpideApp {
                     // ignore stale snapshots of the same project
                     let keep_old = self.snap.as_ref().is_some_and(|p| p.project_dir == s.project_dir && p.rev > s.rev && p.pi_status == s.pi_status);
                     if !keep_old {
+                        let source_changed = self.snap.as_ref().is_some_and(|p| p.rev != s.rev || p.source.generation != s.source.generation || p.source.status != s.source.status);
+                        if self.drift.is_some() && source_changed {
+                            if self.snap.as_ref().is_some_and(|p| p.source.attachment.is_some()) && s.source.attachment.is_none() {
+                                self.drift = None;
+                            } else {
+                                let (project, generation, rev) = (s.project_dir.clone(), s.source.generation, s.rev);
+                                self.backend.call(|st, _| crate::commands::drift(st), move |app, result| {
+                                    if app.snap.as_ref().is_some_and(|snap| snap.project_dir == project && snap.source.generation == generation && snap.rev == rev) { app.drift = result.ok(); app.class_data = None; }
+                                });
+                            }
+                        }
                         self.snap = Some(s);
                         self.class_data = None;
                         self.domain_data = None;
@@ -419,7 +434,7 @@ impl SpideApp {
 
     fn class_data(&mut self) -> Option<Arc<ClassData>> {
         let snap = self.snap.clone()?;
-        let key = hash_of((snap.rev, &snap.project_dir, self.preview_gen, self.review_active, self.drift.is_some(), self.proposal_canvas.as_ref().map(|d| d.rev)));
+        let key = hash_of((snap.rev, snap.source.generation, &snap.source.status, &snap.project_dir, self.preview_gen, self.review_active, self.drift.is_some(), self.proposal_canvas.as_ref().map(|d| d.rev)));
         if let Some(d) = self.class_data.as_ref().filter(|d| d.key == key) {
             return Some(d.clone());
         }
@@ -1278,9 +1293,7 @@ impl SpideApp {
                         continue;
                     }
                     Key::B => {
-                        if !self.review_active {
-                            self.brief = !self.brief;
-                        }
+                        self.brief = !self.brief;
                         continue;
                     }
                     Key::S => {
@@ -1601,19 +1614,35 @@ impl SpideApp {
                 let mode = |ui: &mut egui::Ui, text: String, on: bool| {
                     ui.add(egui::Button::new(RichText::new(text).font(sans(12.5)).color(if on { css::GHOST } else { css::TEXT })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE).corner_radius(6).min_size(Vec2::new(0.0, 26.0)))
                 };
-                if mode(ui, format!("Decisions ({})", pending.len()), !self.review_active).clicked() && self.leave_proposal_review() {
+                if mode(ui, format!("Decisions ({})", pending.len()), !self.source_open).clicked() {
+                    self.source_open = false;
+                    self.shown_decision = None;
+                    self.open_proposal_review(None);
+                }
+                if mode(ui, "Source".into(), self.source_open).clicked() && self.leave_proposal_review() {
+                    self.source_open = true;
                     self.review_active = false;
                     self.refresh_proposal_canvas();
                 }
-                if mode(ui, format!("Proposals ({})", snap.view.proposals.len()), self.review_active).clicked() {
-                    self.open_proposal_review(None);
-                }
+                let history_label = ui.label("History");
+                egui::ComboBox::from_id_salt("decision-history").selected_text("History").width(70.0).show_ui(ui, |ui| {
+                    for dec in snap.view.decisions.iter().filter(|d| !d.is_pending()).rev() {
+                        if ui.selectable_label(self.shown_decision.as_ref() == Some(&dec.id), format!("{} · {}", dec.id, dec.question)).clicked() && self.leave_proposal_review() {
+                            self.source_open = false;
+                            self.review_active = false;
+                            self.shown_decision = Some(dec.id.clone());
+                        }
+                    }
+                }).response.labelled_by(history_label.id);
             });
         });
         let body = Rect::from_min_max(Pos2::new(r.left(), nav.bottom()), r.max);
         ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
             ui.set_clip_rect(body);
-            if self.review_active {
+            if self.source_open {
+                super::source::show(ui, &mut self.source_ui, snap, &self.backend);
+            } else if !pending.is_empty() && self.shown_decision.is_none() {
+                self.review_active = true;
                 let now = ui.input(|i| i.time);
                 let mut out = vec![];
                 proposal::show(ui, &mut self.proposal_ui, snap, self.selected_proposal.as_deref(), &self.backend, now, &mut out);
@@ -1630,16 +1659,8 @@ impl SpideApp {
                                 }
                             });
                         }
+                        ProposalOut::Compare(id) => self.compare = Some(id),
                         ProposalOut::Canvas => self.refresh_proposal_canvas(),
-                    }
-                }
-            } else if !pending.is_empty() {
-                let mut out = vec![];
-                decisions::panel(ui, &mut self.decision_ui, &pending, snap, &self.backend, &self.measure, &mut out);
-                for o in out {
-                    match o {
-                        DecisionOut::Preview(d) => self.set_preview(d, PreviewSource::Option),
-                        DecisionOut::Compare(id) => self.compare = Some(id),
                     }
                 }
             } else if let Some(id) = self.shown_decision.clone() {
@@ -2023,6 +2044,10 @@ impl SpideApp {
                     match a {
                         CardAction::Close => self.hover.clear(),
                         CardAction::Select(s) => self.card_selected = s,
+                        CardAction::Code { class, method } => {
+                            let title = format!("{class}.{method}");
+                            self.backend.run_then(move |s, _| crate::commands::code_snippet(s, class, Some(method)), move |app, text| app.code_view = Some((title, text)));
+                        }
                     }
                 }
                 if h.pinned && ctx.input(|i| i.key_pressed(Key::Escape)) {

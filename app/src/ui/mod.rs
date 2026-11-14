@@ -10,6 +10,7 @@ pub mod overlays;
 pub mod paint;
 pub mod proposal;
 pub mod state;
+pub mod source;
 pub mod terminal;
 pub mod theme;
 pub mod timeline;

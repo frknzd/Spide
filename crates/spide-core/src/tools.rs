@@ -9,8 +9,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 pub const INSTRUCTIONS: &str = "Spide is a live class-diagram design canvas. The user can only see and accept/prune; \
-you change the design exclusively through these tools. Everything you add is a PROPOSAL the user must accept \
-(propose_ops) or a DECISION the user must choose and defend (propose_decision). Read get_design first.";
+you change the design exclusively through these tools. Every change is a user-approved DECISION: \
+propose_ops creates a single-option decision; propose_decision supplies alternatives. Notes are optional; no defence or examiner verdict is required. Read get_design first.";
 
 const OPS_DOC: &str = r#"Each op is an object with an "op" field:
 - {"op":"add_class","name":"Order","stereotype?":"entity|value|enum|interface|abstract|service|controller|repository|…","package?":"domain","is_abstract?":false,"aggregate_root?":false,
@@ -61,10 +61,10 @@ pub fn tool_list() -> Value {
         {"name":"get_view","description":"Read a derived view: domain (conceptual classes), package (packages + dependencies), use_case, sequence.",
          "inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["domain","package","use_case","sequence"]}},"required":["kind"]},
          "annotations":{"readOnlyHint":true}},
-        {"name":"propose_decision","description":"Raise a design DECISION for the user, quiz-style. Use this for every non-trivial choice \
+        {"name":"propose_decision","description":"Raise a design DECISION for user approval. Use this for every non-trivial choice \
            (which class owns a responsibility, who talks to whom, inheritance vs composition, where a class lives…). Give 2–3 genuinely \
            different, viable options, each with the concrete ops that implement it; the user sees a live preview of each, picks one or \
-           writes their own, and must DEFEND it. You will then be asked to examine the defence. Do not apply the ops yourself. \
+           requests revisions, or approves it with optional notes. No defence is required. Do not apply the ops yourself. \
            Keep each decision focused (one question).",
          "inputSchema":{"type":"object","properties":{
             "question":{"type":"string"},
@@ -80,10 +80,9 @@ pub fn tool_list() -> Value {
                 "ops": ops_schema},"required":["label","ops"]}}},
           "required":["question","options"]}},
         {"name":"propose_ops","description":"Propose small, unambiguous changes (e.g. adding obvious attributes, fixing a multiplicity). They appear as \
-           ghosts the user reviews and can amend in the Proposals inspector before accepting. Optional decision/option fields associate context only, not approval. Use propose_decision instead for anything the user should think about.",
+           single-option decisions the user reviews and can amend in the Decisions inspector before approving. Optional decision/option fields revise an existing pending plan, not approve it. Use propose_decision instead for anything the user should think about.",
          "inputSchema":{"type":"object","properties":{"ops": ops_schema,"rationale":{"type":"string"},"decision":{"type":"string"},"option":{"type":"string"}},"required":["ops"]}},
-        {"name":"evaluate_defense","description":"Examiner verdict on the user's defence of a decision (only when Spide asks you to examine). \
-           accept applies the chosen option; reject sends your feedback back so the user can try again. For a CUSTOM answer pass the ops that implement it.",
+        {"name":"evaluate_defense","description":"Deprecated compatibility endpoint. Always refuses mutations; only the user may approve a design decision.",
          "inputSchema":{"type":"object","properties":{
             "decision_id":{"type":"string"},
             "verdict":{"type":"string","enum":["accept","reject"]},
@@ -148,7 +147,7 @@ pub fn tool_list() -> Value {
            the data it uses; wholes take over their parts), or a NEW Pure Fabrication class in the innermost legal layer. Each \
            has legality (layer/forbidden rules for every caller), the simulated health before→after, the source's fan-out \
            change, the receiver's LCOM4, role fit, a score, a why, and ready-to-use OPS. Turn the top 2–3 into propose_decision \
-           options (copy their ops) — the user chooses and defends.",
+           options (copy their ops) — the user chooses and approves.",
          "inputSchema":{"type":"object","properties":{"method":{"type":"string"},"group":{"type":"array","items":{"type":"string"}}}}},
         {"name":"get_code","description":"Read the IMPLEMENTATION of a class (or one method) from the imported code (/import), \
            with the facts Spide extracted (lines, call chains, switches, loops, creations, UI calls). Use it to judge what the code \
@@ -320,7 +319,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             ok(
                 format!(
                     "Decision {id} is now shown to the user with live previews (current health {}). Consequences per option: {}.{warn} \
-                     Wait: the user will choose and defend; Spide will then ask you to examine the defence. \
+                     Wait for user approval or a revision request. No defence or examiner verdict is required. \
                      End your turn now with at most one short sentence.",
                     before.health,
                     previews.join(", ")
@@ -354,31 +353,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             }
             ok(text, true)
         }
-        "evaluate_defense" => {
-            #[derive(Deserialize)]
-            struct A {
-                decision_id: String,
-                verdict: String,
-                feedback: String,
-                ops: Option<Vec<Op>>,
-            }
-            let a: A = parse(args)?;
-            let accept = match a.verdict.as_str() {
-                "accept" => true,
-                "reject" => false,
-                _ => return Err("verdict must be accept or reject".into()),
-            };
-            store.evaluate_defense(&a.decision_id, accept, a.feedback, a.ops).map_err(|e| e.0)?;
-            let m = compute(&store.view(), false);
-            ok(
-                if accept {
-                    format!("Accepted and applied. Health now {}. Reply with at most one sentence.", m.health)
-                } else {
-                    "Rejected; your feedback is shown to the user who may revise their defence. End your turn.".into()
-                },
-                true,
-            )
-        }
+        "evaluate_defense" => Err("Deprecated: only the user may approve the visible design plan. Return a concrete revision with propose_ops/propose_decision instead.".into()),
         "assess_class" => {
             #[derive(Deserialize)]
             struct A {

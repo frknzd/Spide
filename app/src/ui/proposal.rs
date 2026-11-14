@@ -267,11 +267,13 @@ pub struct ProposalUi {
     pub baseline: bool,
     pub previous_ids: Vec<String>,
     pub scope: String,
+    pub option_previews: super::decisions::DecisionUi,
 }
 
 pub enum ProposalOut {
     Select(Option<String>),
     Focus(String),
+    Compare(String),
     /// the design to show on the canvas while reviewing (None: none)
     Canvas,
 }
@@ -328,7 +330,7 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
     }
     let Some(p) = st.session.as_ref().filter(|s| s.scope == scope).map(|s| s.plan.clone()).or_else(|| saved.cloned()) else {
         egui::Frame::new().inner_margin(Margin::symmetric(22, 32)).show(ui, |ui| {
-            ui.label(RichText::new("No ghost proposals").font(bold(14.0)).color(css::TEXT));
+            ui.label(RichText::new("No open decisions").font(bold(14.0)).color(css::TEXT));
             widgets::para(ui, "All plans reviewed. Undo restores the last change. Any unfinished drafts remain stored locally.", 12.5, css::DIM);
         });
         if st.review.take().is_some() {
@@ -342,6 +344,7 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
     // debounced validation (200 ms)
     if request_key != st.requested_key {
         st.requested_key = request_key.clone();
+        st.option_previews = Default::default();
         st.request_at = now + 0.2;
         st.loading = true;
         if st.review.take().is_some() {
@@ -373,20 +376,23 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
 
     let mut change: Option<Proposal> = None;
     let mut select: Option<String> = None;
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+    let notes_id = egui::Id::new(("decision-notes", &scope));
+    let mut notes: String = ui.ctx().data_mut(|d| d.get_persisted(notes_id)).unwrap_or_default();
+    let owner = p.decision.as_ref().and_then(|id| snap.view.decisions.iter().find(|d| &d.id == id));
+    egui::ScrollArea::vertical().id_salt(("review-body", &scope)).max_height((ui.available_height() - 190.0).max(40.0)).auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::new().inner_margin(Margin { left: 16, right: 16, top: 4, bottom: 24 }).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 8.0;
-            ui.label(RichText::new("Ghost proposals").font(bold(19.0)).color(css::TEXT));
+            ui.label(RichText::new("Design decisions").font(bold(19.0)).color(css::TEXT));
             ui.add_enabled_ui(!st.busy, |ui| {
-                ui.label(RichText::new("Plan").font(sans(12.0)).color(css::DIM));
+                let plan_label = ui.label(RichText::new("Decision").font(sans(12.0)).color(css::DIM));
                 egui::ComboBox::from_id_salt("plan").selected_text(format!("{} · {}", p.id, p.rationale.clone().unwrap_or(p.source.clone()))).width(ui.available_width()).truncate().show_ui(ui, |ui| {
                     for x in plans {
                         if ui.selectable_label(x.id == p.id, format!("{} · {}", x.id, x.rationale.clone().unwrap_or(x.source.clone()))).clicked() {
                             select = Some(x.id.clone());
                         }
                     }
-                });
+                }).response.labelled_by(plan_label.id);
                 ui.horizontal(|ui| {
                     if button(ui, "‹").on_hover_text("Previous proposal").clicked() {
                         select = Some(plans[(at + plans.len() - 1) % plans.len()].id.clone());
@@ -397,12 +403,40 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
                     }
                 });
             });
-            ui.add_enabled_ui(!st.busy, |ui| {
-                ui.label(RichText::new("Plan rationale").font(sans(12.0)).color(css::DIM));
-                let mut rat = p.rationale.clone().unwrap_or_default();
-                if ui.add(egui::TextEdit::multiline(&mut rat).font(sans(12.5)).desired_rows(2).desired_width(f32::INFINITY).background_color(hex(0x1c2027))).changed() {
-                    change = Some(Proposal { rationale: if rat.is_empty() { None } else { Some(rat) }, ..p.clone() });
+            if let Some(dec) = owner {
+                widgets::para(ui, &dec.question, 15.0, css::TEXT);
+                if dec.options.len() > 1 && link(ui, "Compare alternatives").clicked() { out.push(ProposalOut::Compare(dec.id.clone())); }
+                for option in &dec.options {
+                    let selected = p.option.as_ref() == Some(&option.id);
+                    if ui.add_enabled(!st.busy && !st.unsaved(), egui::RadioButton::new(selected, &option.label)).clicked() && !selected {
+                        st.busy = true;
+                        let (id, opt, rev) = (dec.id.clone(), option.id.clone(), snap.rev);
+                        backend.call(move |s, _| crate::commands::select_decision_option(s, id, opt, rev), |app, r| {
+                            app.proposal_ui.busy = false;
+                            if let Err(e) = r { app.proposal_ui.error = e; }
+                        });
+                    }
+                    egui::CollapsingHeader::new(format!("{} · details", option.id)).id_salt((&scope, "alternative", &option.id)).show(ui, |ui| {
+                        let pv = snap.previews.iter().find(|v| v.decision == dec.id && v.option == option.id);
+                        let measure = super::paint::EguiMeasure::new(ui.ctx());
+                        super::decisions::mini_preview(ui, &mut st.option_previews, pv, &dec.id, &option.id, &measure);
+                        if let Some(summary) = &option.summary { widgets::para(ui, summary, 12.0, css::DIM); }
+                        for pro in &option.pros { widgets::para(ui, format!("+ {pro}"), 12.0, css::PRO); }
+                        for con in &option.cons { widgets::para(ui, format!("− {con}"), 12.0, css::CON); }
+                        if let Some(impact) = snap.previews.iter().find(|v| v.decision == dec.id && v.option == option.id).and_then(|v| v.impact.as_ref()) {
+                            let mut open = true; impact_line(ui, impact, &mut open, false);
+                        }
+                    });
                 }
+            }
+            ui.add_enabled_ui(!st.busy, |ui| {
+                egui::CollapsingHeader::new("Plan rationale").id_salt((&scope, "rationale")).show(ui, |ui| {
+                    let rationale_label = ui.label(RichText::new("Plan rationale").font(sans(12.0)).color(css::DIM));
+                    let mut rat = p.rationale.clone().unwrap_or_default();
+                    if ui.add(egui::TextEdit::multiline(&mut rat).font(sans(12.5)).desired_rows(2).desired_width(f32::INFINITY).background_color(hex(0x1c2027))).labelled_by(rationale_label.id).changed() {
+                        change = Some(Proposal { rationale: if rat.is_empty() { None } else { Some(rat) }, ..p.clone() });
+                    }
+                });
                 widgets::small_faint(ui, format!("{} · by {} · {}", p.id, p.source, if dirty { "Unsaved user amendment" } else { "Saved plan" }));
                 if !st.error.is_empty() {
                     ui.label(RichText::new(&st.error).font(sans(12.0)).color(hex(0xffb2b2)));
@@ -436,16 +470,17 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
                 }
                 widgets::small_faint(ui, "Earlier pending plans are included as context. Updates and deletions stay highlighted in plan view. Canvas editing is disabled during review.");
                 if let Some(imp) = st.review.as_ref().and_then(|r| r.impact.as_ref()) {
-                    let mut open = false;
-                    impact_line(ui, imp, &mut open, false);
+                    egui::CollapsingHeader::new("Impact").id_salt((&scope, "impact")).show(ui, |ui| {
+                        let mut open = true;
+                        impact_line(ui, imp, &mut open, false);
+                    });
                 }
                 ui.add_space(10.0);
                 ui.label(RichText::new(format!("Planned changes ({})", p.ops.len())).font(bold(14.0)).color(css::TEXT));
                 let ops = ops_json(&p);
                 for (i, op) in ops.iter().enumerate() {
-                    egui::Frame::new().stroke(Stroke::new(1.0, hex(0x343c48))).corner_radius(8).inner_margin(Margin::same(12)).show(ui, |ui| {
+                    egui::CollapsingHeader::new(format!("{}. {} · {}", i + 1, operation_label(op), operation_target(op).unwrap_or_default())).id_salt((&scope, "operation", i)).show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.label(RichText::new(format!("{}. {}", i + 1, operation_label(op))).font(bold(13.0)).color(css::TEXT));
                         ui.horizontal_wrapped(|ui| {
                             if button(ui, "Edit change").clicked() && (st.editing.is_none() || confirm("Discard the unfinished operation form and edit another change?")) {
                                 st.editing = Some(OpEditor::new(Some((i, op))));
@@ -493,7 +528,7 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
                                 }
                             }
                         }
-                        egui::CollapsingHeader::new(RichText::new("Full operation and values").font(sans(12.0)).color(css::DIM)).id_salt(("full", i)).show(ui, |ui| {
+                        egui::CollapsingHeader::new(RichText::new("Full operation and values").font(sans(12.0)).color(css::DIM)).id_salt((&scope, "full", i)).show(ui, |ui| {
                             let pre = |ui: &mut Ui, v: &Value| {
                                 egui::Frame::new().fill(hex(0x11151b)).inner_margin(Margin::same(8)).show(ui, |ui| {
                                     ui.set_width(ui.available_width());
@@ -534,50 +569,14 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
                         None => {}
                     }
                 }
-                // associated decision (context only)
-                egui::Frame::new().stroke(Stroke::new(1.0, hex(0x343c48))).corner_radius(8).inner_margin(Margin::same(12)).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(RichText::new("Associated decision").font(bold(14.0)).color(css::TEXT));
-                    let d = p.decision.as_ref().and_then(|id| snap.view.decisions.iter().find(|x| &x.id == id));
-                    let cur = d.map(|d| format!("{} · {}", d.id, d.question)).unwrap_or("No associated decision".into());
-                    egui::ComboBox::from_id_salt("assoc-decision").selected_text(cur).width(ui.available_width()).truncate().show_ui(ui, |ui| {
-                        if ui.selectable_label(p.decision.is_none(), "No associated decision").clicked() {
-                            change = Some(Proposal { decision: None, option: None, ..p.clone() });
-                        }
-                        for x in &snap.view.decisions {
-                            if ui.selectable_label(p.decision.as_ref() == Some(&x.id), format!("{} · {}", x.id, x.question)).clicked() {
-                                change = Some(Proposal { decision: Some(x.id.clone()), option: None, ..p.clone() });
-                            }
-                        }
-                    });
-                    if let Some(d) = d {
-                        widgets::rich(ui, &[(&d.question, bold(12.5), css::TEXT), (&format!(" · {:?}", d.state).to_lowercase(), sans(12.5), css::TEXT)]);
-                        if let Some(c) = &d.context {
-                            widgets::para(ui, c, 12.5, css::TEXT);
-                        }
-                        let cur = d.options.iter().find(|o| Some(&o.id) == p.option.as_ref()).map(|o| o.label.clone()).unwrap_or("No specific alternative".into());
-                        egui::ComboBox::from_id_salt("assoc-option").selected_text(cur).width(ui.available_width()).show_ui(ui, |ui| {
-                            if ui.selectable_label(p.option.is_none(), "No specific alternative").clicked() {
-                                change = Some(Proposal { option: None, ..p.clone() });
-                            }
-                            for o in &d.options {
-                                if ui.selectable_label(p.option.as_ref() == Some(&o.id), &o.label).clicked() {
-                                    change = Some(Proposal { option: Some(o.id.clone()), ..p.clone() });
-                                }
-                            }
-                        });
-                        if let Some(s) = d.options.iter().find(|o| Some(&o.id) == p.option.as_ref()).and_then(|o| o.summary.as_ref()) {
-                            widgets::para(ui, s, 12.5, css::TEXT);
-                        }
-                        for (i, a) in d.attempts.iter().enumerate() {
-                            egui::CollapsingHeader::new(format!("Defence {} · {}", i + 1, a.verdict.clone().unwrap_or("pending".into()))).id_salt(("def", i)).show(ui, |ui| {
-                                widgets::para(ui, &a.defense, 12.5, css::TEXT);
-                                widgets::para(ui, a.feedback.clone().unwrap_or_default(), 12.5, css::TEXT);
-                            });
-                        }
-                        widgets::small_faint(ui, "Context only. Plan edits are user amendments, not a new examiner approval.");
-                    }
-                });
+            });
+        });
+    });
+    // Actions and optional guidance stay outside the scrolling operation list.
+    egui::Frame::new().fill(css::SURFACE).inner_margin(Margin::same(10)).show(ui, |ui| {
+        ui.add_enabled_ui(!st.busy, |ui| {
+                ui.label(RichText::new("Notes / refine this change (optional)").font(sans(12.0)));
+                ui.add(egui::TextEdit::multiline(&mut notes).desired_rows(2).desired_width(f32::INFINITY).hint_text("Approve the plan as shown, or request a revision using these notes…"));
                 ui.horizontal(|ui| {
                     let can_save = dirty && !conflict && valid_preview && st.editing.is_none();
                     if ui.add_enabled(can_save, egui::Button::new(RichText::new("Save plan").font(sans(12.0))).fill(css::RAISED).stroke(Stroke::new(1.0, css::LINE)).corner_radius(6)).clicked() {
@@ -614,21 +613,29 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
                 });
                 ui.horizontal(|ui| {
                     let can_accept = !st.busy && !dirty && st.session.as_ref().is_some_and(|s| s.rev == snap.rev) && st.editing.is_none() && valid_preview && st.review.as_ref().is_some_and(|r| r.can_accept);
-                    if primary_enabled(ui, can_accept, "Accept proposal").clicked() {
-                        resolve(st, backend, &p, &scope, snap, &ids, true);
+                    if primary_enabled(ui, can_accept, "Approve design").clicked() {
+                        resolve(st, backend, &p, &scope, snap, &ids, true, notes.clone());
                     }
-                    if ui.add_enabled(!st.busy, egui::Button::new(RichText::new("Reject proposal").font(sans(12.0))).fill(css::RAISED).stroke(Stroke::new(1.0, css::LINE)).corner_radius(6)).clicked()
+                    if ui.add_enabled(!st.busy, egui::Button::new(RichText::new("Dismiss").font(sans(12.0))).fill(css::RAISED).stroke(Stroke::new(1.0, css::LINE)).corner_radius(6)).clicked()
                         && (!st.unsaved() || confirm("Reject this proposal and discard its unsaved draft and operation form?"))
                     {
-                        resolve(st, backend, &p, &scope, snap, &ids, false);
+                        resolve(st, backend, &p, &scope, snap, &ids, false, String::new());
                     }
                 });
-                if dirty {
-                    widgets::small_faint(ui, "Save or discard your changes before accepting.");
+                if let Some(dec) = owner {
+                    if ui.add_enabled(!st.busy && !notes.trim().is_empty() && !st.unsaved(), egui::Button::new("Request revision")).clicked() {
+                        st.busy = true;
+                        let (id, rev, text) = (dec.id.clone(), snap.rev, notes.clone());
+                        backend.call(move |s, pi| crate::commands::revise_decision(s, pi, id, rev, text), |app, r| {
+                            app.proposal_ui.busy = false;
+                            if let Err(e) = r { app.proposal_ui.error = e; }
+                        });
+                    }
                 }
-            });
+                if dirty { widgets::small_faint(ui, "Save or discard your changes before approving."); }
         });
     });
+    ui.ctx().data_mut(|d| d.insert_persisted(notes_id, notes));
     if let Some(next) = change {
         if !st.busy {
             let original = st.session.as_ref().filter(|s| s.scope == scope).map(|s| s.original.clone()).or_else(|| saved.cloned()).unwrap_or(next.clone());
@@ -647,12 +654,16 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
     let _ = (Color32::WHITE, Vec2::ZERO);
 }
 
-fn resolve(st: &mut ProposalUi, backend: &Backend, p: &Proposal, scope: &str, snap: &Snapshot, ids: &[String], accept: bool) {
+fn resolve(st: &mut ProposalUi, backend: &Backend, p: &Proposal, scope: &str, snap: &Snapshot, ids: &[String], accept: bool, notes: String) {
     st.busy = true;
     st.error.clear();
     let (pid, rev, plan, scope, all) = (p.id.clone(), snap.rev, p.clone(), scope.to_string(), ids.to_vec());
+    let decision = plan.decision.clone();
     backend.call(
-        move |s, _| if accept { crate::commands::accept_proposal(s, pid, Some(rev)) } else { crate::commands::reject_proposal(s, pid, Some(rev)) },
+        move |s, _| if accept {
+            let id = decision.ok_or("Missing decision")?;
+            crate::commands::approve_decision(s, id, rev, notes)
+        } else { crate::commands::reject_proposal(s, pid, Some(rev)) },
         move |app, r| {
             app.proposal_ui.busy = false;
             match r {

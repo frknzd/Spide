@@ -39,8 +39,6 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("redo", "Redo", "Design", "Redo the last undone change"),
     c("brief", "Brief and rules", "Design", "Edit goals, quality attributes and constraints"),
     t("mode", "Partner mode", "Design", "Show or set examiner, socratic, devils_advocate or sketch", "mode ", false),
-    c("strict", "Strict examiner", "Design", "Rejected decisions cannot be overruled"),
-    c("lenient", "Lenient examiner", "Design", "Allow overruling rejected decisions"),
     c("timeline", "Timeline", "History", "Browse previous revisions"),
     t("branch", "Create branch", "History", "Branch from this design", "branch ", true),
     c("branches", "List branches", "History", "Show available branches"),

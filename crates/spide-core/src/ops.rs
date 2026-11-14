@@ -344,6 +344,7 @@ impl Op {
                 check_unique(methods.iter().map(|m| (&m.name, m.params.len())), "method")?;
                 d.classes.push(Class {
                     name: name.clone(),
+                    source: None,
                     stereotype: stereotype.clone().filter(|s| !s.is_empty()),
                     package: package.clone(),
                     is_abstract: *is_abstract || stereotype.as_deref() == Some("abstract"),

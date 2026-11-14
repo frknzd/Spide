@@ -25,6 +25,31 @@ fn long_method_boundary_and_evidence() {
 }
 
 #[test]
+fn configurable_length_threshold_and_mapped_evidence_change_health_once() {
+    let design = sample();
+    let mut code = design.clone();
+    code.classes[0].methods[0].code = Some(CodeFacts { loc: 31, file: "Worker.java".into(), start_line: 4, ..Default::default() });
+    let measured = source::with_length_evidence(&design, &code);
+    let before = metrics::compute(&design, false);
+    let after = metrics::compute(&measured, false);
+    assert!(after.health < before.health, "{} vs {}", after.health, before.health);
+    assert_eq!(after.issues.iter().filter(|i| i.kind == "long_method").count(), 1);
+    assert!(after.issues.iter().find(|i| i.kind == "long_method").unwrap().message.contains("threshold 30"));
+    let mut relaxed = measured.clone(); relaxed.rules.thresholds.max_method_lines = 31;
+    assert!(!metrics::compute(&relaxed, false).issues.iter().any(|i| i.kind == "long_method"));
+    code.classes[0].methods[0].code.as_mut().unwrap().loc = 30;
+    assert!(!metrics::compute(&source::with_length_evidence(&design, &code), false).issues.iter().any(|i| i.kind == "long_method"));
+    assert!(design.classes[0].methods[0].code.is_none(), "measurement must not mutate persisted design");
+    let mut changed_signature = code.clone();
+    changed_signature.classes[0].methods[0].params.push(Param { name: "x".into(), ty: "int".into() });
+    changed_signature.classes[0].methods[0].source = Some(SourceSymbol { symbol: "pkg.Worker#process(int)".into(), ..Default::default() });
+    changed_signature.classes[0].methods[0].code.as_mut().unwrap().loc = 31;
+    assert!(source::with_length_evidence(&design, &changed_signature).classes[0].methods[0].code.is_none());
+    let bindings = std::collections::BTreeMap::from([("Worker.process".into(), "pkg.Worker#process(int)".into())]);
+    assert!(source::with_bound_length_evidence(&design, &changed_signature, &bindings).classes[0].methods[0].code.is_some());
+}
+
+#[test]
 fn exposed_state_is_qualified_and_data_carriers_are_exempt() {
     let mut d = sample();
     d.classes[0].attributes[0].visibility = Visibility::Public;

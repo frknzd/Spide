@@ -53,18 +53,20 @@ fn save_rejects_stale_empty_invalid_and_downstream_breakage_without_mutation() {
 }
 
 #[test]
-fn provenance_is_optional_validated_and_never_modifies_decision_record() {
+fn amendments_update_the_owned_option_but_never_approve_it() {
     let legacy: Proposal = serde_json::from_str(r#"{"id":"P1","ops":[],"source":"file"}"#).unwrap();
     assert_eq!(legacy.decision, None);
     let mut s = Store::default();
     let d = s.propose_decision("Why?".into(), None, vec![DecisionOption { label: "One".into(), ops: ops(r#"[{"op":"add_class","name":"A"}]"#), ..Default::default() }]).unwrap();
-    let original = s.design.decisions.clone();
-    let id = s.propose_linked_ops(ops(r#"[{"op":"add_class","name":"A"}]"#), None, "agent", Some(d.clone()), Some("A".into())).unwrap();
+    let id = s.design.decisions.iter().find(|x| x.id == d).unwrap().plan.clone().unwrap();
     let rev = s.design.rev;
     assert!(s.update_proposal(&id, rev, s.design.proposals[0].ops.clone(), None, Some("missing".into()), None).is_err());
     s.update_proposal(&id, rev, ops(r#"[{"op":"add_class","name":"Amended"}]"#), None, Some(d.clone()), Some("A".into())).unwrap();
-    assert_eq!(s.design.decisions, original); assert_eq!(s.design.proposals[0].decision.as_deref(), Some(d.as_str()));
-    s.accept_proposal(&id).unwrap(); assert_eq!(s.design.decisions, original);
+    assert_eq!(s.design.decisions[0].options[0].ops, s.design.proposals[0].ops);
+    assert!(s.design.decisions[0].is_pending());
+    assert!(s.design.classes.is_empty());
+    s.accept_proposal(&id).unwrap();
+    assert_eq!(s.design.decisions[0].state, spide_core::DecisionState::Accepted);
 }
 
 #[test]

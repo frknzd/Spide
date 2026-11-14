@@ -66,7 +66,8 @@ impl Default for Store {
 }
 
 impl Store {
-    pub fn new(design: Design) -> Self {
+    pub fn new(mut design: Design) -> Self {
+        crate::decisions::reconcile(&mut design);
         Store { design, undo: vec![], redo: vec![] }
     }
 
@@ -86,6 +87,7 @@ impl Store {
     ) -> Result<T, OpError> {
         let mut next = self.design.clone();
         let out = f(&mut next)?;
+        crate::decisions::reconcile(&mut next);
         let model_changed = next.classes != self.design.classes
             || next.relations != self.design.relations
             || next.packages != self.design.packages;
@@ -130,6 +132,7 @@ impl Store {
     pub fn load(&mut self, mut design: Design) {
         design.rev = design.rev.max(1);
         design.version = SCHEMA_VERSION;
+        crate::decisions::reconcile(&mut design);
         self.design = design;
         self.undo.clear();
         self.redo.clear();
@@ -184,6 +187,12 @@ impl Store {
 
     pub fn propose_linked_ops(&mut self, ops: Vec<Op>, rationale: Option<String>, source: &str, decision: Option<String>, option: Option<String>) -> Result<String, OpError> {
         self.validate_proposal_association(decision.as_deref(), option.as_deref())?;
+        if let Some(dec) = decision.as_ref().and_then(|id| self.design.decisions.iter().find(|d| &d.id == id && d.is_pending())) {
+            if let Some(pid) = dec.plan.clone() {
+                self.update_proposal(&pid, self.design.rev, ops, rationale, decision, option)?;
+                return Ok(pid);
+            }
+        }
         if ops.is_empty() {
             return Err(OpError("no ops".into()));
         }
@@ -240,6 +249,9 @@ impl Store {
     }
 
     pub fn accept_proposal(&mut self, id: &str) -> Result<(), OpError> {
+        if let Some(d) = self.design.decisions.iter().find(|d| d.is_pending() && d.plan.as_deref() == Some(id)).map(|d| d.id.clone()) {
+            return self.approve_decision(&d, self.design.rev, String::new());
+        }
         let p = self
             .design
             .proposals
@@ -287,6 +299,7 @@ impl Store {
         }
         self.mutate("user", format!("rejected {id}"), |d| {
             d.proposals.retain(|p| p.id != id);
+            for dec in &mut d.decisions { if dec.plan.as_deref() == Some(id) { dec.state = DecisionState::Dismissed; } }
             if let Some(f) = feedback.filter(|f| !f.trim().is_empty()) {
                 d.feedback.push(Feedback { target: format!("proposal {id}"), text: f, at: now_ms() });
             }
@@ -329,32 +342,8 @@ impl Store {
         custom: Option<String>,
         defense: String,
     ) -> Result<(), OpError> {
-        let dec = self.decision(id)?;
-        if !dec.is_pending() {
-            return Err(OpError(format!("decision {id} is closed")));
-        }
-        if dec.state == DecisionState::Evaluating {
-            return Err(OpError("the examiner is still evaluating".into()));
-        }
-        if let Some(o) = &option {
-            if !dec.options.iter().any(|x| &x.id == o) {
-                return Err(OpError(format!("unknown option {o}")));
-            }
-        }
-        if option.is_none() && custom.as_deref().is_none_or(|c| c.trim().is_empty()) {
-            return Err(OpError("choose an option or describe your own".into()));
-        }
-        if defense.trim().len() < 3 {
-            return Err(OpError("you need to defend your choice".into()));
-        }
-        self.mutate("user", format!("defended {id}"), |d| {
-            let dec = d.decisions.iter_mut().find(|x| x.id == id).unwrap();
-            dec.state = DecisionState::Evaluating;
-            dec.chosen = option.clone();
-            dec.custom = custom.clone();
-            dec.attempts.push(Attempt { option, custom, defense, verdict: None, feedback: None });
-            Ok(())
-        })
+        let _ = (id, option, custom, defense);
+        Err(OpError("Defence is no longer required. Review and approve the concrete design plan.".into()))
     }
 
     /// Examiner verdict. For custom answers the examiner must supply the ops.
@@ -365,85 +354,27 @@ impl Store {
         feedback: String,
         ops: Option<Vec<Op>>,
     ) -> Result<(), OpError> {
-        let dec = self.decision(id)?.clone();
-        if dec.state != DecisionState::Evaluating {
-            return Err(OpError(format!("decision {id} is not awaiting evaluation (state {:?})", dec.state)));
-        }
-        let ops = match (ops, &dec.chosen) {
-            (Some(o), _) if !o.is_empty() => o,
-            (_, Some(opt)) => dec.options.iter().find(|o| &o.id == opt).map(|o| o.ops.clone()).unwrap_or_default(),
-            _ if accept => {
-                return Err(OpError("custom answer accepted: pass the ops that implement it".into()));
-            }
-            _ => vec![],
-        };
-        let verdict = if accept { "accept" } else { "reject" };
-        let consequences = if accept { crate::impact::impact_of_ops(&self.design, &ops).ok() } else { None };
-        self.mutate("examiner", format!("{verdict}ed defence for {id}"), |d| {
-            let mut next = if accept { apply_all(d, &ops, Mode::Commit(Status::Accepted, Some(id)))? } else { d.clone() };
-            let dec = next.decisions.iter_mut().find(|x| x.id == id).unwrap();
-            if let Some(a) = dec.attempts.last_mut() {
-                a.verdict = Some(verdict.into());
-                a.feedback = Some(feedback.clone());
-            }
-            if accept {
-                dec.state = DecisionState::Accepted;
-                dec.applied_ops = ops.clone();
-                dec.consequences = consequences.clone();
-                dec.decided_at = Some(now_ms());
-            } else {
-                dec.state = DecisionState::Rejected;
-                // remember ops for a possible overrule of a custom answer
-                if dec.chosen.is_none() && !ops.is_empty() {
-                    dec.applied_ops = ops.clone();
-                }
-            }
-            *d = next;
-            Ok(())
-        })
+        let _ = (id, accept, feedback, ops);
+        Err(OpError("Examiner callbacks cannot apply design changes; user approval is required.".into()))
     }
 
-    /// Lenient mode: apply despite rejection; elements are marked overruled.
+    /// Compatibility alias for explicit user approval; no examiner gate remains.
     pub fn overrule(&mut self, id: &str) -> Result<(), OpError> {
-        if self.design.settings.examiner == ExaminerMode::Strict {
-            return Err(OpError("strict examiner: revise your defence instead".into()));
-        }
-        let dec = self.decision(id)?.clone();
-        if dec.state != DecisionState::Rejected {
-            return Err(OpError("only rejected decisions can be overruled".into()));
-        }
-        let ops = match &dec.chosen {
-            Some(o) => dec.options.iter().find(|x| &x.id == o).map(|x| x.ops.clone()).unwrap_or_default(),
-            None => dec.applied_ops.clone(),
-        };
-        if ops.is_empty() {
-            return Err(OpError("nothing concrete to apply: the examiner gave no ops for your custom answer".into()));
-        }
-        let consequences = crate::impact::impact_of_ops(&self.design, &ops).ok();
-        self.mutate("user", format!("overruled examiner on {id}"), |d| {
-            let mut next = apply_all(d, &ops, Mode::Commit(Status::Overruled, Some(id)))?;
-            let dec = next.decisions.iter_mut().find(|x| x.id == id).unwrap();
-            dec.state = DecisionState::Overruled;
-            dec.applied_ops = ops.clone();
-            dec.consequences = consequences.clone();
-            dec.decided_at = Some(now_ms());
-            *d = next;
-            Ok(())
-        })
+        self.approve_decision(id, self.design.rev, String::new())
     }
 
-    /// Evaluating decisions without verdict → Rejected with a note. Returns how many.
+    /// Recover legacy in-flight examiner records as open reviews, never apply them.
     pub fn release_stuck_evaluations(&mut self) -> usize {
         let n = self.design.decisions.iter().filter(|d| d.state == DecisionState::Evaluating).count();
         if n == 0 {
             return 0;
         }
-        let _ = self.mutate("spide", "examiner gave no verdict", |d| {
+        let _ = self.mutate("spide", "reopened legacy decision reviews", |d| {
             for dec in d.decisions.iter_mut().filter(|x| x.state == DecisionState::Evaluating) {
-                dec.state = DecisionState::Rejected;
+                dec.state = DecisionState::Open;
                 if let Some(a) = dec.attempts.last_mut() {
                     a.verdict = Some("none".into());
-                    a.feedback = Some("The examiner gave no verdict (agent problem). Defend again.".into());
+                    a.feedback = Some("Legacy evaluation ended. Review the concrete plan and approve it; no defence is required.".into());
                 }
             }
             Ok(())
@@ -455,6 +386,7 @@ impl Store {
         self.decision(id)?;
         self.mutate("user", format!("dismissed {id}"), |d| {
             d.decisions.iter_mut().find(|x| x.id == id).unwrap().state = DecisionState::Dismissed;
+            d.proposals.retain(|p| p.decision.as_deref() != Some(id));
             Ok(())
         })
     }

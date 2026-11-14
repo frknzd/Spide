@@ -65,7 +65,7 @@ impl PiBridge {
     }
     fn start_locked(&self, st: AppState) -> Result<(), String> {
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        { let mut s = st.lock(); s.pi_status = PiStatus::Starting; s.pi_error = None; }
+        { let mut s = st.lock(); s.pi_status = PiStatus::Starting; s.pi_error = None; s.pi_generation = generation; }
         st.emit();
         let result = self.spawn(&st, generation);
         match result {

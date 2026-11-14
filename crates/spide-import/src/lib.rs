@@ -45,6 +45,7 @@ struct RawMethod {
 struct RawType {
     name: String,
     java_package: String,
+    source: SourceSymbol,
     kind: &'static str, // class | interface | enum | record
     is_abstract: bool,
     extends: Vec<String>,
@@ -63,6 +64,7 @@ fn java_files(root: &Path) -> Vec<PathBuf> {
         for e in rd.flatten() {
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
+            if e.file_type().map(|t| t.is_symlink()).unwrap_or(true) { continue; }
             if p.is_dir() {
                 // production code only: skip build output, VCS and test sources
                 let is_test = name == "test" && p.parent().is_some_and(|x| x.ends_with("src"));
@@ -115,6 +117,7 @@ fn type_names(n: Node, src: &[u8], out: &mut Vec<String>) {
 }
 
 fn collect_body(n: Node, src: &[u8], m: &mut RawMethod) {
+    if matches!(n.kind(), "class_declaration" | "interface_declaration" | "enum_declaration" | "record_declaration" | "class_body" | "method_declaration") { return; }
     match n.kind() {
         "method_invocation" => {
             let name = n.child_by_field_name("name").map(|x| text(x, src).to_string()).unwrap_or_default();
@@ -207,7 +210,7 @@ fn parse_body(body: Node, src: &[u8], t: &mut RawType) {
                     }
                 }
             }
-            "method_declaration" => t.methods.push(parse_method(ch, src)),
+            "method_declaration" | "constructor_declaration" | "compact_constructor_declaration" => t.methods.push(parse_method(ch, src)),
             "enum_body_declarations" => parse_body(ch, src, t),
             _ => {}
         }
@@ -226,6 +229,7 @@ fn parse_type(n: Node, src: &[u8], pkg: &str) -> Option<RawType> {
     let mut t = RawType {
         name: text(n.child_by_field_name("name")?, src).to_string(),
         java_package: pkg.to_string(),
+        source: SourceSymbol { symbol: format!("{}.{}", pkg, text(n.child_by_field_name("name")?, src)).trim_start_matches('.').into(), start_line: n.start_position().row as u32 + 1, end_line: n.end_position().row as u32 + 1, ..Default::default() },
         kind,
         is_abstract,
         ..Default::default()
@@ -256,6 +260,18 @@ fn parse_type(n: Node, src: &[u8], pkg: &str) -> Option<RawType> {
     Some(t)
 }
 
+fn collect_types(n: Node, src: &[u8], pkg: &str, enclosing: &str, out: &mut Vec<RawType>) {
+    if let Some(mut t) = parse_type(n, src, pkg) {
+        let qualified = if enclosing.is_empty() { t.source.symbol.clone() } else { format!("{enclosing}.{}", t.name) };
+        t.source.symbol = qualified.clone();
+        if let Some(body) = n.child_by_field_name("body") {
+            let mut cursor = body.walk();
+            for child in body.children(&mut cursor) { collect_types(child, src, pkg, &qualified, out); }
+        }
+        out.push(t);
+    }
+}
+
 fn parse_file(parser: &mut Parser, path: &Path, dir: &Path) -> Result<Vec<RawType>, String> {
     let src = std::fs::read(path).map_err(|e| e.to_string())?;
     let tree = parser.parse(&src, None).ok_or("parse failed")?;
@@ -266,15 +282,16 @@ fn parse_file(parser: &mut Parser, path: &Path, dir: &Path) -> Result<Vec<RawTyp
     for ch in root.children(&mut c) {
         if ch.kind() == "package_declaration" {
             pkg = text(ch, &src).trim_start_matches("package").trim().trim_end_matches(';').trim().to_string();
-        } else if let Some(t) = parse_type(ch, &src, &pkg) {
-            out.push(t);
+        } else {
+            collect_types(ch, &src, &pkg, "", &mut out);
         }
     }
-    if root.has_error() && out.is_empty() {
+    if root.has_error() {
         return Err("syntax errors".into());
     }
     let rel = path.strip_prefix(dir).unwrap_or(path).display().to_string();
     for t in &mut out {
+        t.source.file = rel.clone();
         for m in &mut t.methods {
             m.facts.file = rel.clone();
         }
@@ -311,9 +328,40 @@ const COLLECTIONS: [&str; 10] = ["List", "Set", "Collection", "Iterable", "Map",
 /// Import all production `.java` files under `dir`. `code_root` (e.g. `org.acme.library`) maps Java
 /// packages to design packages; without it the common prefix of all packages is used.
 pub fn import_java(dir: &Path, code_root: Option<&str>) -> Result<ImportResult, String> {
+    import_files(dir, code_root, java_files(dir))
+}
+
+/// Safe explicit repository scope. Paths are relative and cannot escape via symlinks.
+pub fn scoped_files(repo: &Path, roots: &[String], exclusions: &[String]) -> Result<Vec<PathBuf>, String> {
+    let repo = repo.canonicalize().map_err(|e| e.to_string())?;
+    if roots.is_empty() { return Err("Select at least one Java source root".into()); }
+    for exclusion in exclusions {
+        let p = Path::new(exclusion);
+        if p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) { return Err("Exclusions must be repository-relative".into()); }
+    }
+    let mut files = BTreeSet::new();
+    for root in roots {
+        let rel = Path::new(root);
+        if rel.is_absolute() || rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) { return Err("Source roots must be repository-relative".into()); }
+        let path = repo.join(rel).canonicalize().map_err(|e| e.to_string())?;
+        if !path.starts_with(&repo) { return Err("Source root escapes repository".into()); }
+        for file in java_files(&path) {
+            let canonical = file.canonicalize().map_err(|e| e.to_string())?;
+            if !canonical.starts_with(&repo) { continue; }
+            let relative = canonical.strip_prefix(&repo).unwrap();
+            if !exclusions.iter().any(|e| relative.starts_with(e)) { files.insert(canonical); }
+        }
+    }
+    Ok(files.into_iter().collect())
+}
+
+pub fn import_java_scoped(repo: &Path, roots: &[String], exclusions: &[String], code_root: Option<&str>) -> Result<ImportResult, String> {
+    import_files(repo, code_root, scoped_files(repo, roots, exclusions)?)
+}
+
+fn import_files(dir: &Path, code_root: Option<&str>, files: Vec<PathBuf>) -> Result<ImportResult, String> {
     let mut parser = Parser::new();
     parser.set_language(&tree_sitter_java::LANGUAGE.into()).map_err(|e| e.to_string())?;
-    let files = java_files(dir);
     if files.is_empty() {
         return Err(format!("no .java files under {}", dir.display()));
     }
@@ -333,7 +381,7 @@ pub fn import_java(dir: &Path, code_root: Option<&str>) -> Result<ImportResult, 
     }
     let name_of = |t: &RawType| {
         if count[&t.name] > 1 {
-            format!("{}_{}", t.name, t.java_package.rsplit('.').next().unwrap_or(""))
+            t.source.symbol.clone()
         } else {
             t.name.clone()
         }
@@ -360,11 +408,12 @@ pub fn import_java(dir: &Path, code_root: Option<&str>) -> Result<ImportResult, 
             .filter(|f| !(t.kind == "enum" && f.is_static && f.ty.is_empty()))
             .map(|f| Attribute { name: f.name.clone(), ty: f.ty.clone(), visibility: f.visibility, is_static: f.is_static, ..Default::default() })
             .collect();
-        let mut seen_methods: BTreeSet<(String, usize)> = BTreeSet::new();
+        let mut seen_methods: BTreeSet<String> = BTreeSet::new();
+        let signature = |m: &RawMethod| format!("{}({})", m.name, m.params.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join(","));
         let methods: Vec<Method> = t
             .methods
             .iter()
-            .filter(|m| seen_methods.insert((m.name.clone(), m.params.len())))
+            .filter(|m| seen_methods.insert(signature(m)))
             .map(|m| {
                 let locals: BTreeMap<&str, &str> =
                     m.params.iter().chain(m.locals.iter()).filter(|(_, ty)| ty != "var").map(|(n, ty)| (n.as_str(), ty.as_str())).collect();
@@ -395,7 +444,8 @@ pub fn import_java(dir: &Path, code_root: Option<&str>) -> Result<ImportResult, 
                 }
                 let uses: Vec<String> = t.fields.iter().filter(|f| m.identifiers.contains(&f.name)).map(|f| f.name.clone()).collect();
                 Method {
-                    name: m.name.clone(),
+                    name: if t.methods.iter().filter(|other| other.name == m.name).count() > 1 { signature(m) } else { m.name.clone() },
+                    source: Some(SourceSymbol { symbol: format!("{}#{}", t.source.symbol, signature(m)), file: t.source.file.clone(), start_line: m.facts.start_line, end_line: m.facts.end_line }),
                     params: m.params.iter().map(|(n, ty)| Param { name: n.clone(), ty: ty.clone() }).collect(),
                     returns: m.returns.clone(),
                     visibility: if t.kind == "interface" && m.visibility == Visibility::Package { Visibility::Public } else { m.visibility },
@@ -478,7 +528,8 @@ pub fn import_java(dir: &Path, code_root: Option<&str>) -> Result<ImportResult, 
     }
     ops.extend(rels);
     let mut design = apply_all(&Design::default(), &ops, Mode::Commit(Status::Accepted, Some("import"))).map_err(|e| e.0)?;
-    design.name = format!("code: {}", dir.file_name().and_then(|n| n.to_str()).unwrap_or("project"));
+    for t in &types { if let Some(c) = design.class_mut(&name_of(t)) { c.source = Some(t.source.clone()); } }
+    design.name = format!("code: {}",  dir.file_name().and_then(|n| n.to_str()).unwrap_or("project"));
     design.settings.code_root = (!root.is_empty()).then_some(root);
     Ok(ImportResult { design, files: files.len(), skipped })
 }

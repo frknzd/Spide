@@ -17,7 +17,7 @@ pub fn op(v: Value) -> Op {
 }
 
 pub const MODES: [(PartnerMode, &str, &str); 4] = [
-    (PartnerMode::Examiner, "examiner", "raises decisions; you choose and defend"),
+    (PartnerMode::Examiner, "examiner", "explains alternatives; you approve with optional notes"),
     (PartnerMode::Socratic, "socratic", "only asks questions; you make every change"),
     (PartnerMode::DevilsAdvocate, "devil's advocate", "argues against what you lean towards"),
     (PartnerMode::Sketch, "sketch", "proposes freely; decisions only for big forks"),
@@ -480,11 +480,12 @@ fn rules_section(ui: &mut Ui, st: &mut BriefUi, rules: &Rules, backend: &Backend
     ui.add_space(13.0);
     widgets::section(ui, "Thresholds");
     let th = &rules.thresholds;
-    let rows: [(&'static str, &str, usize); 4] = [
+    let rows: [(&'static str, &str, usize); 5] = [
         ("god_members", "god class: members >", th.god_members),
         ("god_responsibilities", "god class: responsibilities >", th.god_responsibilities),
         ("high_fan_out", "high coupling: fan-out ≥", th.high_fan_out),
         ("max_scenario_hops", "chatty scenario: hops >", th.max_scenario_hops),
+        ("max_method_lines", "long method: code lines >", th.max_method_lines as usize),
     ];
     for (key, label, value) in rows {
         ui.horizontal(|ui| {
@@ -501,6 +502,7 @@ fn rules_section(ui: &mut Ui, st: &mut BriefUi, rules: &Rules, backend: &Backend
                                 "god_members" => t.god_members = v,
                                 "god_responsibilities" => t.god_responsibilities = v,
                                 "high_fan_out" => t.high_fan_out = v,
+                                "max_method_lines" => t.max_method_lines = v as u32,
                                 _ => t.max_scenario_hops = v,
                             }
                             set(Rules { thresholds: t, ..rules.clone() });

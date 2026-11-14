@@ -98,6 +98,9 @@ pub fn adr(d: &Design, x: &Decision, n: usize) -> String {
             let _ = writeln!(o, ".");
         }
     }
+    if !x.notes.trim().is_empty() {
+        let _ = writeln!(o, "\nUser notes: {}", x.notes.trim());
+    }
     if let Some(fb) = last.and_then(|a| a.feedback.as_ref()) {
         let who = if x.state == DecisionState::Overruled { "Examiner (overruled)" } else { "Examiner" };
         let _ = writeln!(o, "\n> {who}: {fb}");

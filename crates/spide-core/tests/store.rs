@@ -86,7 +86,7 @@ fn rename_updates_references() {
 }
 
 #[test]
-fn decision_flow_accept_reject_overrule() {
+fn decision_flow_user_approval_replaces_examiner_gate() {
     let mut s = library();
     let opts: Vec<DecisionOption> = serde_json::from_str(
         r#"[{"label":"Library creates loans","ops":[{"op":"add_relation","from":"Library","to":"Loan","kind":"dependency"}]},
@@ -94,24 +94,18 @@ fn decision_flow_accept_reject_overrule() {
     )
     .unwrap();
     let d = s.propose_decision("Who creates loans?".into(), None, opts).unwrap();
-    assert!(s.submit_defense(&d, Some("A".into()), None, "".into()).is_err(), "defence required");
-    s.submit_defense(&d, Some("A".into()), None, "Creator pattern: library aggregates books".into()).unwrap();
-    s.evaluate_defense(&d, false, "Library doesn't record loans".into(), None).unwrap();
+    assert!(s.evaluate_defense(&d, true, "late verdict".into(), None).is_err());
     assert!(!s.design.relations.iter().any(|r| r.from == "Library" && r.to == "Loan"));
-    s.overrule(&d).unwrap();
+    s.approve_decision(&d, s.design.rev, String::new()).unwrap();
     let r = s.design.relations.iter().find(|r| r.from == "Library" && r.to == "Loan").unwrap();
-    assert_eq!(r.status, Status::Overruled);
+    assert_eq!(r.status, Status::Accepted);
 
-    // strict mode forbids overrule
+    // Legacy strict settings cannot impose a defence gate.
     let opts2: Vec<DecisionOption> =
         serde_json::from_str(r#"[{"label":"x","ops":[{"op":"add_class","name":"Fine"}]}]"#).unwrap();
     s.set_examiner(ExaminerMode::Strict);
     let d2 = s.propose_decision("Fines?".into(), None, opts2).unwrap();
-    s.submit_defense(&d2, None, Some("no fines at all".into()), "keep it simple".into()).unwrap();
-    s.evaluate_defense(&d2, false, "fines are a requirement".into(), None).unwrap();
-    assert!(s.overrule(&d2).is_err());
-    s.submit_defense(&d2, Some("A".into()), None, "ok fines are needed for late returns".into()).unwrap();
-    s.evaluate_defense(&d2, true, "good".into(), None).unwrap();
+    s.approve_decision(&d2, s.design.rev, "optional guidance".into()).unwrap();
     assert!(s.design.class("Fine").is_some());
 }
 
@@ -174,8 +168,7 @@ fn provenance_is_stamped_on_commit() {
     // a decision stamps its id
     let opts: Vec<DecisionOption> = serde_json::from_str(r#"[{"label":"x","ops":[{"op":"add_class","name":"Fine"},{"op":"add_attribute","class":"Loan","attribute":{"name":"fine","type":"Fine"}}]}]"#).unwrap();
     let d = s.propose_decision("Fines?".into(), None, opts).unwrap();
-    s.submit_defense(&d, Some("A".into()), None, "because".into()).unwrap();
-    s.evaluate_defense(&d, true, "ok".into(), None).unwrap();
+    s.approve_decision(&d, s.design.rev, String::new()).unwrap();
     assert_eq!(s.design.class("Fine").unwrap().origin.as_deref(), Some(d.as_str()));
     assert_eq!(s.design.class("Loan").unwrap().origin.as_deref(), Some("P1"), "existing class keeps its origin");
     let fine = s.design.class("Loan").unwrap().attributes.iter().find(|a| a.name == "fine").unwrap();
