@@ -8,23 +8,31 @@ interface Props {
   metrics: Metrics;
   stress: string | null;
   onStress: (name: string | null) => void;
-  run: (p: Promise<unknown>) => void;
+  run: (p: Promise<unknown>) => Promise<boolean>;
 }
 
 export function ChangeSection({ design, metrics, stress, onStress, run }: Props) {
   const [text, setText] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
   const names = new Set(design.change_scenarios.map((c) => c.name));
   // expected changes from the brief that have no scenario yet
   const seeds = design.forces.filter((f) => f.kind === "change" && f.status !== "proposed" && !names.has(f.name));
-  const add = () => {
+  const add = async () => {
     const name = text.trim();
-    if (!name) return;
-    run(api.userOps([{ op: "add_change_scenario", name }]).then(() => api.analyseChange(name)));
-    setText("");
+    if (!name) return setError("Describe a change first.");
+    if (names.has(name)) return setError("This scenario already exists. Use Analyse on it below.");
+    setPending(true); setError("");
+    if (await run(api.userOps([{ op: "add_change_scenario", name }]))) {
+      setText("");
+      if (!(await run(api.analyseChange(name)))) setError("Scenario saved, but analysis couldn't start. Use Analyse to retry.");
+    } else setError("Not saved. Your scenario is kept.");
+    setPending(false);
   };
   return (
     <div className="bp-sec">
-      <div className="hc-h">change scenarios — what if…?</div>
+      <label className="hc-h" htmlFor="change-scenario">Change scenarios · what if…?</label>
+      {metrics.changes.length === 0 && seeds.length === 0 && <div className="empty-line">Add a likely change to see which classes it touches.</div>}
       {metrics.changes.map((c) => {
         const cs = design.change_scenarios.find((x) => x.name === c.name);
         const pct = Math.round(c.locality * 100);
@@ -40,13 +48,13 @@ export function ChangeSection({ design, metrics, stress, onStress, run }: Props)
               {c.analysed ? (
                 <>
                   <span>{c.impacted.length} impacted · {c.ripple.length} ripple{c.packages.length > 0 ? ` · ${c.packages.length} package${c.packages.length > 1 ? "s" : ""}` : ""}</span>
-                  <button className="link" onClick={() => onStress(stress === c.name ? null : c.name)}>{stress === c.name ? "stop" : "stress test"}</button>
+                  <button className="link" onClick={() => onStress(stress === c.name ? null : c.name)}>{stress === c.name ? "Stop stress test" : "Stress test"}</button>
                 </>
               ) : (
                 <span className="faint">not analysed yet</span>
               )}
-              <button className="link" onClick={() => run(api.analyseChange(c.name))}>{c.analysed ? "re-analyse" : "analyse"}</button>
-              <button className="fx" title="remove" onClick={() => run(api.userOps([{ op: "remove_change_scenario", name: c.name }]))}>✕</button>
+              <button className="link" onClick={() => run(api.analyseChange(c.name))}>{c.analysed ? "Re-analyse" : "Analyse"}</button>
+              <button className="fx" aria-label={`Remove ${c.name}`} title="Remove (⌘Z undoes)" onClick={() => run(api.userOps([{ op: "remove_change_scenario", name: c.name }]))}>✕</button>
             </div>
           </div>
         );
@@ -54,10 +62,14 @@ export function ChangeSection({ design, metrics, stress, onStress, run }: Props)
       {seeds.map((f) => (
         <div key={f.name} className="change seed">
           <span className="fname">{f.name}</span>
-          <button className="link" onClick={() => run(api.userOps([{ op: "add_change_scenario", name: f.name, description: f.description }]).then(() => api.analyseChange(f.name)))}>analyse</button>
+          <button className="link" onClick={async () => { if (await run(api.userOps([{ op: "add_change_scenario", name: f.name, description: f.description }]))) void run(api.analyseChange(f.name)); }}>Analyse</button>
         </div>
       ))}
-      <input className="bp-add" value={text} placeholder="+ what if we must support …?" onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} />
+      <form className="inline-form" onSubmit={(e) => { e.preventDefault(); void add(); }}>
+        <input id="change-scenario" className="bp-add" value={text} disabled={pending} aria-invalid={!!error} placeholder="What if we must support…?" onChange={(e) => { setText(e.target.value); setError(""); }} />
+        <button type="submit" disabled={pending || !text.trim()}>{pending ? "Adding…" : "Add"}</button>
+      </form>
+      {error && <div className="form-error" role="alert">{error}</div>}
     </div>
   );
 }

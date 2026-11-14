@@ -5,8 +5,10 @@ mod commands;
 mod history;
 mod mcp;
 mod pi_bridge;
+mod pi_control;
 mod prompts;
 mod state;
+mod terminal;
 mod watcher;
 
 use pi_bridge::PiBridge;
@@ -21,11 +23,46 @@ fn default_project() -> PathBuf {
     dirs::document_dir().unwrap_or_else(|| PathBuf::from(".")).join("Spide").join("untitled")
 }
 
+/// macOS menu bar: the default menus (Edit/Window keep copy & paste working) plus File › Export… / Export Again.
+fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem};
+    use tauri::Emitter;
+    let menu = Menu::default(app)?;
+    let export = MenuItem::with_id(app, "export", "Export…", true, Some("CmdOrCtrl+E"))?;
+    let again = MenuItem::with_id(app, "export-again", "Export Again", true, Some("CmdOrCtrl+Shift+E"))?;
+    let mut placed = false;
+    for item in menu.items()? {
+        if let MenuItemKind::Submenu(sm) = item {
+            if sm.text()? == "File" {
+                sm.insert(&export, 0)?;
+                sm.insert(&again, 1)?;
+                sm.insert(&PredefinedMenuItem::separator(app)?, 2)?;
+                placed = true;
+            }
+        }
+    }
+    if !placed {
+        let file = tauri::menu::Submenu::with_items(app, "File", true, &[&export, &again])?;
+        menu.insert(&file, 1)?;
+    }
+    app.set_menu(menu)?;
+    app.on_menu_event(|app, ev| {
+        let name = match ev.id().as_ref() {
+            "export" => "menu-export",
+            "export-again" => "menu-export-again",
+            _ => return,
+        };
+        let _ = app.emit(name, ());
+    });
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(PiBridge::default())
+        .manage(PiBridge::new())
         .setup(|app| {
+            install_menu(app.handle())?;
             let project = default_project();
             std::fs::create_dir_all(&project)?;
             let st = AppState::new(app.handle().clone(), project.clone());
@@ -45,6 +82,10 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
+            commands::terminal_read,
+            commands::terminal_write,
+            commands::terminal_resize,
+            commands::terminal_context,
             commands::send_prompt,
             commands::abort_agent,
             commands::restart_agent,
@@ -85,6 +126,9 @@ fn main() {
             commands::open_design,
             commands::save_as,
             commands::export_png,
+            commands::export_pdf,
+            commands::export_svg,
+            commands::reveal_path,
             commands::export_plantuml,
             commands::export_plantuml_all,
             commands::export_adr,
@@ -100,7 +144,7 @@ fn main() {
         .expect("error while building Spide")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
-                app.state::<PiBridge>().stop();
+                app.state::<PiBridge>().shutdown();
             }
         });
 }

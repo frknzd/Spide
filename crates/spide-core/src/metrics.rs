@@ -125,6 +125,8 @@ pub fn classify_issue(kind: &str) -> (&'static str, &'static str) {
         "role_inconsistency" | "disagreement" => ("responsibility", "RDD roles (Ch. 2)"),
         "change_ripple" | "chatty_scenario" | "multi_aggregate_write" => ("responsibility", "Protected Variations · Information Expert (Ch. 3)"),
         "layer" | "module_boundary" | "forbidden_dep" | "forbidden_type" | "orphan" | "consistency" => ("architecture", "Architecture rules"),
+        "exposed_state" => ("responsibility", "Encapsulation · protect invariants (review heuristic)"),
+        "narrowed_visibility" => ("uml", "Inheritance contract accessibility (not behavioural LSP)"),
         "long_params" => ("uml", "Bad smells: Long Parameter List (Ch. 5)"),
         "missing_types" | "inherited_repeated" => ("uml", "Exam notes: UML class diagrams (Ch. 6)"),
         "composite_incomplete" | "degenerate_visitor" => ("uml", "Composite / Visitor (Ch. 5–6)"),

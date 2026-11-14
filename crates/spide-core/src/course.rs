@@ -260,6 +260,34 @@ pub fn design_checks(d: &Design, ghosts: bool, resp: &crate::responsibility::Rep
                 "add the parameter types",
             ));
         }
+        // Public instance state is a review concern, not proof of poor encapsulation.
+        // Explicit data carriers and interfaces intentionally expose a data contract. Sketched designs
+        // default to public, so only imported code (whose visibility is real) is judged.
+        let from_code = c.methods.iter().any(|m| m.code.is_some());
+        if from_code && !c.is_interface() && !c.is_enum() && !matches!(c.stereotype.as_deref(), Some("value" | "record" | "dto" | "exception")) && r != "value" {
+            for a in c.attributes.iter().filter(|a| live(a.status) && !a.is_static && a.visibility == Visibility::Public) {
+                out.push(issue("exposed_state", 0.15, 0.55, "heuristic",
+                    format!("{}.{} exposes instance state", c.name, a.name),
+                    vec![c.name.clone(), format!("{}.{}", c.name, a.name)],
+                    "Public state permits clients to bypass behaviour that protects invariants. This may be intentional for data carriers; visibility alone does not establish a defect.",
+                    "review the invariant and callers before hiding the field; do not add getters and setters mechanically"));
+            }
+        }
+        // Only compare unambiguous, identical parameter signatures against a public parent method.
+        // This is a structural accessibility concern, not a behavioural LSP verdict.
+        for rel in d.relations.iter().filter(|rel| live(rel.status) && rel.from == c.name && matches!(rel.kind, RelationKind::Inheritance | RelationKind::Realization)) {
+            let Some(parent) = d.class(&rel.to).filter(|p| live(p.status)) else { continue };
+            for m in c.methods.iter().filter(|m| live(m.status) && !m.is_static && m.visibility != Visibility::Public) {
+                if c.methods.iter().filter(|x| x.name == m.name).count() != 1 || parent.methods.iter().filter(|x| x.name == m.name).count() != 1 { continue; }
+                if parent.methods.iter().any(|p| live(p.status) && !p.is_static && p.visibility == Visibility::Public && p.name == m.name && p.params.iter().map(|x| &x.ty).eq(m.params.iter().map(|x| &x.ty))) {
+                    out.push(issue("narrowed_visibility", 0.3, 1.0, "structure",
+                        format!("{}.{} narrows a public operation of {}", c.name, m.name, parent.name),
+                        vec![c.name.clone(), format!("{}.{}", c.name, m.name)],
+                        "The matching parent operation is public but the child operation is not. Clients of the parent expect the operation to remain accessible. This checks the model's visibility contract, not behavioural substitutability.",
+                        "preserve public visibility or review whether this inheritance relationship is appropriate"));
+                }
+            }
+        }
         // inherited attributes repeated
         let inh = crate::detail::inherited_attributes(d, &c.name);
         let repeated: Vec<&str> = c.attributes.iter().filter(|a| live(a.status) && inh.contains(&a.name)).map(|a| a.name.as_str()).collect();
@@ -270,7 +298,7 @@ pub fn design_checks(d: &Design, ghosts: bool, resp: &crate::responsibility::Rep
                 1.0,
                 "structure",
                 format!("{} repeats inherited attribute(s) {}", c.name, repeated.join(", ")),
-                vec![c.name.clone()],
+                std::iter::once(c.name.clone()).chain(repeated.iter().map(|name| format!("{}.{}", c.name, name))).collect(),
                 "Don't repeat inherited variables/operations: it clutters the diagram and suggests two separate fields.",
                 "remove them from the subclass",
             ));

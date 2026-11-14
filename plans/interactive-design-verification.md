@@ -63,8 +63,38 @@ Still to check by hand:
 - Panning frame rate in the desktop WebView (headless Chrome holds 60 fps).
 - Heuristics stay heuristics: role and concern detection read names, verbs and calls (and bodies when imported); the agent's assessment or an explicit `role`/`concern` overrides them. Calibration asserts orderings, not absolute numbers.
 
+## Embedded pi / workspace pass (2026-11-14)
+
+Implementation: `plans/embedded-pi-and-hover.md`. This replaces the RPC/reconstructed-chat transport described in older entries above; it does not certify the older outstanding real-agent workflows.
+
+### Actual results
+- `cargo test --workspace`: **88 passed, 4 ignored**, including PTY ANSI/split UTF-8/input/resize/exit, bounded backpressure/replay, active detached-descendant shutdown, control authentication, stale/duplicate response handling, message caps and timeout cleanup. Existing ignored external/scale checks remain ignored.
+- `npm test`: **6 passed** (fake-timer hover/placement, draft isolation, modified-key encoding, fake extension handshake, busy follow-up exactly once, reload lifecycle, images/context transformation and visible failure with draft restoration).
+- `npm run typecheck`, `npm run build`: passed. Extension separately typechecked against installed pi **1.5.2** public `ExtensionAPI` declarations; corrected the lifecycle to supported shutdown/start hooks (no invented `session_switch` event).
+- `npm run test:browser` (Chrome, disposable library snapshot; every browser mutation intercepted): passed at **1440×900** and **800×560**. Checks compact radio selection, zero collapsed mini diagrams, lazy details, explicit reversible preview, no preview layout saves/pruning, revision cancellation, decision drafts/navigation, six-view hover (class/domain/package/system/use-case/sequence), narrow drawer not covering pi, footer bounds, collapse/reopen retaining one xterm and no restart. Screenshots: ignored `.local/workspace-{1440,800}.png`. The second browser script uses deterministic mocked **native IPC** under React StrictMode: one polling stream, split ANSI/UTF-8 decoded intact by xterm, Ctrl+P/L and Shift+Tab, negotiated Shift+Enter / backward-cycle encoding, collapse retention, zero App/Canvas renders while streaming, and stale-generation restart all passed.
+- Continuous-motion hover: **83–94 ms** to first DOM appearance over measured browser runs (91 ms in the final run) (intent timer is 60 ms). Further same-target movement produced **0 App / Canvas / DiagramContent renders**. Tooltip frame updates stay local. Removed old entrance animation so it doesn't add perceived delay.
+- `npm run test:terminal`: real installed pi in a disposable PTY, **all seven built-in tools active** (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`), authenticated handshake, **one model-select event after Ctrl+P**, xterm modifyOtherKeys negotiation, and **native `/reload` followed by authenticated reconnect**. No model requests, source edits, optional package installs or permission auto-approvals. User settings file modification time remained unchanged. Ctrl+L / Escape / Shift+Tab bytes also exercised, but their visual UI is not asserted by this byte-stream smoke.
+- Repeated real PTY startup with project MCP config: pi displayed **Trust project folder?** and deliberately did not handshake until trust. This is expected: no automatic approval was added. A first launch can remain `starting` while this native prompt is waiting.
+- `npm run app:build -- --bundles app`: release app built (about **21.8 MiB**, existing large-bundle advisory only). Corrected the generated bundle's known resource/signature mismatch with `codesign --force --deep --sign -`; `codesign --verify --deep --strict` passed. **No install/replacement of `/Applications/Spide.app`.**
+- LaunchServices/Finder-style launch of the built bundle with **PATH=/usr/bin:/bin** and a disposable project succeeded. It found managed pi and Node under nvm despite no `bin/pi` symlink. Fixed this actual PATH recovery failure during verification. Apple-event Quit terminated both app and owned pi; no live child remained.
+- `cargo fmt --check` could not run: the installed Rust toolchain lacks `rustfmt` (not installed as part of this change).
+
+### Remaining manual/platform checks (not claimed as passed)
+- A visible native WebKit session is still required for full model picker/backward cycling, multiline input/paste, clipboard/selection, alternate screen, permission prompts, and transcript scroll/tool expansion. Desktop screen capture was unavailable (`could not create image from display`). The real PTY and headless Chrome checks are **not** a substitute for this.
+- Real MCP proposal accept/reject, examiner verdict, fix-with-agent, import/generation, dialogs, branches/project switches and typed-draft preservation while a live model is busy remain end-to-end manual checks. The fake extension tests exercise the transport/delivery semantics, not a model verdict. No source-edit/shell model turn was executed against user code.
+- Sample native WebKit CPU while streaming a model response. Same-target Chrome motion has no app/diagram render storm; terminal rendering is imperative, but real streaming CPU is not measured here.
+- Unix-domain control transport: macOS/Unix only, no Windows support claimed. Active descendants (including separate sessions) are stopped/reaped on owned-session shutdown; independently daemonized descendants already reparented after an externally killed pi are not guaranteed collectible. A renderer recreated after consuming more than the bounded replay window may need a native redraw; collapse/reopen and StrictMode reuse the same xterm/cursor instead.
+- Spide-only changes do not alter ZAP's REST Extraction extension or its tested behaviour. The separate shared **REST Extraction Extension Test Plan.docx** was therefore not edited; this repository's verification record is the relevant test-plan update.
+
+### Reproduce safely
+1. Copy `examples/library.json` to a fresh temporary folder's `design.json`; start the debug app with `SPIDE_PROJECT` pointing there (optionally `SPIDE_PI=/usr/bin/false` for browser-only checks).
+2. Start `npm run dev`; run `npm run test:browser`. Mutations are mocked, including layout saves and agent intents.
+3. Run `npm test`, `cargo test --workspace`, `npm run typecheck`, `npm run build`, `npm run test:terminal`.
+4. For native desktop checks, launch the built bundle on that disposable project, answer native trust/permission prompts yourself, and use `/spide` for app commands. Do not use user source files as shell/edit fixtures.
+
 ## Edit history
 | Author | Version | Edit | Date |
 |---|---|---|---|
 | AI coding assistant | 1 | Record automated/dev checks and outstanding manual/regression checks | 2026-11-12 |
 | AI coding assistant | 2 | Diagnostics and UI pass: performance numbers, automated checks, smoke runs, remaining manual checks | 2026-11-13 |
+| AI coding assistant | 3 | Real pi PTY/private control, responsive hover, three-pane workspace, explicit read-only alternatives; measured tests, release/Finder verification and native/platform limitations | 2026-11-14 |

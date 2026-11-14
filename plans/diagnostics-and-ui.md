@@ -247,7 +247,7 @@ The engine works on any `Design`: the intended design, or the imported code ("re
 - [x] E2 Course checks: Demeter, feature envy, data class, fat controller, UI bypasses controller, creator, long params, UML hygiene, composite/visitor sanity
 - [x] F1 MCP tools and skill/prompt updates
 - [x] G1 Popover scorecard, hover purpose, home markers, lenses
-- [ ] Docs and verification notes
+- [x] Docs and verification notes
 
 ## Verification
 - `cargo test --workspace`. The new golden tests on `examples/rest-extraction.json` assert the five acceptance findings above, with no duplication reported for the `RestExtractor` delegation.

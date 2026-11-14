@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type MutableRefObject } from "react";
 import { Chip, NodeDefs } from "../canvas/ClassNode";
 import { Edge } from "../canvas/Edge";
+import { useRoutes } from "../canvas/useRoutes";
 import { elkLayout } from "../canvas/layout";
 import { C, F, FONT_MONO, FONT_SANS, healthColor, LAYER_COLOR, textWidth } from "../canvas/visuals";
 import { Viewport, type ViewportApi, type WorldRect } from "../canvas/Viewport";
@@ -49,6 +50,10 @@ export function PackageView({ snap, vpRef, onPrune, onHover, onClickTarget }: Vi
     return p && b ? { x: p.x, y: p.y, w: b.w, h: b.h } : null;
   };
 
+  // routing boxes include the folder tab above and the metric chips below
+  const rBoxes = pkgs.flatMap((p) => { const r = rect(p.name); return r ? [{ id: p.name, x: r.x, y: r.y + 6, w: r.w, h: r.h + 40 }] : []; });
+  const routes = useRoutes(rBoxes, deps.filter((d) => d.from !== d.to).map((d) => ({ id: d.from + ">" + d.to, from: d.from, to: d.to, toDeco: "arrow" as const })));
+
   return (
     <Viewport ref={(v) => void (vpRef.current = v)} defs={<NodeDefs />} empty={pos.size === 0} onPrune={onPrune} collect={collect} onHover={onHover} onClickTarget={(t) => onClickTarget(t)}>
       {deps.map((d) => {
@@ -57,7 +62,7 @@ export function PackageView({ snap, vpRef, onPrune, onHover, onClickTarget }: Vi
         if (!a || !b) return null;
         const color = d.in_cycle ? C.cycle : d.layer_violation ? C.warn : C.edge;
         return (
-          <Edge key={d.from + ">" + d.to} from={a} to={b} kind="dependency" label={`${d.count}`} warn={d.layer_violation ? "layer ↑" : d.in_cycle ? "cycle" : null}
+          <Edge key={d.from + ">" + d.to} route={routes.get(d.from + ">" + d.to)} from={a} to={b} kind="dependency" label={`${d.count}`} warn={d.layer_violation ? "layer ↑" : d.in_cycle ? "cycle" : null}
             bend={deps.some((x) => x.from === d.to && x.to === d.from) ? 1 : 0}
             style={{ color, width: d.in_cycle ? 2.4 : 1.5, opacity: 1, strained: d.in_cycle }} />
         );

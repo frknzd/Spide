@@ -22,7 +22,7 @@ const PRIO = ["", "must", "should", "nice"];
 interface Props {
   design: Design;
   onClose: () => void;
-  run: (p: Promise<unknown>) => void;
+  run: (p: Promise<unknown>) => Promise<boolean>;
   /** extra sections (rules) */
   children?: ReactNode;
 }
@@ -30,17 +30,17 @@ interface Props {
 export function BriefPanel({ design, onClose, run, children }: Props) {
   const forces = design.forces;
   return (
-    <div className="brief-panel" data-ui>
+    <aside className="brief-panel" data-ui aria-labelledby="brief-title">
       <div className="bp-head">
-        <span className="dp-kicker">brief</span>
-        <button className="link" onClick={onClose} title="⌘B">close</button>
+        <div><span className="dp-kicker">Design context</span><h2 id="brief-title">Brief &amp; rules</h2></div>
+        <button className="icon-button" aria-label="Close brief" onClick={onClose} title="Close · ⌘B">×</button>
       </div>
       <div className="bp-body">
         <div className="bp-sec">
-          <div className="hc-h">partner mode</div>
-          <div className="bp-modes">
+          <div className="hc-h">Partner mode</div>
+          <div className="bp-modes" role="group" aria-label="Partner mode">
             {MODES.map((m) => (
-              <button key={m.mode} className={design.settings.partner === m.mode ? "on" : ""} title={m.help}
+              <button key={m.mode} aria-pressed={design.settings.partner === m.mode} className={design.settings.partner === m.mode ? "on" : ""} title={m.help}
                 onClick={() => run(api.setPartner(m.mode))}>{m.label}</button>
             ))}
           </div>
@@ -51,29 +51,39 @@ export function BriefPanel({ design, onClose, run, children }: Props) {
         ))}
         {forces.length === 0 && !design.settings.brief_skipped && (
           <div className="faint small bp-note">
-            The agent asks for the brief before designing. Answer in the prompt, add forces here, or type <span className="mono">/skip</span>.
+            The agent asks for the brief before designing. Answer in pi, add forces here, or type <span className="mono">/skip</span>.
           </div>
         )}
         {children}
       </div>
-    </div>
+    </aside>
   );
 }
 
 function ForceGroup({ kind, title, hint, forces, run }: { kind: ForceKind; title: string; hint: string; forces: Force[]; run: Props["run"] }) {
   const [text, setText] = useState("");
-  const add = () => {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const add = async () => {
     const name = text.trim();
-    if (!name) return;
-    run(api.userOps([{ op: "add_force", name, kind }]));
-    setText("");
+    if (!name) return setError("Enter a short description first.");
+    if (forces.some((f) => f.name.toLowerCase() === name.toLowerCase())) return setError("This item is already in the brief.");
+    setPending(true); setError("");
+    if (await run(api.userOps([{ op: "add_force", name, kind }]))) setText("");
+    else setError("Not saved. Your text is kept so you can try again.");
+    setPending(false);
   };
+  const id = `force-${kind}`;
   return (
     <div className="bp-sec">
-      <div className="hc-h">{title}</div>
+      <label className="hc-h" htmlFor={id}>{title}</label>
+      {forces.length === 0 && <div className="empty-line">Nothing yet</div>}
       {forces.map((f) => <ForceRow key={f.name} f={f} run={run} />)}
-      <input className="bp-add" value={text} placeholder={`+ ${hint}`} onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && add()} />
+      <form className="inline-form" onSubmit={(e) => { e.preventDefault(); void add(); }}>
+        <input id={id} className="bp-add" value={text} disabled={pending} placeholder={hint} aria-invalid={!!error} onChange={(e) => { setText(e.target.value); setError(""); }} />
+        <button type="submit" disabled={pending || !text.trim()}>{pending ? "Adding…" : "Add"}</button>
+      </form>
+      {error && <div className="form-error" role="alert">{error}</div>}
     </div>
   );
 }
@@ -83,44 +93,53 @@ function ForceRow({ f, run }: { f: Force; run: Props["run"] }) {
   const [name, setName] = useState(f.name);
   const [desc, setDesc] = useState(f.description ?? "");
   const saving = useRef(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
   const ghost = f.status === "proposed" || f.status === "removing";
   if (ghost) {
     return (
-      <div className={`force ghost ${f.status}`} title="proposed by the agent — click to accept, right-click to reject"
-        onClick={() => f.proposal && run(api.accept(f.proposal))}
-        onContextMenu={(e) => { e.preventDefault(); f.proposal && run(api.reject(f.proposal)); }}>
+      <div className={`force ghost ${f.status}`} onContextMenu={(e) => { e.preventDefault(); f.proposal && run(api.reject(f.proposal)); }}>
         <span className="prio">{PRIO[f.priority]}</span>
-        <span className="fname">{f.status === "removing" ? "− " : "+ "}{f.name}</span>
+        <span className="fname"><span className="proposal-label">{f.status === "removing" ? "Proposed removal" : "Proposed"}</span>{f.name}</span>
+        {f.proposal && <span className="ghost-actions"><button onClick={() => run(api.accept(f.proposal!))}>Accept</button><button onClick={() => run(api.reject(f.proposal!))}>Reject</button></span>}
         {f.description && <div className="fdesc">{f.description}</div>}
       </div>
     );
   }
-  const save = () => {
-    if (saving.current) return; // Enter + blur both fire
-    saving.current = true;
-    setTimeout(() => (saving.current = false), 0);
-    setEditing(false);
+  const save = async () => {
+    if (saving.current) return;
     const n = name.trim();
+    if (!n) return setError("Name is required.");
     const changes: Record<string, unknown> = {};
-    if (n && n !== f.name) changes.rename = n;
+    if (n !== f.name) changes.rename = n;
     if (desc.trim() !== (f.description ?? "")) changes.description = desc.trim();
-    if (Object.keys(changes).length) run(api.userOps([{ op: "update_force", name: f.name, ...changes }]));
+    if (!Object.keys(changes).length) return setEditing(false);
+    saving.current = true; setPending(true); setError("");
+    if (await run(api.userOps([{ op: "update_force", name: f.name, ...changes }]))) setEditing(false);
+    else setError("Not saved. Your changes are kept.");
+    saving.current = false; setPending(false);
   };
+  const cancel = () => { setName(f.name); setDesc(f.description ?? ""); setError(""); setEditing(false); };
   if (editing) {
     return (
-      <div className="force editing" onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}>
-        <input value={name} autoFocus onChange={(e) => setName(e.target.value)} />
-        <input value={desc} placeholder="description (optional)" onChange={(e) => setDesc(e.target.value)} onBlur={save} />
-      </div>
+      <form className="force editing" onSubmit={(e) => { e.preventDefault(); void save(); }} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); cancel(); } }}>
+        <label className="sr-only" htmlFor={`fn-${f.name}`}>Name</label>
+        <input id={`fn-${f.name}`} value={name} autoFocus disabled={pending} onChange={(e) => setName(e.target.value)} />
+        <label className="sr-only" htmlFor={`fd-${f.name}`}>Description</label>
+        <input id={`fd-${f.name}`} value={desc} disabled={pending} placeholder="Description (optional)" onChange={(e) => setDesc(e.target.value)} />
+        {error && <div className="form-error" role="alert">{error}</div>}
+        <div className="form-actions"><button type="button" onClick={cancel} disabled={pending}>Cancel</button><button className="primary" type="submit" disabled={pending}>{pending ? "Saving…" : "Save"}</button></div>
+      </form>
     );
   }
   return (
     <div className="force">
-      <button className={`prio p${f.priority}`} title="priority — click to cycle"
+      <button className={`prio p${f.priority}`} title="Priority — click to cycle" aria-label={`Priority ${PRIO[f.priority]}. Change priority`}
         onClick={() => run(api.userOps([{ op: "update_force", name: f.name, priority: (f.priority % 3) + 1 }]))}>{PRIO[f.priority]}</button>
-      <span className="fname" onDoubleClick={() => setEditing(true)} title="double-click to edit">{f.name}</span>
-      <button className="fx" title="remove" onClick={() => run(api.userOps([{ op: "remove_force", name: f.name }]))}>✕</button>
-      {f.description && <div className="fdesc" onDoubleClick={() => setEditing(true)}>{f.description}</div>}
+      <span className="fname">{f.name}</span>
+      <button className="fx" aria-label={`Edit ${f.name}`} title="Edit" onClick={() => setEditing(true)}>✎</button>
+      <button className="fx" aria-label={`Remove ${f.name}`} title="Remove (⌘Z undoes)" onClick={() => run(api.userOps([{ op: "remove_force", name: f.name }]))}>✕</button>
+      {f.description && <div className="fdesc">{f.description}</div>}
     </div>
   );
 }

@@ -7,13 +7,23 @@ const DEV_URL = "http://127.0.0.1:47800/dev/snapshot";
 const call = <T = void>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
   if (inTauri) return invoke<T>(cmd, args);
   // browser preview (dev)
-  if (cmd === "get_snapshot") return fetch(DEV_URL).then((r) => r.json());
+  if (cmd === "get_snapshot") return fetch(DEV_URL).then(async (r) => {
+    if (!r.ok) throw new Error(`Workspace unavailable (${r.status}): ${await r.text()}`);
+    return r.json();
+  });
   // dev harness (debug builds): drive the running app over HTTP
   return fetch(`http://127.0.0.1:47800/dev/invoke/${cmd}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args ?? {}) })
     .then(async (r) => (r.ok ? ((await r.json()) as T) : Promise.reject(await r.text())));
 };
 
+export interface TerminalFrame { generation: number; start: number; next: number; bytes: number[]; exited: boolean; reset: boolean }
+const terminalCall = <T = void>(cmd: string, args?: Record<string, unknown>): Promise<T> => inTauri ? invoke<T>(cmd, args) : Promise.reject(new Error("The native pi terminal is available in the desktop app only"));
+
 export const api = {
+  terminalRead: (generation: number | null, after: number) => terminalCall<TerminalFrame>("terminal_read", { generation, after }),
+  terminalWrite: (generation: number, data: number[]) => terminalCall("terminal_write", { generation, data }),
+  terminalResize: (generation: number, cols: number, rows: number) => terminalCall("terminal_resize", { generation, cols, rows }),
+  terminalContext: (tab: string) => inTauri ? invoke("terminal_context", { tab }) : Promise.resolve(),
   snapshot: () => call<Snapshot>("get_snapshot"),
   prompt: (text: string, tab: Tab) => call("send_prompt", { text, tab }),
   abort: () => call("abort_agent"),
@@ -56,6 +66,9 @@ export const api = {
   open: (path: string) => call("open_design", { path }),
   saveAs: (path: string) => call("save_as", { path }),
   exportPng: (svg: string, path: string, scale: number) => call("export_png", { svg, path, scale }),
+  exportPdf: (svg: string, path: string) => call("export_pdf", { svg, path }),
+  exportSvg: (svg: string, path: string) => call("export_svg", { svg, path }),
+  revealPath: (path: string) => (inTauri ? invoke("reveal_path", { path }) : Promise.resolve()),
   exportPlantUml: (view: string, path: string) => call("export_plantuml", { view, path }),
   exportArchUnit: (path: string) => call("export_archunit", { path }),
   setCodeRoot: (root: string | null) => call("set_code_root", { root }),

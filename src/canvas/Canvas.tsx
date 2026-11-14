@@ -1,10 +1,12 @@
-import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "../state/api";
 import { perfCount } from "../state/perf";
+import { hoverStore, useHoveredClass } from "../state/hover";
+import { footprintOf, proposalAt, useGhostSpotlight, type ProposalFootprint } from "../state/proposal-focus";
 import type { Layer, Pos, Target } from "../state/types";
 import { NodeDefs } from "./ClassNode";
 import { boxesFor, DiagramContent, externalClasses, rectOf, type DiagramData, type Lens } from "./DiagramContent";
-import { methodConcerns, methodMarks, overlapLinks, scatteredByClass } from "../state/insights";
+import { memberDiagnostics, methodConcerns, methodMarks, overlapLinks, scatteredByClass } from "../state/insights";
 import { elkCompoundLayout, type GroupSpec } from "./layout";
 import { LivingLayout } from "./physics";
 import { nodeScale } from "./visuals";
@@ -17,6 +19,10 @@ export interface CanvasApi {
   focus(name: string | null): boolean;
   /** Zoom to a package and dim everything else; false if it has no classes on the canvas. */
   focusPackage(name: string): boolean;
+  /** Export mode: full detail regardless of zoom, optionally without diagnostics colouring. null = normal. */
+  setExportMode(mode: { plain: boolean } | null): void;
+  /** Zoom to everything one ghost proposal changes or connects to. */
+  locateProposal(id: string): boolean;
   viewport(): ViewportApi | null;
 }
 
@@ -33,8 +39,8 @@ interface Props {
   onPrune: (targets: Target[], at: { x: number; y: number }) => void;
   onClickTarget: (t: Target) => void;
   onHover: (key: string | null, at: { x: number; y: number }) => void;
-  hoverKey: string | null;
   insetRight?: number;
+  readOnly?: boolean;
   stress?: { impacted: Set<string>; ripple: Set<string> } | null;
   drift?: { missing: Set<string>; drifted: Set<string>; phantom: Set<string> } | null;
   /** a class was dropped onto another package */
@@ -52,7 +58,15 @@ export function packageRank(pk: { layer: Layer | null } | undefined): number {
 export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) {
   perfCount("Canvas");
   const vp = useRef<ViewportApi>(null);
+  const readOnly = useRef(!!p.readOnly);
+  readOnly.current = !!p.readOnly;
+  const alive = useRef(true);
+  const layoutRequest = useRef(0);
+  const fitTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [, setFrame] = useState(0);
+  // full orthogonal re-route once the layout has settled (while moving, only touched edges re-route)
+  const [routeEpoch, setRouteEpoch] = useState(0);
+  const settledSig = useRef("");
   const savedRef = useRef(p.saved);
   savedRef.current = p.saved;
   const layout = useMemo(
@@ -61,28 +75,40 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
         () => setFrame((f) => (f + 1) % 1e9),
         () => {
           const pos = layout.positions();
-          if (Object.keys(pos).length) api.setLayout(p.viewKey, pos).catch(() => {});
+          // re-route fully only if something moved since the last full route (an idle settle costs no render)
+          const sig = JSON.stringify(pos);
+          if (sig !== settledSig.current) { settledSig.current = sig; setRouteEpoch((n) => n + 1); }
+          if (!readOnly.current && alive.current && Object.keys(pos).length) api.setLayout(p.viewKey, pos).catch(() => {});
         },
       ),
     [p.viewKey], // eslint-disable-line react-hooks/exhaustive-deps
   );
-  useEffect(() => () => layout.stop(), [layout]);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; layoutRequest.current++; clearTimeout(fitTimer.current); layout.stop(); };
+  }, [layout]);
   const dragging = useRef<string | null>(null);
 
   const level = p.level ?? 4;
   const insights = useMemo(() => {
     const m = p.data.metrics;
-    return { marks: methodMarks(m), concerns: methodConcerns(m), overlap: overlapLinks(m), scattered: scatteredByClass(m) };
-  }, [p.data.metrics]);
+    return { marks: methodMarks(m), concerns: methodConcerns(m), overlap: overlapLinks(m), scattered: scatteredByClass(m), members: memberDiagnostics(m, p.data) };
+  }, [p.data.metrics, p.data.classes]); // eslint-disable-line react-hooks/exhaustive-deps
+  // classes whose hidden member findings are shown (local to this canvas; the detail level is unchanged)
+  const [exportMode, setExportMode] = useState<{ plain: boolean } | null>(null);
+  const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
+  const shownReveal = exportMode ? EMPTY : revealed;
+  const boxMembers = exportMode?.plain ? undefined : insights.members;
   const external = useMemo(() => externalClasses(p.data.classes, p.data.packages), [p.data.classes, p.data.packages]);
   const boxes = useMemo(
-    () => boxesFor(p.data.classes, p.showMethods !== false, Math.max(1, level), p.data.relations, undefined, external, insights.marks),
-    [p.data.classes, p.data.relations, p.showMethods, level, external, insights.marks],
+    () => boxesFor(p.data.classes, p.showMethods !== false, Math.max(1, level), p.data.relations, undefined, external, exportMode?.plain ? undefined : insights.marks, boxMembers, shownReveal),
+    [p.data.classes, p.data.relations, p.showMethods, level, external, insights.marks, boxMembers, shownReveal, exportMode?.plain],
   );
   const cm = p.data.metrics?.classes;
 
   // sync the simulation with the model
   useEffect(() => {
+    layoutRequest.current++;
     const pk = new Map(p.data.packages.map((x) => [x.name, x]));
     const specs = p.data.classes.map((c) => {
       const b = boxes.get(c.name)!;
@@ -111,10 +137,13 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
     const ss = specs ?? [...layout.nodes.values()].map((n) => ({ id: n.id, w: n.w, h: n.h, pkg: n.pkg }));
     const groups: GroupSpec[] = p.data.packages.map((x) => ({ id: x.name, rank: packageRank(x), external: !!x.external }));
     const links = p.data.relations.map((r) => ({ from: r.from, to: r.to, kind: r.kind }));
+    const request = ++layoutRequest.current;
     elkCompoundLayout(ss.map((s) => ({ id: s.id, w: s.w, h: s.h, group: s.pkg })), links, groups)
       .then((pos) => {
+        if (!alive.current || request !== layoutRequest.current) return;
         layout.tidy(pos);
-        setTimeout(() => vp.current?.fit(), 1500);
+        clearTimeout(fitTimer.current);
+        fitTimer.current = setTimeout(() => vp.current?.fit(), 1500);
       })
       .catch((e) => console.error("layout failed", e));
   };
@@ -153,6 +182,24 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
     if (pinned && !p.data.classes.some((c) => c.name === pinned)) setPinned(null);
   }, [p.data.classes, pinned]);
 
+  /** Zoom so a proposal's changed classes and the classes it connects to are all in view. */
+  const locate = (fp: ProposalFootprint) => {
+    const names = [...fp.changed, ...fp.anchors];
+    const rs = names.map((n) => rectOf(n, pos, boxes, cm)).filter((r) => r !== null);
+    const svg = vp.current?.svg();
+    if (!rs.length || !svg) return false;
+    const x1 = Math.min(...rs.map((r) => r.x - r.w / 2)), y1 = Math.min(...rs.map((r) => r.y - r.h / 2));
+    const x2 = Math.max(...rs.map((r) => r.x + r.w / 2)), y2 = Math.max(...rs.map((r) => r.y + r.h / 2));
+    const b = svg.getBoundingClientRect();
+    const k = Math.max(0.25, Math.min(1.1, (b.width - (p.insetRight ?? 0) - 160) / (x2 - x1 || 1), (b.height - 160) / (y2 - y1 || 1)));
+    vp.current?.zoomTo((x1 + x2) / 2, (y1 + y2) / 2, k);
+    return true;
+  };
+  const locateProposal = (id: string) => {
+    const fp = footprintOf(p.data, new Set([id]));
+    return !!fp && locate(fp);
+  };
+
   const focusPackage = (pkg: string) => {
     const members = p.data.classes.filter((c) => c.package === pkg).map((c) => c.name);
     const rs = members.map((n) => rectOf(n, pos, boxes, cm)).filter((r) => r !== null);
@@ -163,14 +210,14 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
     const x2 = Math.max(...rs.map((r) => r.x + r.w / 2));
     const y2 = Math.max(...rs.map((r) => r.y + r.h / 2));
     const b = svg.getBoundingClientRect();
-    const k = Math.max(0.2, Math.min(1.2, (b.width - (p.insetRight ?? 0) - 240) / (x2 - x1 || 1), (b.height - 320) / (y2 - y1 || 1)));
+    const k = Math.max(0.2, Math.min(1.2, (b.width - (p.insetRight ?? 0) - 80) / (x2 - x1 || 1), (b.height - 80) / (y2 - y1 || 1)));
     setPinned(null);
     setFocusSet(new Set(members));
     vp.current?.zoomTo((x1 + x2) / 2, (y1 + y2) / 2, k);
     return true;
   };
 
-  useImperativeHandle(ref, () => ({ fit: () => vp.current?.fit(), tidy, focus, focusPackage, viewport: () => vp.current }));
+  useImperativeHandle(ref, () => ({ fit: () => vp.current?.fit(), tidy, focus, focusPackage, locateProposal, setExportMode, viewport: () => vp.current }));
 
   const pos = new Map<string, Pos>();
   for (const n of layout.nodes.values()) pos.set(n.id, { x: n.x!, y: n.y! });
@@ -221,7 +268,19 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
     return null;
   };
 
-  const focusClass = p.hoverKey?.startsWith("class:") ? p.hoverKey.slice(6) : pinned;
+  const hoveredClass = useHoveredClass();
+  // Hovering a ghost spotlights its whole proposal: what changes, what it plugs into, which package it lives in.
+  // Derived primitive: re-renders only when the hovered *proposal* changes, not on every hovered element.
+  const hoveredProposal = useSyncExternalStore(hoverStore.subscribe, () => proposalAt(hoverStore.snapshot()?.key ?? null, p.data));
+  const spotlight = useGhostSpotlight();
+  const proposalFocus = useMemo(() => {
+    if (p.readOnly) return null;
+    const ids = hoveredProposal ? [hoveredProposal]
+      : spotlight === "all" ? [...new Set([...p.data.classes.flatMap((c) => [c.proposal, ...c.attributes.map((a) => a.proposal), ...c.methods.map((m) => m.proposal)]), ...p.data.relations.map((r) => r.proposal)])].filter((x): x is string => !!x)
+      : spotlight ? [spotlight] : [];
+    return ids.length ? footprintOf(p.data, new Set(ids)) : null;
+  }, [hoveredProposal, spotlight, p.data, p.readOnly]);
+  const focusClass = proposalFocus ? null : hoveredClass ?? pinned;
 
   return (
     <Viewport
@@ -229,9 +288,16 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
       defs={<NodeDefs />}
       empty={p.data.classes.length === 0}
       insetRight={p.insetRight}
-      onPrune={p.onPrune}
+      onPrune={p.readOnly || !p.onPrune ? undefined : (ts, at) => { const real = ts.filter((t) => (t as { kind: string }).kind !== "reveal"); if (real.length) p.onPrune!(real, at); }}
       collect={collect}
       onClickTarget={(t, e) => {
+        const rv = t as unknown as { kind: string; class?: string };
+        if (rv.kind === "reveal" && rv.class) {
+          const name = rv.class;
+          setRevealed((s) => { const n = new Set(s); if (n.has(name)) n.delete(name); else n.add(name); return n; });
+          return;
+        }
+        if (p.readOnly) return;
         // ⌥-click pins / unpins a class where it is
         if (e.altKey && t.kind === "class" && layout.nodes.has(t.name)) {
           layout.togglePin(t.name);
@@ -244,6 +310,7 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
       onHover={p.onHover}
       onTransform={onTransform}
       onDragStart={(el, w) => {
+        if (p.readOnly) return false;
         const id = el.closest("[data-node]")?.getAttribute("data-node");
         if (!id || !layout.nodes.has(id)) return false;
         const n = layout.nodes.get(id)!;
@@ -261,13 +328,15 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
           if (target) p.onMoveToPackage(id, target);
         }
       }}
-      onDoubleClickTarget={(t, e) => p.onDoubleClickTarget?.(t, { x: e.clientX, y: e.clientY })}
+      onDoubleClickTarget={p.readOnly ? undefined : (t, e) => p.onDoubleClickTarget?.(t, { x: e.clientX, y: e.clientY })}
     >
-      <DiagramContent {...p.data} pos={pos} boxes={boxes} showMethods={p.showMethods} focusClass={focusClass} stress={p.stress} drift={p.drift}
-        pinned={layout.pinnedIds()} focusSet={focusSet} zoomCap={zoomCap} level={level} showImplicit={p.showImplicit}
-        lens={p.lens ?? "none"} marks={insights.marks} concerns={insights.concerns} overlap={insights.overlap} scattered={insights.scattered} />
+      <DiagramContent {...p.data} pos={pos} boxes={boxes} showMethods={p.showMethods} focusClass={focusClass} proposalFocus={exportMode ? null : proposalFocus} routeEpoch={routeEpoch} plain={!!exportMode?.plain} stress={p.stress} drift={p.drift}
+        pinned={exportMode ? undefined : layout.pinnedIds()} focusSet={exportMode ? null : focusSet} zoomCap={exportMode ? 4 : zoomCap} level={level} showImplicit={p.showImplicit}
+        lens={p.lens ?? "none"} marks={insights.marks} concerns={insights.concerns} overlap={insights.overlap} scattered={insights.scattered}
+        members={insights.members} revealed={shownReveal} />
     </Viewport>
   );
 }));
 
+const EMPTY = new Set<string>();
 const dragOffset = { current: [0, 0] as [number, number] };

@@ -5,10 +5,10 @@ Other diagrams (domain model, package, use case, sequence) are derived from the 
 
 ## Hard rules
 
-- You change the design **only** through the `spide` MCP tools (`mcp__spide__*`). Never write files.
+- Change the diagram/design **only** through the `spide` MCP tools (`mcp__spide__*`) and its proposal/decision workflow. Do not edit `design.json` or Spide's internal state directly. Ordinary source files can be inspected and edited directly; shell commands and all configured tools are available, subject to the user's native permission controls.
 - Start every task with `get_design` (and `get_metrics` when quality matters). Respect `pruned_by_user` and
   `recent_user_feedback`: never silently re-introduce something the user pruned.
-- The user sees diagrams, not your prose. Keep chat replies **short** (1–3 sentences). No long lists or code.
+- For diagram work keep replies concise and let proposals explain the design. When the user is coding, provide code and longer explanations as useful. You are running in the user's native pi terminal, not a reconstructed chat feed.
 
 ## Forces first: the brief
 

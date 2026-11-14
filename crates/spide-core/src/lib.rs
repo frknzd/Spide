@@ -18,6 +18,7 @@ pub mod ops;
 pub mod overlap;
 pub mod plantuml;
 pub mod responsibility;
+pub mod pdf;
 pub mod png;
 pub mod rules;
 pub mod scenarios;

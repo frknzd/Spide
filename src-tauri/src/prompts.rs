@@ -32,6 +32,7 @@ pub fn user_prompt(text: &str, tab: &str, d: &Design) -> String {
         out.push_str(&format!("Brief:\n{}\n", brief_digest(d)));
     }
     out.push_str(&assessment_hint(d));
+    out.push_str("\nThe above stage/mode rules govern diagram work. For ordinary coding or shell requests, help directly with the available tools; do not force a design interview. Diagram mutations still require Spide MCP proposals/decisions.\n");
     out.push_str(&format!("\nUser: {text}"));
     out
 }

@@ -1,340 +1,147 @@
-//! Spawns the user's `pi` in RPC mode and streams its output to the UI.
+//! One interactive pi process. PTY bytes are display-only; the extension owns app integration.
+use crate::{pi_control::Control, state::{AppState, PiStatus}, terminal::{Frame, Terminal}};
+use portable_pty::CommandBuilder;
+use serde_json::json;
+use std::{path::{Path, PathBuf}, sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex}};
 
-use crate::state::{AppState, PiStatus};
-use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use tauri::Emitter;
-
-pub const SKILL: &str = include_str!("../../agent/spide-skill.md");
-
-struct Proc {
-    child: Child,
-    stdin: Arc<Mutex<ChildStdin>>,
-    generation: u64,
-}
-
-#[derive(Default)]
 pub struct PiBridge {
-    proc: Mutex<Option<Proc>>,
-    generation: Arc<AtomicU64>,
-    req: AtomicU64,
+    session: Mutex<Option<(Arc<Terminal>, Arc<Control>)>>,
+    generation: AtomicU64,
+    lifecycle: Mutex<()>,
 }
-
-fn pi_binary() -> PathBuf {
-    if let Ok(p) = std::env::var("SPIDE_PI") {
-        return PathBuf::from(p);
+impl PiBridge {
+    pub fn new() -> Self { Self { session: Mutex::new(None), generation: AtomicU64::new(0), lifecycle: Mutex::new(()) } }
+    pub fn ready(&self) -> bool { self.session.lock().unwrap().as_ref().is_some_and(|(_, c)| c.ready()) }
+    /// Capture at intent creation, before building context or doing import work.
+    pub fn ticket(&self) -> u64 { self.generation.load(Ordering::SeqCst) }
+    pub fn prompt(&self, generation: u64, st: &AppState, message: String, _display: Option<String>) -> Result<(), String> {
+        let result = (|| {
+            if !self.ready() { return Err("pi integration isn't ready — wait or Restart".into()); }
+            let c = self.session.lock().unwrap().as_ref().filter(|(t, _)| t.generation == generation).map(|(_, c)| c.clone()).ok_or("pi session/project changed; request cancelled")?;
+            c.request("prompt", json!({"message":message})).map(|_| ())
+        })();
+        if result.is_err() {
+            let stuck = {
+                let mut s = st.lock();
+                if self.ticket() == generation { s.store.release_stuck_evaluations() } else { 0 }
+            };
+            if stuck > 0 { st.changed(); }
+        }
+        result
     }
-    if let Some(home) = dirs::home_dir() {
-        let p = home.join(".pi/agent/bin/pi");
-        if p.exists() {
-            return p;
+    pub fn abort(&self) -> Result<(), String> {
+        let c = self.session.lock().unwrap().as_ref().map(|(_, c)| c.clone()).ok_or("pi offline")?;
+        c.request("abort", json!({})).map(|_| ())
+    }
+    pub fn terminal(&self, generation: Option<u64>) -> Result<Arc<Terminal>, String> {
+        let s = self.session.lock().unwrap();
+        let (t, _) = s.as_ref().ok_or("pi is offline — use Restart")?;
+        if generation.is_some_and(|g| g != t.generation) { return Err("stale terminal generation".into()); }
+        Ok(t.clone())
+    }
+    pub fn read(&self, generation: Option<u64>, after: u64) -> Result<Frame, String> { self.terminal(generation)?.read(after) }
+    pub fn context(&self, tab: String) {
+        if let Some((_, c)) = self.session.lock().unwrap().as_ref() { *c.tab.lock().unwrap() = tab; }
+    }
+    pub fn shutdown(&self) {
+        let _guard = self.lifecycle.lock().unwrap();
+        self.stop();
+    }
+    fn stop(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        let session = self.session.lock().unwrap().take();
+        if let Some((t, c)) = session { c.stop(); t.stop(); }
+    }
+    pub fn restart(&self, st: &AppState) -> Result<(), String> {
+        let _guard = self.lifecycle.lock().unwrap();
+        self.stop();
+        let released = st.lock().store.release_stuck_evaluations();
+        if released > 0 { st.changed(); }
+        self.start_locked(st.clone())
+    }
+    pub fn start(&self, st: &AppState) -> Result<(), String> {
+        let _guard = self.lifecycle.lock().unwrap();
+        self.start_locked(st.clone())
+    }
+    fn start_locked(&self, st: AppState) -> Result<(), String> {
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        { let mut s = st.lock(); s.pi_status = PiStatus::Starting; s.pi_error = None; }
+        st.emit();
+        let result = self.spawn(&st, generation);
+        match result {
+            Ok(s) => { *self.session.lock().unwrap() = Some(s); Ok(()) }
+            Err(e) => { { let mut s = st.lock(); s.pi_status = PiStatus::Offline; s.pi_error = Some(e.clone()); } st.toast("error", &format!("Couldn't start pi: {e}")); st.emit(); Err(e) }
+        }
+    }
+    fn spawn(&self, st: &AppState, generation: u64) -> Result<(Arc<Terminal>, Arc<Control>), String> {
+        let (project, port) = { let s = st.lock(); (s.project_dir.clone(), s.mcp_port) };
+        let sessions = project.join(".spide/sessions");
+        std::fs::create_dir_all(&sessions).map_err(|e| e.to_string())?;
+        write_mcp_config(&project, port).map_err(|e| e.to_string())?;
+        let ext = project.join(".spide/terminal-bridge.ts");
+        std::fs::write(&ext, include_str!("../../agent/spide-terminal.ts")).map_err(|e| e.to_string())?;
+        let control = Control::start(st.clone(), generation)?;
+        let mut cmd = CommandBuilder::new(pi_binary());
+        cmd.cwd(&project);
+        cmd.env("PATH", child_path());
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
+        cmd.env("SPIDE_CONTROL_SOCKET", &control.path);
+        cmd.env("SPIDE_CONTROL_TOKEN", &control.token);
+        cmd.env("SPIDE_CONTROL_GENERATION", generation.to_string());
+        cmd.args(["--session-dir", &sessions.display().to_string(), "--continue", "--append-system-prompt", include_str!("../../agent/spide-skill.md"), "--tools", "*", "-e", &ext.display().to_string()]);
+        match Terminal::spawn(cmd, generation) {
+            Ok(t) => Ok((t, control)),
+            Err(e) => { control.stop(); Err(e) }
+        }
+    }
+}
+fn write_mcp_config(project: &Path, port: u16) -> std::io::Result<()> {
+    let path = project.join(".pi/mcp.json");
+    std::fs::create_dir_all(path.parent().unwrap())?;
+    let mut cfg: serde_json::Value = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(json!({}));
+    cfg["mcpServers"]["spide"] = json!({"url":format!("http://127.0.0.1:{port}/mcp"),"transport":"streamable-http","lifecycle":"keep-alive","directTools":true});
+    std::fs::write(path, serde_json::to_vec_pretty(&cfg)?)
+}
+fn pi_binary() -> PathBuf {
+    if let Ok(p) = std::env::var("SPIDE_PI") { return PathBuf::from(p); }
+    if let Some(p) = which("pi") { return p; }
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        for relative in [".pi/agent/bin/pi", ".local/bin/pi"] {
+            let p = home.join(relative);
+            if p.is_file() { return p; }
+        }
+        let nvm = home.join(".nvm/versions/node");
+        if let Ok(entries) = std::fs::read_dir(nvm) {
+            let mut paths: Vec<_> = entries.filter_map(Result::ok).map(|e| e.path().join("bin/pi")).filter(|p| p.exists()).collect();
+            paths.sort();
+            if let Some(p) = paths.pop() { return p; }
         }
     }
     PathBuf::from("pi")
 }
-
-fn in_path(bin: &str, path: &str) -> bool {
-    std::env::split_paths(path).any(|d| d.join(bin).exists())
-}
-
-/// Apps started from Finder get a minimal PATH without node (pi needs it).
-/// Borrow the user's login-shell PATH in that case.
-fn child_path() -> Option<String> {
-    let cur = std::env::var("PATH").unwrap_or_default();
-    if in_path("node", &cur) {
-        return None;
+fn which(bin: &str) -> Option<PathBuf> { std::env::split_paths(&std::env::var_os("PATH")?).map(|p| p.join(bin)).find(|p| p.is_file()) }
+fn child_path() -> String {
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+    if let Some(bin) = pi_binary().parent() { if !bin.as_os_str().is_empty() { dirs.insert(0, bin.to_owned()); } }
+    // Finder does not source .zshrc (where nvm usually lives). The managed pi launcher
+    // still needs a Node interpreter even when no nvm version has a `bin/pi` symlink.
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        let managed = home.join(".local/share/pi-node/current/bin");
+        if managed.join("node").is_file() { dirs.push(managed); }
+        if let Ok(entries) = std::fs::read_dir(home.join(".nvm/versions/node")) {
+            let mut bins: Vec<_> = entries.filter_map(Result::ok).map(|e| e.path().join("bin")).filter(|p| p.join("node").is_file()).collect();
+            bins.sort(); bins.reverse(); dirs.extend(bins);
+        }
     }
+    for p in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"] { dirs.push(PathBuf::from(p)); }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let out = Command::new(shell).args(["-ilc", "printf '__P__%s' \"$PATH\""]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let p = text.rsplit("__P__").next()?.trim().to_string();
-    (!p.is_empty()).then(|| format!("{p}:{cur}"))
-}
-
-/// Write `.pi/mcp.json` (project-local) so pi — and any pi you start in a
-/// terminal in this folder — connects to Spide's MCP server.
-pub fn write_mcp_config(project: &Path, url: &str) -> std::io::Result<()> {
-    let dir = project.join(".pi");
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join("mcp.json");
-    let mut cfg: Value = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| json!({}));
-    if !cfg.get("mcpServers").is_some_and(Value::is_object) {
-        cfg["mcpServers"] = json!({});
+    if let Ok(o) = std::process::Command::new(shell).args(["-lc", "printf '%s' \"$PATH\""]).output() {
+        if o.status.success() { dirs.extend(std::env::split_paths(&String::from_utf8_lossy(&o.stdout).trim())); }
     }
-    cfg["mcpServers"]["spide"] = json!({
-        "url": url,
-        "exposure": "direct",
-        "description": "Spide: the live class-diagram design canvas. The only way to change the design."
-    });
-    std::fs::write(path, serde_json::to_string_pretty(&cfg)?)
-}
-
-impl PiBridge {
-    pub fn start(&self, st: &AppState) -> Result<(), String> {
-        self.stop();
-        let (project, url) = {
-            let s = st.lock();
-            (s.project_dir.clone(), crate::state::mcp_url(s.mcp_port))
-        };
-        let set_status = |status: PiStatus, err: Option<String>| {
-            let mut s = st.lock();
-            s.pi_status = status;
-            s.pi_error = err;
-        };
-        set_status(PiStatus::Starting, None);
-        st.emit();
-
-        let spide_dir = project.join(".spide");
-        std::fs::create_dir_all(spide_dir.join("sessions")).map_err(|e| e.to_string())?;
-        let skill_path = spide_dir.join("agent.md");
-        std::fs::write(&skill_path, SKILL).map_err(|e| e.to_string())?;
-        write_mcp_config(&project, &url).map_err(|e| e.to_string())?;
-
-        let mut cmd = Command::new(pi_binary());
-        cmd.current_dir(&project)
-            .args(["--mode", "rpc", "--approve", "--continue", "--name", "Spide"])
-            .arg("--session-dir")
-            .arg(spide_dir.join("sessions"))
-            .arg("--append-system-prompt")
-            .arg(&skill_path)
-            // read-only built-ins + Spide's MCP tools (an allowlist without mcp__ entries drops MCP tools)
-            .args(["--tools", "read,ls,grep,find,mcp__spide__*"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Some(path) = child_path() {
-            cmd.env("PATH", path);
-        }
-        if let Ok(extra) = std::env::var("SPIDE_PI_ARGS") {
-            cmd.args(extra.split_whitespace());
-        }
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                let msg = format!("could not start pi ({}): {e}", pi_binary().display());
-                set_status(PiStatus::Offline, Some(msg.clone()));
-                st.emit();
-                return Err(msg);
-            }
-        };
-        eprintln!("spide: started pi (pid {}) in {}", child.id(), project.display());
-        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let stdin = Arc::new(Mutex::new(child.stdin.take().unwrap()));
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-
-        // stdout: protocol records
-        {
-            let st = st.clone();
-            let stdin = stdin.clone();
-            let current = self.generation.clone();
-            std::thread::spawn(move || {
-                let reader = BufReader::new(stdout);
-                for line in reader.split(b'\n') {
-                    let Ok(line) = line else { break };
-                    let line = String::from_utf8_lossy(&line);
-                    let line = line.trim_end_matches('\r');
-                    if line.is_empty() {
-                        continue;
-                    }
-                    match serde_json::from_str::<Value>(line) {
-                        Ok(v) => handle_record(&st, &stdin, &v),
-                        Err(_) => eprintln!("pi(stdout?): {line}"),
-                    }
-                }
-                eprintln!("spide: pi stdout closed");
-                // exited (ignore if a newer pi was started meanwhile)
-                if current.load(Ordering::SeqCst) != generation {
-                    return;
-                }
-                let mut s = st.lock();
-                if s.pi_status != PiStatus::Offline {
-                    s.pi_status = PiStatus::Offline;
-                    s.pi_error.get_or_insert_with(|| "pi exited".into());
-                }
-                drop(s);
-                let _ = st.app.emit("agent", json!({"kind": "exit", "generation": generation}));
-                st.emit();
-            });
-        }
-        // stderr: diagnostics; keep the tail for error reporting
-        {
-            let st = st.clone();
-            std::thread::spawn(move || {
-                let reader = BufReader::new(stderr);
-                for line in reader.lines().map_while(Result::ok) {
-                    eprintln!("pi: {line}");
-                    if line.to_lowercase().contains("error") {
-                        st.lock().pi_error = Some(line);
-                    }
-                }
-            });
-        }
-        *self.proc.lock().unwrap() = Some(Proc { child, stdin, generation });
-        set_status(PiStatus::Idle, None);
-        st.emit();
-        Ok(())
-    }
-
-    pub fn stop(&self) {
-        if let Some(mut p) = self.proc.lock().unwrap_or_else(|e| e.into_inner()).take() {
-            // An intentional stop is not a crash: invalidate this generation so its
-            // stdout thread doesn't report "pi exited" (possibly over a newer pi).
-            let _ = self.generation.compare_exchange(p.generation, p.generation + 1, Ordering::SeqCst, Ordering::SeqCst);
-            drop(p.stdin); // EOF → orderly shutdown
-            let child = &mut p.child;
-            for _ in 0..20 {
-                if let Ok(Some(_)) = child.try_wait() {
-                    return;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-
-    pub fn restart(&self, st: &AppState) -> Result<(), String> {
-        self.start(st)
-    }
-
-    fn send(&self, v: Value) -> Result<(), String> {
-        let guard = self.proc.lock().unwrap();
-        let p = guard.as_ref().ok_or("the agent is not running (type /agent restart)")?;
-        let mut stdin = p.stdin.lock().unwrap();
-        let mut line = serde_json::to_string(&v).map_err(|e| e.to_string())?;
-        line.push('\n');
-        stdin.write_all(line.as_bytes()).and_then(|_| stdin.flush()).map_err(|e| format!("agent pipe: {e}"))
-    }
-
-    /// Send a prompt; queued as follow-up if the agent is busy.
-    pub fn prompt(&self, st: &AppState, message: String, echo: Option<String>) -> Result<(), String> {
-        if let Some(e) = echo {
-            let _ = st.app.emit("agent", json!({"kind": "user", "text": e}));
-        }
-        let id = format!("spide-{}", self.req.fetch_add(1, Ordering::SeqCst));
-        let r = self.send(json!({"id": id, "type": "prompt", "message": message, "streamingBehavior": "followUp"}));
-        if let Err(e) = &r {
-            let _ = st.app.emit("agent", json!({"kind": "error", "text": e}));
-        }
-        r
-    }
-
-    pub fn abort(&self) -> Result<(), String> {
-        self.send(json!({"type": "abort"}))
-    }
-}
-
-impl Drop for PiBridge {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-
-fn short_tool(name: &str) -> String {
-    name.strip_prefix("mcp__spide__").unwrap_or(name).to_string()
-}
-
-fn handle_record(st: &AppState, stdin: &Arc<Mutex<ChildStdin>>, v: &Value) {
-    let ty = v.get("type").and_then(Value::as_str).unwrap_or("");
-    let emit = |payload: Value| {
-        let _ = st.app.emit("agent", payload);
-    };
-    let set = |status: PiStatus| {
-        let changed = {
-            let mut s = st.lock();
-            let c = s.pi_status != status;
-            s.pi_status = status;
-            c
-        };
-        if changed {
-            st.emit();
-        }
-    };
-    match ty {
-        "response" => {
-            if v.get("success") == Some(&Value::Bool(false)) {
-                let err = v.get("error").and_then(Value::as_str).unwrap_or("command failed");
-                emit(json!({"kind": "error", "text": err}));
-            }
-        }
-        "agent_start" => set(PiStatus::Busy),
-        "agent_settled" => {
-            set(PiStatus::Idle);
-            // a defence the examiner never ruled on must not stay stuck
-            let stuck = st.lock().store.release_stuck_evaluations();
-            if stuck > 0 {
-                st.changed();
-                st.toast("error", "The examiner didn't give a verdict — defend again.");
-            }
-            emit(json!({"kind": "settled"}));
-        }
-        "message_start" => {
-            if v.pointer("/message/role").and_then(Value::as_str) == Some("assistant") {
-                emit(json!({"kind": "assistant_start"}));
-            }
-        }
-        "message_update" => {
-            let ev = &v["assistantMessageEvent"];
-            match ev.get("type").and_then(Value::as_str) {
-                Some("text_delta") => emit(json!({"kind": "text", "delta": ev["delta"]})),
-                Some("thinking_start") => emit(json!({"kind": "thinking"})),
-                _ => {}
-            }
-        }
-        "message_end" => {
-            let m = &v["message"];
-            if m.get("role").and_then(Value::as_str) == Some("assistant") {
-                if m.get("stopReason").and_then(Value::as_str) == Some("error") {
-                    let e = m.get("errorMessage").and_then(Value::as_str).unwrap_or("model error");
-                    emit(json!({"kind": "error", "text": e}));
-                }
-                emit(json!({"kind": "assistant_end"}));
-            }
-        }
-        "tool_execution_start" => {
-            let name = v["toolName"].as_str().map(short_tool).unwrap_or_default();
-            emit(json!({"kind": "tool", "name": name}));
-        }
-        "tool_execution_end" => {
-            if v.get("isError") == Some(&Value::Bool(true)) {
-                let name = v["toolName"].as_str().map(short_tool).unwrap_or_default();
-                let text = v.pointer("/result/content/0/text").and_then(Value::as_str).unwrap_or("").to_string();
-                emit(json!({"kind": "tool_error", "name": name, "text": text}));
-            }
-        }
-        "auto_retry_start" => emit(json!({"kind": "status", "text": "retrying…"})),
-        "compaction_start" => emit(json!({"kind": "status", "text": "compacting context…"})),
-        "extension_ui_request" => {
-            let id = v.get("id").cloned().unwrap_or(Value::Null);
-            let method = v.get("method").and_then(Value::as_str).unwrap_or("");
-            let reply = match method {
-                // Spide's agent only has read-only + Spide tools; confirmations are safe to grant.
-                "confirm" => Some(json!({"type": "extension_ui_response", "id": id, "confirmed": true})),
-                "select" | "input" | "editor" => Some(json!({"type": "extension_ui_response", "id": id, "cancelled": true})),
-                "notify" => {
-                    let msg = v.get("message").and_then(Value::as_str).unwrap_or("");
-                    if !msg.is_empty() {
-                        emit(json!({"kind": "status", "text": msg}));
-                    }
-                    None
-                }
-                _ => None,
-            };
-            if let Some(r) = reply {
-                if let Ok(mut w) = stdin.lock() {
-                    let _ = writeln!(w, "{r}");
-                    let _ = w.flush();
-                }
-            }
-        }
-        _ => {}
-    }
+    let mut seen = std::collections::HashSet::new();
+    dirs.retain(|p| seen.insert(p.clone()));
+    std::env::join_paths(dirs).unwrap_or_default().to_string_lossy().into_owned()
 }

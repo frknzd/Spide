@@ -1,4 +1,4 @@
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, type CanvasApi } from "./canvas/Canvas";
 import type { DiagramData, Lens } from "./canvas/DiagramContent";
@@ -7,7 +7,12 @@ import { standaloneSvg } from "./export/svg";
 import { api } from "./state/api";
 import { on, useSnapshot } from "./state/store";
 import type { Design, DriftReport, Tab, Target } from "./state/types";
-import { AnswerBubble } from "./ui/AnswerBubble";
+import { Workspace } from "./ui/Workspace";
+import { SpideCommandPalette } from "./ui/SpideCommandPalette";
+import { ExportDialog, loadExportSettings, runExport, type ExportContext } from "./ui/ExportDialog";
+import { inTauri } from "./state/api";
+import type { LegendKey } from "./export/svg";
+import { TerminalPane } from "./ui/TerminalPane";
 import { BriefPanel, MODES } from "./ui/BriefPanel";
 import { HealthRing, ProposalBar, Tabs, Toasts, type Toast } from "./ui/Chrome";
 import { ChangeSection } from "./ui/ChangeSection";
@@ -16,9 +21,11 @@ import { DecisionPanel } from "./ui/DecisionCard";
 import { DecisionHistory } from "./ui/DecisionHistory";
 import { DriftPanel } from "./ui/DriftPanel";
 import { FeedbackPopover, type PruneState } from "./ui/FeedbackPopover";
-import { HoverCard } from "./ui/HoverCard";
+import { HoverLayer } from "./ui/HoverLayer";
+import { useSpideCommandBridge } from "./state/commands";
+import { hoverStore } from "./state/hover";
+import { ghostSpotlight, proposalSummary } from "./state/proposal-focus";
 import { InlineEdit, type InlineEditState } from "./ui/InlineEdit";
-import { PromptBar } from "./ui/PromptBar";
 import { PerfOverlay } from "./ui/PerfOverlay";
 import { DetailSlider } from "./ui/DetailSlider";
 import { CodeView } from "./ui/CodeView";
@@ -38,12 +45,13 @@ const TAB_TITLE: Record<Tab, string> = { system: "System (C4)", class: "Class di
 
 export default function App() {
   perfCount("App");
-  const snap = useSnapshot();
+  const { snap, error: snapshotError, retry: retrySnapshot } = useSnapshot();
+  const [commandsOpen, setCommandsOpen] = useState(false);
+  const [commandText, setCommandText] = useState("");
+  const openCommands = (text = "") => { setCommandText(text); setCommandsOpen(true); };
   const [tab, setTab] = useState<Tab>(() => (DEV_QUERY?.get("tab") as Tab | null) ?? "class");
-  const [hover, setHover] = useState<{ key: string; at: { x: number; y: number } } | null>(null);
   const [prune, setPrune] = useState<PruneState | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [history, setHistory] = useState(false);
   const [brief, setBrief] = useState(false);
   const [compare, setCompare] = useState<string | null>(null);
   const [branchCmp, setBranchCmp] = useState<{ name: string; cols: CompareCol[] } | null>(null);
@@ -54,18 +62,20 @@ export default function App() {
   const [inline, setInline] = useState<InlineEditState | null>(null);
   const [c4Level, setC4Level] = useState<"context" | "container">("container");
   const [preview, setPreview] = useState<Design | null>(null);
-  const [focusKey, setFocusKey] = useState(0);
+  const [previewSource, setPreviewSource] = useState<"option" | "history">("option");
+  const optionPreview = useCallback((d: Design | null) => { setPreviewSource("option"); setPreview(d); }, []);
+  const historyPreview = useCallback((d: Design | null) => { setPreviewSource("history"); setPreview(d); }, []);
   const [scenario, setScenario] = useState<string | null>(null);
   const [showImplicit, setShowImplicit] = useState(false);
   const [lens, setLens] = useState<Lens>("none");
   const [codeView, setCodeView] = useState<{ title: string; text: string } | null>(null);
   const canvasRef = useRef<CanvasApi>(null);
   const vpRef = useRef<ViewportApi | null>(null);
-  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setHover = (_: null) => hoverStore.clear();
   const toastSeq = useRef(0);
 
   const toast = useCallback((kind: string, text: string) => setToasts((t) => [...t.slice(-3), { id: ++toastSeq.current, kind, text }]), []);
-  const run = useCallback((p: Promise<unknown>) => p.catch((e) => toast("error", String(e))), [toast]);
+  const run = useCallback((p: Promise<unknown>) => p.then(() => true, (e) => { toast("error", String(e)); return false; }), [toast]);
 
   useEffect(() => {
     const un = on<{ kind: string; text: string }>("toast", (e) => toast(e.payload.kind, e.payload.text));
@@ -94,6 +104,8 @@ export default function App() {
       if (!view) return;
       if (t.kind === "proposal") return void run(api.accept(t.id));
       if (isPruned(view, t)) return void run(api.restore(t));
+      // clicking a member pins its card: evidence, similar members and findings can then be explored
+      if (t.kind === "attribute" || t.kind === "method") hoverStore.pin(`${t.kind}:${t.class}.${t.name}`);
       const origin = originOf(view, t);
       if (origin && view.decisions.some((d) => d.id === origin && !["open", "evaluating", "rejected"].includes(d.state))) return setShownDecision(origin);
       if (t.kind === "use_case") {
@@ -127,32 +139,72 @@ export default function App() {
     [run, toast],
   );
 
-  const onHover = useCallback((key: string | null, at: { x: number; y: number }) => {
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    if (!key) {
-      hoverTimer.current = setTimeout(() => setHover(null), 80);
-      return;
-    }
-    hoverTimer.current = setTimeout(() => setHover({ key, at }), 260);
-  }, []);
+  const onHover = hoverStore.move;
 
   const currentSvg = () => {
     const vp = tab === "class" || tab === "domain" ? canvasRef.current?.viewport() : vpRef.current;
     return vp ? standaloneSvg(vp, `${view?.name ?? "Design"} — ${TAB_TITLE[tab]}`) : null;
   };
   if (import.meta.env.DEV) (window as unknown as { spideSvg: () => string | null }).spideSvg = currentSvg;
-  const exportPng = async () => {
-    const svg = currentSvg();
-    if (!svg) return toast("error", "nothing to export");
-    const path = await saveDialog({ defaultPath: `${slug(view?.name)}-${tab}.png`, filters: [{ name: "PNG", extensions: ["png"] }] });
-    if (!path) return;
-    await run(api.exportPng(svg, path, 2).then(() => toast("info", `exported ${path}`)));
+  // ------------------------------------------------------------ export (File › Export…)
+  const [exportOpen, setExportOpen] = useState(false);
+  const legendFor = (): LegendKey[] => {
+    if (!view || !metrics) return [];
+    const keys = new Set<LegendKey>();
+    if (tab === "class" || tab === "domain") {
+      const rels = tab === "domain" ? snap!.derived.domain.relations : view.relations.filter((r) => r.status !== "pruned");
+      for (const r of rels) keys.add(r.kind === "association" ? (r.directed ? "directed" : "association") : (r.kind as LegendKey));
+      if (tab === "class" && metrics.cycle_edges.length) keys.add("cycle");
+      if (tab === "class" && metrics.layer_violations.length) keys.add("violation");
+    } else if (tab === "package") { keys.add("dependency"); if (metrics.package_deps.some((d) => d.in_cycle)) keys.add("cycle"); if (metrics.package_deps.some((d) => d.layer_violation)) keys.add("violation"); }
+    else if (tab === "system") { keys.add("directed"); keys.add("dependency"); }
+    else if (tab === "usecase") { keys.add("association"); keys.add("dependency"); }
+    if (view.proposals.length) keys.add("proposal");
+    const order: LegendKey[] = ["association", "directed", "inheritance", "realization", "dependency", "composition", "aggregation", "cycle", "violation", "proposal"];
+    return order.filter((k) => keys.has(k));
   };
-  const exportPuml = async () => {
-    const path = await saveDialog({ defaultPath: `${slug(view?.name)}-${tab}.puml`, filters: [{ name: "PlantUML", extensions: ["puml"] }] });
-    if (!path) return;
-    await run(api.exportPlantUml(tab, path).then(() => toast("info", `exported ${path}`)));
+  const exportCtx: ExportContext = {
+    project: snap?.project_dir ?? "",
+    tab,
+    baseName: `${slug(view?.name)}-${tab}`,
+    viewport: () => (tab === "class" || tab === "domain" ? canvasRef.current?.viewport() ?? null : vpRef.current),
+    meta: () => ({ title: view?.name ?? "Design", view: TAB_TITLE[tab], health: metrics?.health ?? null, legend: legendFor() }),
+    prepare: async (o) => {
+      if (tab === "class" || tab === "domain") canvasRef.current?.setExportMode({ plain: !o.diagnostics });
+      // two frames: React commits the export state, then the routes/boxes are laid out
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    },
+    finish: () => canvasRef.current?.setExportMode(null),
   };
+  /** Exports show the calm diagram: no hover, spotlight, focus or preview. */
+  const calm = () => { hoverStore.clear(); ghostSpotlight.set(null); canvasRef.current?.focus(null); setPreview(null); };
+  const openExport = () => { calm(); setExportOpen(true); };
+  const exportAgain = async () => {
+    const s = loadExportSettings(exportCtx.project);
+    if (!s.lastPath) return openExport();
+    calm();
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    try { const p = await runExport(exportCtx, s, s.lastPath); if (p) toast("info", `exported ${p}`); }
+    catch (e) { toast("error", String(e)); }
+    finally { exportCtx.finish(); }
+  };
+  const quickExport = async (format: "png" | "puml") => {
+    calm();
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const s = { ...loadExportSettings(exportCtx.project), format, scale: 2 } as const;
+    try { const p = await runExport(exportCtx, s); if (p) toast("info", `exported ${p}`); }
+    catch (e) { toast("error", String(e)); }
+    finally { exportCtx.finish(); }
+  };
+  const exportPng = () => quickExport("png");
+  const exportPuml = () => quickExport("puml");
+  const menuActions = useRef({ openExport, exportAgain });
+  menuActions.current = { openExport, exportAgain };
+  useEffect(() => {
+    const a = on("menu-export", () => menuActions.current.openExport());
+    const b = on("menu-export-again", () => void menuActions.current.exportAgain());
+    return () => { void a.then((f) => f()); void b.then((f) => f()); };
+  }, []);
 
   const importCode = async () => {
     const dir = await openDialog({ directory: true, multiple: false, title: "Java source folder to compare with the design", defaultPath: view?.settings.code_dir ?? undefined });
@@ -196,7 +248,15 @@ export default function App() {
     await run(api.exportPlantUmlAll(dir).then((files) => toast("info", `exported ${files.length} diagram${files.length === 1 ? "" : "s"} to ${dir}`)));
   };
 
+  const activeViewport = () => (tab === "class" || tab === "domain" ? canvasRef.current?.viewport() : vpRef.current);
+  const fitActive = () => activeViewport()?.fit();
   const command = async (text: string) => {
+    try { return await executeCommand(text); }
+    catch (e) { toast("error", String(e)); throw e; }
+  };
+  const executeCommand = async (text: string) => {
+    // Explicit app commands leave preview mode before operating on the accepted design.
+    setPreview(null);
     const [cmd, ...args] = text.split(" ");
     const arg = args.join(" ").trim();
     switch (cmd) {
@@ -255,11 +315,11 @@ export default function App() {
       case "/implicit":
         setShowImplicit((x) => !x);
         return toast("info", showImplicit ? "implicit dependencies: only for the focused class" : "implicit dependencies: all shown");
-      case "/fit": return tab === "class" || tab === "domain" ? canvasRef.current?.fit() : vpRef.current?.fit();
+      case "/fit": return fitActive();
       case "/pruned": return run(api.setShowPruned(!view?.settings.show_pruned));
       case "/strict": return run(api.setExaminer(true).then(() => toast("info", "examiner: strict — no overruling")));
       case "/lenient": return run(api.setExaminer(false).then(() => toast("info", "examiner: lenient — you may overrule")));
-      case "/history": return setHistory((h) => !h);
+      case "/history": return toast("info", "Scroll pi's native transcript in the terminal pane.");
       case "/brief": return setBrief((b) => !b);
       case "/timeline":
         setTab("class");
@@ -279,7 +339,10 @@ export default function App() {
           const bs = await api.branches().catch((e) => (toast("error", String(e)), []));
           return toast("info", "branches: " + bs.map((b) => `${b.active ? "● " : ""}${b.name} (${b.classes} classes, health ${b.health})`).join(" · "));
         }
-        if (sub === "delete" && name) return run(api.branchDelete(name));
+        if (sub === "delete" && name) {
+          if (!(await ask(`Delete branch “${name}”? This cannot be undone.`, { title: "Delete branch", kind: "warning", okLabel: "Delete", cancelLabel: "Cancel" }))) return;
+          return run(api.branchDelete(name).then(() => toast("info", `deleted branch ${name}`)));
+        }
         return run(api.branchCreate(arg));
       }
       case "/switch": return arg ? run(api.branchSwitch(arg)) : toast("error", "usage: /switch <branch>");
@@ -344,7 +407,8 @@ export default function App() {
         if (arg.startsWith("ad")) return exportFolder("Folder for the ADRs (e.g. docs/adr)", api.exportAdr, "ADR");
         if (arg.startsWith("a")) return exportAll();
         if (arg.startsWith("p")) return arg.startsWith("png") ? exportPng() : exportPuml();
-        return toast("error", "usage: /export png | puml | all | adr | archunit");
+        if (!arg) return openExport();
+        return toast("error", "usage: /export [png | puml | all | adr | archunit] — without an argument opens the export dialog");
       case "/save": {
         const path = await saveDialog({ defaultPath: `${slug(view?.name)}.json`, filters: [{ name: "Spide design", extensions: ["json"] }] });
         if (path) await run(api.saveAs(path).then(() => toast("info", `saved ${path}`)));
@@ -365,6 +429,8 @@ export default function App() {
     }
   };
 
+  useSpideCommandBridge(command, tab, snap?.project_dir);
+
   // dev aid for automated UI checks: ?cmd=/brief&cmd=/find%20Loan runs commands once the first snapshot arrived
   const devRan = useRef(false);
   useEffect(() => {
@@ -374,15 +440,13 @@ export default function App() {
     cmds.forEach((c, i) => setTimeout(() => command(c), 400 + i * 400));
   }); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const submit = (text: string) => {
-    if (text.startsWith("/")) return void command(text);
-    run(api.prompt(text, tab));
-  };
-
   // ------------------------------------------------------------ keyboard
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const inField = (e.target as HTMLElement)?.closest?.("textarea, input");
+      if (e.defaultPrevented || (e.target as HTMLElement)?.closest?.("[data-terminal]")) return;
+      const inField = (e.target as HTMLElement)?.closest?.("textarea, input, select, [contenteditable=true]");
+      if (inField) return;
+      if (e.metaKey && e.key.toLowerCase() === "k") { e.preventDefault(); openCommands(); return; }
       if (e.metaKey && !e.altKey) {
         const n = Number(e.key);
         if (n >= 1 && n <= 6) {
@@ -406,24 +470,20 @@ export default function App() {
           setBrief((b) => !b);
           return;
         }
-        if (e.key === "j") {
-          e.preventDefault();
-          setHistory((h) => !h);
-          return;
-        }
         if (e.key === "s") {
           e.preventDefault();
-          command("/save");
+          void command("/save").catch(() => {});
           return;
         }
         if (e.key === "o") {
           e.preventDefault();
-          command("/open");
+          void command("/open").catch(() => {});
           return;
         }
-        if (e.key === "e") {
+        if (e.key === "e" && !inTauri) {
+          // in the desktop app File › Export… (⌘E) and Export Again (⇧⌘E) own these shortcuts
           e.preventDefault();
-          e.shiftKey ? exportPuml() : exportPng();
+          if (e.shiftKey) void exportAgain(); else openExport();
           return;
         }
       }
@@ -435,10 +495,9 @@ export default function App() {
           setShownDecision(null);
         }
         setPrune(null);
-        setHistory(false);
         setHover(null);
+        ghostSpotlight.set(null);
       }
-      if (!inField && !e.metaKey && !e.ctrlKey && e.key.length === 1) setFocusKey((k) => k + 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -495,30 +554,39 @@ export default function App() {
     return c ? { impacted: new Set(c.impacted), ripple: new Set(c.ripple) } : null;
   }, [stress, metrics]);
 
-  const pendingCount = view?.decisions.filter((d) => d.state === "open" || d.state === "evaluating" || d.state === "rejected").length ?? 0;
-  useEffect(() => {
-    if (pendingCount) setTimeout(() => canvasRef.current?.fit(), 50);
-  }, [pendingCount]);
 
-  if (!snap || !view || !metrics) return <div className="app" />;
+  useEffect(() => { setPreview(null); hoverStore.clear(); }, [snap?.rev, snap?.project_dir, tab]);
+
+  if (!snap || !view || !metrics) return <div className="app startup">
+    <div className="titlebar" data-tauri-drag-region />
+    <section className="startup-card" aria-live="polite"><span className="brand-mark">S</span><p className="eyebrow">SPIDE · DESIGN WORKSPACE</p>
+      <h1>{snapshotError ? "Unable to open your workspace" : "Opening your workspace…"}</h1>
+      <p>{snapshotError ?? "Connecting to your design. Your project stays on this Mac."}</p>
+      {snapshotError ? <button className="primary" onClick={retrySnapshot}>Try again</button> : <span className="spinner" />}
+    </section>
+  </div>;
+  const proposalSummaries = view.proposals.map((p) => proposalSummary(p, view));
   const detailOf = (v: string) => view.settings.detail?.[v] ?? DEFAULT_DETAIL;
 
   const pending = view.decisions.filter((d) => d.state === "open" || d.state === "evaluating" || d.state === "rejected");
   const stale: Partial<Record<Tab, boolean>> = { usecase: snap.derived.use_cases_stale, sequence: snap.derived.stale_sequences.length > 0 };
-  const placeholder = hasClasses ? "Tell the architect what to change…   ( / for commands )" : "What are we designing?  e.g. “let's start a class diagram for a library system”";
 
   return (
     <div className={`app ${hasClasses ? "" : "empty"}`}>
       <div className="titlebar" data-tauri-drag-region />
+      <Workspace pending={pending.length} terminal={(collapse) => <TerminalPane tab={tab} status={snap.pi_status} integrationError={snap.pi_error} onCollapse={collapse} />} inspector={
+        pending.length > 0 ? <DecisionPanel decisions={pending} snap={snap} onPreview={optionPreview} toast={toast} onCompare={setCompare} /> :
+        shownDecision ? <DecisionHistory design={view} id={shownDecision} onClose={() => setShownDecision(null)} /> : null
+      }>
       <div className="stage">
         {tab === "class" && classData && (
-          <Canvas ref={canvasRef} key="class" viewKey="class" data={classData} saved={view.layout["class"]} tension={preview ? 0 : metrics.tension} level={detailOf("class")} showImplicit={showImplicit} lens={preview ? "none" : lens}
-            onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} insetRight={pendingCount ? 450 : 0}
+          <Canvas ref={canvasRef} key={`${snap.project_dir}:${preview ? "preview" : "class"}`} readOnly={!!preview} viewKey="class" data={classData} saved={(preview ?? view).layout["class"]} tension={preview ? 0 : metrics.tension} level={detailOf("class")} showImplicit={showImplicit} lens={preview ? "none" : lens}
+            onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover}
             stress={stressSets} drift={driftSets} onMoveToPackage={preview || drift ? undefined : onMoveToPackage} onDoubleClickTarget={preview ? undefined : onDoubleClickTarget} />
         )}
         {tab === "domain" && domainData && (
-          <Canvas ref={canvasRef} key="domain" viewKey="domain" data={domainData} saved={view.layout["domain"] ?? view.layout["class"]} showMethods={false} tension={0} level={detailOf("domain")}
-            onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} hoverKey={hover?.key ?? null} />
+          <Canvas ref={canvasRef} key={`${snap.project_dir}:domain`} viewKey="domain" data={domainData} saved={view.layout["domain"] ?? view.layout["class"]} showMethods={false} tension={0} level={detailOf("domain")}
+            onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover} />
         )}
         {tab === "package" && <PackageView snap={snap} vpRef={vpRef} onPrune={doPrune} onHover={onHover} onClickTarget={onClickTarget} />}
         {tab === "system" && <SystemView snap={snap} vpRef={vpRef} onPrune={doPrune} onHover={onHover} onClickTarget={onClickTarget} level={c4Level} onLevel={setC4Level} />}
@@ -529,13 +597,13 @@ export default function App() {
         )}
       </div>
 
-      {hasClasses && (
+      <header className="workspace-chrome" data-ui>
         <>
           <div className="top-left" data-ui>
             <span className="design-name">{view.name}</span>
             <span className="branch-tag" title="active branch (/branch, /switch, /compare, /merge)">⎇ {snap.branch}</span>
             {view.settings.partner !== "examiner" && <span className="preview-tag mode-tag">{MODES.find((m) => m.mode === view.settings.partner)?.label}</span>}
-            {preview && <span className="preview-tag">{timeline ? "past revision (read-only)" : "previewing option"}</span>}
+            {preview && <span className="preview-tag">{previewSource === "history" ? "Past revision · read-only" : "Option preview · read-only"}</span>}
             {lens === "concerns" && (
               <span className="preview-tag lens-legend" title="/lens off">
                 what methods do:{Object.entries(CONCERN_COLOR).map(([k, c]) => <span key={k}><i style={{ background: c }} />{k.replace("_", " ")}</span>)}
@@ -544,9 +612,23 @@ export default function App() {
             {lens === "overlap" && <span className="preview-tag" title="/lens off" style={{ color: "#c4b5fd" }}>overlap: dashed = duplicated behaviour · ⁂ = scattered concept</span>}
             {stressSets && <span className="preview-tag stress-tag">what if: {stress} · <span style={{ color: "#ff5c6c" }}>impacted</span> · <span style={{ color: "#ffb454" }}>ripple</span></span>}
           </div>
+          <div className="workspace-actions">
+            <button onClick={() => setBrief((v) => !v)} aria-expanded={brief}>Brief</button>
+            <button onClick={() => { setTab("class"); setTimeline((v) => !v); }} aria-expanded={timeline}>Timeline</button>
+            <button onClick={() => openCommands("find ")}>Find</button>
+            <button className="commands-trigger" onClick={() => openCommands()} aria-expanded={commandsOpen}>Commands <kbd>⌘K</kbd></button>
+          </div>
           <Tabs tab={tab} onTab={setTab} stale={stale} />
         </>
-      )}
+      </header>
+      {commandsOpen && <div className="workspace-palette"><SpideCommandPalette key={commandText} initialText={commandText} onClose={() => setCommandsOpen(false)} /></div>}
+      {snapshotError && <div className="connection-notice" role="alert">Updates unavailable · showing the last design <button onClick={retrySnapshot}>Retry</button></div>}
+      {!hasClasses && tab === "class" && <section className="welcome" data-ui>
+        <span className="eyebrow">YOUR NEXT DESIGN STARTS HERE</span><h1>Make the architecture clear.</h1>
+        <p>Describe your goals to pi. Explore its proposals on the canvas, then choose and defend the design that fits.</p>
+        <div className="welcome-steps"><span><b>01</b> Set the brief</span><span><b>02</b> Explore options</span><span><b>03</b> Defend your design</span></div>
+        <div className="d-actions"><button className="primary" onClick={() => setBrief(true)}>Edit brief</button><button onClick={() => void command("/open").catch(() => {})}>Open design…</button><button onClick={() => window.dispatchEvent(new Event("spide-focus-terminal"))}>Focus pi →</button></div>
+      </section>}
 
       {drift && (
         <DriftPanel report={drift} onClose={() => setDrift(null)} onReimport={() => view.settings.code_dir && run(api.importCode(view.settings.code_dir).then(() => api.drift()).then(setDrift))}
@@ -562,8 +644,6 @@ export default function App() {
           <RulesSection rules={view.rules} run={run} />
         </BriefPanel>
       )}
-      {shownDecision && pending.length === 0 && <DecisionHistory design={view} id={shownDecision} onClose={() => setShownDecision(null)} />}
-      {pending.length > 0 && <DecisionPanel decisions={pending} snap={snap} onPreview={setPreview} toast={toast} onCompare={setCompare} />}
       {compare && view.decisions.find((x) => x.id === compare && (x.state === "open" || x.state === "rejected" || x.state === "evaluating")) && (() => {
         const d = view.decisions.find((x) => x.id === compare)!;
         return <ComparePanel title={d.question} cols={decisionCols(d, snap)} snap={snap} onClose={() => setCompare(null)} />;
@@ -572,24 +652,24 @@ export default function App() {
         <ComparePanel kicker="compare branches" title={`${snap.branch} ↔ ${branchCmp.name}`} cols={branchCmp.cols} snap={snap} onClose={() => setBranchCmp(null)} />
       )}
 
-      <div className="bottom">
-        <ProposalBar count={view.proposals.length} onAccept={() => run(api.acceptAll())}
-          onReject={() => run(Promise.all(view.proposals.map((p) => api.reject(p.id))))} />
-        {timeline && <Timeline rev={snap.rev} onPreview={setPreview} onClose={() => setTimeline(false)} run={run} toast={toast} />}
-        <AnswerBubble history={history} onCloseHistory={() => setHistory(false)} />
-        <div className="prompt-row">
-          {hasClasses && <HealthRing metrics={metrics} ghost={snap.ghost_health} onFix={(i) => run(api.fixIssue(i))} onFocus={focusIssue} />}
-          <PromptBar onSubmit={submit} status={snap.pi_status} placeholder={placeholder} focusKey={focusKey} />
-          {hasClasses && <div className="health-spacer" />}
-        </div>
-      </div>
+      <div className="canvas-toolbar" data-ui>
+        <HealthRing metrics={metrics} ghost={snap.ghost_health} onFix={(i) => run(api.fixIssue(i))} onFocus={focusIssue} />
+        {(tab === "class" || tab === "domain") && <DetailSlider level={detailOf(tab)} disabled={!!preview} onChange={(l) => run(api.setDetail(tab, l))} />}
+        <div className="zoom-group" role="group" aria-label="Zoom"><button aria-label="Zoom out" title="Zoom out" onClick={() => activeViewport()?.zoomBy(0.8)}>−</button><button onClick={fitActive} title="Fit diagram · double-click canvas">Fit</button><button aria-label="Zoom in" title="Zoom in" onClick={() => activeViewport()?.zoomBy(1.25)}>+</button></div>
+        {preview && <button className="preview-exit" onClick={() => { setPreview(null); if (previewSource === "history") setTimeline(false); }}>Exit preview</button>}
 
-      {hasClasses && (tab === "class" || tab === "domain") && (
-        <DetailSlider level={detailOf(tab)} onChange={(l) => run(api.setDetail(tab, l))} />
-      )}
+      </div>
+      {view.proposals.length > 0 && <div className={`proposal-dock ${timeline ? "above-timeline" : ""}`}>
+        <ProposalBar disabled={!!preview} count={view.proposals.length} ids={view.proposals.map((x) => x.id)} summaries={proposalSummaries}
+          onLocate={(id) => { if (tab !== "class") { setTab("class"); setTimeout(() => canvasRef.current?.locateProposal(id), 300); } else if (!canvasRef.current?.locateProposal(id)) toast("info", "This proposal has no element on the class diagram (it may change the brief, use cases or system view)."); }}
+          onAccept={() => !preview && run(api.acceptAll())}
+          onReject={() => !preview && run(Promise.all(view.proposals.map((p) => api.reject(p.id))))} />
+      </div>}
+      {timeline && <div className="canvas-timeline"><Timeline key={`${snap.project_dir}:${snap.branch}`} rev={snap.rev} onPreview={historyPreview} onClose={() => setTimeline(false)} run={run} toast={toast} /></div>}
+      {exportOpen && <ExportDialog ctx={exportCtx} onClose={() => setExportOpen(false)} onDone={(p) => toast("info", `exported ${p}`)} />}
       {codeView && <CodeView title={codeView.title} text={codeView.text} onClose={() => setCodeView(null)} />}
       {inline && <InlineEdit s={inline} onClose={() => setInline(null)} />}
-      {hover && !prune && <HoverCard hoverKey={hover.key} at={hover.at} snap={snap} design={preview ?? view} metrics={metrics} drift={drift} />}
+      <HoverLayer scope={`${snap.project_dir}:${tab}`} disabled={!!prune} snap={snap} design={preview ?? view} metrics={metrics} drift={drift} />
       {prune && (
         <FeedbackPopover
           prune={prune}
@@ -606,8 +686,8 @@ export default function App() {
         />
       )}
       <PerfOverlay buildMs={snap.build_ms} />
+      </Workspace>
       <Toasts toasts={toasts} onDone={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
-      {snap.pi_status === "offline" && snap.pi_error && <div className="pi-error" data-ui>agent: {snap.pi_error}</div>}
     </div>
   );
 }

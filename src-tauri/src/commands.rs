@@ -17,22 +17,35 @@ fn done(st: &AppState) -> R {
     Ok(())
 }
 
+#[tauri::command(async)]
+pub fn terminal_read(pi: State<'_, PiBridge>, generation: Option<u64>, after: u64) -> R<crate::terminal::Frame> { pi.read(generation, after) }
+
+#[tauri::command(async)]
+pub fn terminal_write(pi: State<'_, PiBridge>, generation: u64, data: Vec<u8>) -> R { pi.terminal(Some(generation))?.write(&data) }
+
+#[tauri::command(async)]
+pub fn terminal_resize(pi: State<'_, PiBridge>, generation: u64, cols: u16, rows: u16) -> R { pi.terminal(Some(generation))?.resize(cols, rows) }
+
+#[tauri::command]
+pub fn terminal_context(pi: State<'_, PiBridge>, tab: String) { pi.context(tab); }
+
 #[tauri::command]
 pub fn get_snapshot(st: State<'_, AppState>) -> Snapshot {
     st.snapshot()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn send_prompt(st: State<'_, AppState>, pi: State<'_, PiBridge>, text: String, tab: String) -> R {
+    let generation = pi.ticket();
     let text = text.trim().to_string();
     if text.is_empty() {
         return Ok(());
     }
     let msg = prompts::user_prompt(&text, &tab, &st.lock().store.design);
-    pi.prompt(&st, msg, Some(text))
+    pi.prompt(generation, &st, msg, Some(text))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn abort_agent(pi: State<'_, PiBridge>) -> R {
     pi.abort()
 }
@@ -71,7 +84,7 @@ pub fn prune(st: State<'_, AppState>, targets: Vec<Target>) -> R {
 }
 
 /// "What didn't you like / what do you want instead?" → stored + sent to the agent.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn prune_feedback(
     st: State<'_, AppState>,
     pi: State<'_, PiBridge>,
@@ -79,6 +92,7 @@ pub fn prune_feedback(
     text: String,
     tab: String,
 ) -> R {
+    let generation = pi.ticket();
     let text = text.trim().to_string();
     if text.is_empty() {
         return Ok(());
@@ -112,7 +126,7 @@ pub fn prune_feedback(
     }
     st.changed();
     let msg = prompts::prune_feedback(&targets, &text, &tab);
-    pi.prompt(&st, msg, Some(format!("✂ {text}")))
+    pi.prompt(generation, &st, msg, Some(format!("✂ {text}")))
 }
 
 #[tauri::command]
@@ -121,7 +135,7 @@ pub fn restore(st: State<'_, AppState>, target: Target) -> R {
     done(&st)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn submit_defense(
     st: State<'_, AppState>,
     pi: State<'_, PiBridge>,
@@ -130,6 +144,7 @@ pub fn submit_defense(
     custom: Option<String>,
     defense: String,
 ) -> R {
+    let generation = pi.ticket();
     let msg = {
         let mut s = st.lock();
         s.store.submit_defense(&id, option, custom, defense).map_err(|e| e.0)?;
@@ -137,7 +152,7 @@ pub fn submit_defense(
         prompts::examine(&dec, s.store.design.settings.examiner, &s.store.design)
     };
     st.changed();
-    pi.prompt(&st, msg, Some(format!("⚖ defending {id}")))
+    pi.prompt(generation, &st, msg, Some(format!("⚖ defending {id}")))
 }
 
 #[tauri::command]
@@ -192,8 +207,9 @@ pub fn set_rules(st: State<'_, AppState>, rules: spide_core::rules::Rules) -> R 
 }
 
 /// Ask the agent which classes an expected change would touch.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn analyse_change(st: State<'_, AppState>, pi: State<'_, PiBridge>, name: String) -> R {
+    let generation = pi.ticket();
     let desc = {
         let s = st.lock();
         let d = &s.store.design;
@@ -204,11 +220,11 @@ pub fn analyse_change(st: State<'_, AppState>, pi: State<'_, PiBridge>, name: St
             .or_else(|| d.force(&name).and_then(|f| f.description.clone()))
     };
     let msg = prompts::analyse_change(&name, desc.as_deref());
-    pi.prompt(&st, msg, Some(format!("⇄ what if: {name}")))
+    pi.prompt(generation, &st, msg, Some(format!("⇄ what if: {name}")))
 }
 
 /// "fix with agent" on a health issue.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fix_issue(
     st: State<'_, AppState>,
     pi: State<'_, PiBridge>,
@@ -218,8 +234,9 @@ pub fn fix_issue(
     kind: Option<String>,
     targets: Option<Vec<String>>,
 ) -> R {
+    let generation = pi.ticket();
     let msg = prompts::fix_issue(&message, rule.as_deref(), fix_hint.as_deref(), kind.as_deref(), &targets.unwrap_or_default());
-    pi.prompt(&st, msg, Some(format!("🔧 {message}")))
+    pi.prompt(generation, &st, msg, Some(format!("🔧 {message}")))
 }
 
 #[tauri::command]
@@ -254,8 +271,9 @@ pub fn set_name(st: State<'_, AppState>, name: String) -> R {
 }
 
 /// Ask the agent to (re)generate a derived view.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn regenerate(st: State<'_, AppState>, pi: State<'_, PiBridge>, view: String, scenario: Option<String>) -> R {
+    let generation = pi.ticket();
     let msg = match view.as_str() {
         "usecase" => prompts::gen_use_cases(),
         "sequence" => prompts::gen_sequence(scenario.as_deref()),
@@ -265,7 +283,7 @@ pub fn regenerate(st: State<'_, AppState>, pi: State<'_, PiBridge>, view: String
         Some(s) => format!("↻ sequence \"{s}\""),
         None => format!("↻ {view}"),
     };
-    pi.prompt(&st, msg, Some(label))
+    pi.prompt(generation, &st, msg, Some(label))
 }
 
 // ---------------------------------------------------------------- files
@@ -303,6 +321,8 @@ pub fn save_as(st: State<'_, AppState>, path: String) -> R {
 
 fn switch_project(st: &AppState, pi: &PiBridge, dir: PathBuf, design: Option<Design>) -> R {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // Stop old control requests and reap the old process before replacing project state.
+    pi.shutdown();
     {
         let mut s = st.lock();
         s.project_dir = dir.clone();
@@ -330,6 +350,22 @@ fn switch_project(st: &AppState, pi: &PiBridge, dir: PathBuf, design: Option<Des
 pub fn export_png(svg: String, path: String, scale: f32) -> R {
     let png = spide_core::png::render(&svg, scale).map_err(|e| e.to_string())?;
     std::fs::write(path, png).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub fn export_pdf(svg: String, path: String) -> R {
+    let pdf = spide_core::pdf::render(&svg).map_err(|e| e.to_string())?;
+    std::fs::write(path, pdf).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub fn export_svg(svg: String, path: String) -> R {
+    std::fs::write(path, svg).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub fn reveal_path(path: String) -> R {
+    std::process::Command::new("open").arg("-R").arg(&path).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -620,6 +656,7 @@ pub struct ImportSummary {
 /// Import Java sources under `dir` as the read-only "reality" model (`.spide/reality.json`).
 #[tauri::command(async)]
 pub fn import_code(st: State<'_, AppState>, pi: State<'_, PiBridge>, dir: String) -> R<ImportSummary> {
+    let generation = pi.ticket();
     let (project, root) = {
         let s = st.lock();
         (s.project_dir.clone(), s.store.design.settings.code_root.clone())
@@ -635,6 +672,9 @@ pub fn import_code(st: State<'_, AppState>, pi: State<'_, PiBridge>, dir: String
     };
     {
         let mut s = st.lock();
+        if s.project_dir != project || pi.ticket() != generation {
+            return Err("project/session changed during import; assessment cancelled".into());
+        }
         if s.store.design.settings.code_root.is_none() {
             s.store.set_code_root(summary.code_root.clone());
         }
@@ -643,7 +683,7 @@ pub fn import_code(st: State<'_, AppState>, pi: State<'_, PiBridge>, dir: String
     st.changed();
     // let the agent judge the real implementation (batched, in the background)
     let msg = prompts::assess_code(summary.classes);
-    let _ = pi.prompt(&st, msg, Some("⌕ judging the imported code".into()));
+    let _ = pi.prompt(generation, &st, msg, Some("⌕ judging the imported code".into()));
     Ok(summary)
 }
 
@@ -708,6 +748,11 @@ pub fn reveal_project(st: State<'_, AppState>) -> R {
 
 /// Dispatch a command by name with JSON args (dev browser harness).
 pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_json::Value> {
+    // Interactive pi has shell/file tools now. Never route prompt/PTY/lifecycle control
+    // through the unauthenticated browser-preview HTTP harness, even in debug builds.
+    if matches!(cmd, "send_prompt" | "abort_agent" | "restart_agent" | "prune_feedback" | "submit_defense" | "analyse_change" | "fix_issue" | "regenerate" | "import_code" | "new_design" | "open_design") || cmd.starts_with("terminal_") {
+        return Err("Agent/terminal control is available only through desktop IPC".into());
+    }
     use serde_json::Value;
     use tauri::Manager;
     let app = st.app.clone();
@@ -767,6 +812,8 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "open_design" => open_design(s, pi, req("path")?),
         "save_as" => save_as(s, req("path")?),
         "export_png" => export_png(req("svg")?, req("path")?, a.get("scale").and_then(Value::as_f64).unwrap_or(2.0) as f32),
+        "export_pdf" => export_pdf(req("svg")?, req("path")?),
+        "export_svg" => export_svg(req("svg")?, req("path")?),
         "export_plantuml" => export_plantuml(s, req("view")?, req("path")?),
         "export_archunit" => export_archunit(s, req("path")?),
         "set_code_root" => set_code_root(s, str_("root")),

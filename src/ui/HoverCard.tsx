@@ -1,7 +1,11 @@
-import type { ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { hoverStore, placeCard } from "../state/hover";
 import { attrText, healthColor, heatColor, methodText } from "../canvas/visuals";
 import type { Design, DriftReport, Metrics, Snapshot } from "../state/types";
-import { CONCERN_COLOR, methodMarks } from "../state/insights";
+import { CONCERN_COLOR, evidenceLabel, FAMILY_ICON, FAMILY_LABEL, memberDiagnostics, methodMarks, type MemberDiagnosis } from "../state/insights";
+import { findingColor } from "../canvas/ClassNode";
+import { footprintOf } from "../state/proposal-focus";
+import { MemberEvidence } from "./MemberEvidence";
 
 interface Props {
   hoverKey: string;
@@ -10,6 +14,8 @@ interface Props {
   design: Design;
   metrics: Metrics;
   drift?: DriftReport | null;
+  /** clicked: stays open and takes the pointer (evidence drill-down) */
+  pinned?: boolean;
 }
 
 /** "What is it for?": the agent's purpose, the role Spide reads and why, misplaced methods → home, what the code says. */
@@ -56,11 +62,23 @@ const KIND_TEXT: Record<string, string> = {
 function proposalNote(design: Design, id: string | null): ReactNode {
   if (!id) return null;
   const p = design.proposals.find((x) => x.id === id);
+  const fp = footprintOf(design, new Set([id]));
+  const pkgOf = (n: string) => design.classes.find((c) => c.name === n)?.package;
+  const where = fp ? [...new Set([...fp.changed].map(pkgOf).filter(Boolean))] : [];
+  const connects = fp ? [...fp.anchors].map((n) => pkgOf(n) && !where.includes(pkgOf(n)) ? `${n} (${pkgOf(n)})` : n) : [];
   return (
     <div className="hc-ghost">
-      <b>proposed</b> {p?.source === "file" ? "via design.json edit" : "by the agent"}
+      <b>Proposed</b> {p?.source === "file" ? "via a design.json edit" : "by the agent"}
+      {(where.length > 0 || connects.length > 0) && <div className="hc-where">{where.length > 0 && <>in <b>{where.join(", ")}</b></>}{where.length > 0 && connects.length > 0 && " · "}{connects.length > 0 && <>connects to <b>{connects.join(", ")}</b></>}</div>}
       {p?.rationale && <div>{p.rationale}</div>}
-      <div className="faint">click to accept · right-click to reject</div>
+      {fp && fp.items.length > 1 && (
+        <div className="hc-sec">
+          <div className="hc-h">this proposal · {fp.items.length} changes</div>
+          {fp.items.slice(0, 8).map((x, i) => <div key={i} className={`mono small ${x.sign === "+" ? "proposed" : "removing"}`}>{x.sign} {x.text}</div>)}
+          {fp.items.length > 8 && <div className="faint small">+{fp.items.length - 8} more</div>}
+        </div>
+      )}
+      <div className="faint">Click to accept the whole proposal · right-click to reject</div>
     </div>
   );
 }
@@ -88,7 +106,30 @@ export function originNote(design: Design, origin: string | null | undefined): R
   return <div className="hc-origin">accepted proposal {origin}{entry ? <span className="faint"> · {new Date(entry.at).toLocaleString()}</span> : null}</div>;
 }
 
-export function HoverCard({ hoverKey, at, snap, design, metrics, drift }: Props) {
+export function HoverCard({ hoverKey, at, snap, design, metrics, drift, pinned }: Props) {
+  const card = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!pinned) return;
+    const away = (e: PointerEvent) => { if (!card.current?.contains(e.target as Node)) hoverStore.clear(); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") hoverStore.clear(); };
+    // after the click that pinned the card
+    const id = setTimeout(() => { window.addEventListener("pointerdown", away, true); window.addEventListener("keydown", esc); }, 0);
+    return () => { clearTimeout(id); window.removeEventListener("pointerdown", away, true); window.removeEventListener("keydown", esc); };
+  }, [pinned]);
+  const [position, setPosition] = useState({ left: at.x + 18, top: at.y + 12, maxWidth: 360, maxHeight: 600 });
+  useLayoutEffect(() => {
+    const el = card.current;
+    if (!el) return;
+    const update = () => {
+      const bounds = document.querySelector(".canvas-workspace .stage .viewport")?.getBoundingClientRect() ?? { left: 0, top: 40, right: window.innerWidth, bottom: window.innerHeight };
+      setPosition(placeCard(at, { width: 360, height: el.scrollHeight }, bounds));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    window.addEventListener("resize", update);
+    return () => { observer.disconnect(); window.removeEventListener("resize", update); };
+  }, [hoverKey, at, design, metrics]);
   const [kind, ...rest] = hoverKey.split(":");
   const key = rest.join(":");
   let body: ReactNode = null;
@@ -146,6 +187,21 @@ export function HoverCard({ hoverKey, at, snap, design, metrics, drift }: Props)
           </div>
         )}
         {m && m.issues.length > 0 && <div className="hc-issues">{m.issues.map((i, k) => <div key={k}>• {i}</div>)}</div>}
+        {(() => {
+          const per = memberDiagnostics(metrics, design).get(c.name);
+          if (!per?.size) return null;
+          return (
+            <div className="hc-sec">
+              <div className="hc-h">member findings</div>
+              {[...per.entries()].map(([k, d]) => (
+                <div key={k} style={{ color: findingColor(d.severity) }}>
+                  {FAMILY_ICON[d.family]} <span className="mono">{k.slice(k.indexOf(":") + 1)}{k.startsWith("method:") ? "()" : ""}</span>
+                  <span className="faint"> — {d.issues.map((i) => i.message).join("; ")}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </>
     );
   } else if (kind === "attribute" || kind === "method") {
@@ -158,7 +214,8 @@ export function HoverCard({ hoverKey, at, snap, design, metrics, drift }: Props)
       body = (
         <>
           <div className="hc-title mono"><b>{attrText(a)}</b></div>
-          <div className="faint">attribute of {cls}{a.is_static ? " · static" : ""}</div>
+          <div className="faint">attribute of {cls}<VisPill v={a.visibility} />{a.is_static ? " · static" : ""}</div>
+          <Findings d={memberDiagnostics(metrics, design).get(cls)?.get(`attribute:${name}`)} />
           {a.status === "proposed" && proposalNote(design, a.proposal)}
           {a.status !== "proposed" && a.origin !== c?.origin && originNote(design, a.origin)}
           {users.length > 0 && <div className="hc-sec">used by {users.join(", ")}</div>}
@@ -171,10 +228,12 @@ export function HoverCard({ hoverKey, at, snap, design, metrics, drift }: Props)
       body = (
         <>
           <div className="hc-title mono"><b>{methodText(m)}</b></div>
-          <div className="faint">method of {cls}{m.is_abstract ? " · abstract" : ""}{m.is_static ? " · static" : ""}</div>
+          <div className="faint">method of {cls}<VisPill v={m.visibility} />{m.is_abstract ? " · abstract" : ""}{m.is_static ? " · static" : ""}</div>
+          <Findings d={memberDiagnostics(metrics, design).get(cls)?.get(`method:${name}`)} />
           {m.status === "proposed" && proposalNote(design, m.proposal)}
           {m.status !== "proposed" && m.origin !== c?.origin && originNote(design, m.origin)}
           {m.description && <div className="hc-rat">{m.description}</div>}
+          <MemberEvidence key={`${cls}.${name}`} member={m} qualified={`${cls}.${name}`} design={design} metrics={metrics} />
           {(() => {
             const mi = metrics.responsibility?.methods.find((x) => x.class === cls && x.method === name);
             const mark = methodMarks(metrics).get(cls)?.get(name);
@@ -188,13 +247,13 @@ export function HoverCard({ hoverKey, at, snap, design, metrics, drift }: Props)
                   </div>
                 )}
                 {av && <div className="hc-sec">agent: <b>{av.verdict}</b>{av.home ? ` → ${av.home}` : ""} <span className="faint">— {av.reason}</span></div>}
-                {mark && <div className="hc-warn">{mark.message}{mark.home && <div>suggested home: <b>{mark.home}</b></div>}</div>}
+                {mark?.home && <div className="hc-warn">suggested home: <b>{mark.home}</b></div>}
               </>
             );
           })()}
           {m.uses.length > 0 && <div className="hc-sec">uses <span className="mono">{m.uses.join(", ")}</span></div>}
           {m.calls.length > 0 && <div className="hc-sec">calls <span className="mono">{m.calls.join(", ")}</span></div>}
-          <div className="faint small">right-click to prune</div>
+          <div className="faint small">{pinned ? "Esc or click outside to close" : "click to pin · right-click to prune"}</div>
         </>
       );
     }
@@ -230,6 +289,22 @@ export function HoverCard({ hoverKey, at, snap, design, metrics, drift }: Props)
         {e.in_cycle && <div className="hc-bad">⟲ closes a dependency cycle</div>}
       </>
     );
+  } else if (kind === "c4") {
+    const system = snap.derived.system;
+    const container = system.containers.find((c) => c.name === key);
+    const external = system.systems.find((s) => s.name === key);
+    const actor = system.actors.includes(key);
+    body = <>
+      <div className="hc-title">{key}</div>
+      <div className="faint">{container ? container.datastore ? "datastore" : "container" : external ? "external system" : actor ? "person" : "system context"}</div>
+      {container && <>
+        <div>{container.technology} · {container.replicas} replica(s) · {container.classes} classes</div>
+        {container.description && <div>{container.description}</div>}
+        {!!container.packages.length && <div className="hc-section"><div className="hc-h">packages</div>{container.packages.join(", ")}</div>}
+      </>}
+      {external?.description && <div>{external.description}</div>}
+      {!container && !external && !actor && <div>{system.containers.length} containers · {design.classes.length} classes</div>}
+    </>;
   } else if (kind === "package") {
     const pm = metrics.packages.find((p) => p.name === key);
     const pk = design.packages.find((p) => p.name === key);
@@ -290,12 +365,34 @@ export function HoverCard({ hoverKey, at, snap, design, metrics, drift }: Props)
     );
   } else return null;
 
-  const w = 360;
-  const left = at.x + 18 + w > window.innerWidth ? at.x - w - 18 : at.x + 18;
-  const top = Math.max(12, Math.min(at.y - 20, window.innerHeight - 420));
   return (
-    <div className="hovercard" style={{ left, top, width: w }}>
+    <div ref={card} className={`hovercard${pinned ? " pinned" : ""}`} style={{ ...position, width: 360, overflow: "auto" }}
+      role={pinned ? "dialog" : undefined} aria-label={pinned ? "Member details" : undefined}>
+      {pinned && <button className="icon-button hc-close" aria-label="Close details" onClick={() => hoverStore.clear()}>×</button>}
       {body}
+    </div>
+  );
+}
+
+const VIS: Record<string, string> = { public: "public", private: "private", protected: "protected", package: "package-private" };
+function VisPill({ v }: { v: string }) {
+  return <span className="vis-pill" title="UML visibility">{VIS[v] ?? v}</span>;
+}
+
+/** Every finding on one member: what, how sure, why it matters, what to consider. */
+function Findings({ d }: { d: MemberDiagnosis | undefined }) {
+  if (!d) return null;
+  return (
+    <div className="hc-sec">
+      {d.issues.map((i, k) => (
+        <div key={k} className="hc-finding" style={{ color: findingColor(i.severity * i.confidence) }}>
+          <div className="fh"><b>{FAMILY_ICON[i.family]} {FAMILY_LABEL[i.family]}</b><span className="faint small">{evidenceLabel(i)} · confidence {Math.round(i.confidence * 100)}%</span></div>
+          <div>{i.message}</div>
+          {i.explain && <div className="why">{i.explain}</div>}
+          {i.fix_hint && <div className="fix">consider: {i.fix_hint}</div>}
+          {i.source && <div className="faint small">{i.source}</div>}
+        </div>
+      ))}
     </div>
   );
 }

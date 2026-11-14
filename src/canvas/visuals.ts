@@ -136,6 +136,9 @@ export function truncate(text: string, font: string, max = MAX_TEXT): string {
 export const DETAIL_LABELS = ["packages", "names", "responsibilities", "design", "full"] as const;
 export const DEFAULT_DETAIL = 3;
 
+/** room at the end of a member row for its diagnostic marker */
+export const MARKER_W = 26;
+
 export interface BoxContext {
   /** attribute names this class inherits (an ancestor declares them): not repeated */
   inherited?: Set<string>;
@@ -143,6 +146,10 @@ export interface BoxContext {
   associations?: Set<string>;
   /** methods that must stay visible (flagged by the diagnostics) */
   keep?: Set<string>;
+  /** attributes that must stay visible (revealed member findings) */
+  keepAttrs?: Set<string>;
+  /** `attribute:name` / `method:name` rows that carry a diagnostic marker (reserve room for it) */
+  flagged?: Set<string>;
 }
 
 const ACCESSOR = /^(get|is|has|set)[A-Z_]/;
@@ -170,7 +177,8 @@ export function classBox(
   const attrY = headerH;
   const isEnum = c.stereotype === "enum" || c.stereotype === "enumeration";
   const push = (r: Omit<Row, "y">, font = F.member) => {
-    w = Math.max(w, textWidth(r.text, font) + 2 * PAD_X);
+    const marker = r.kind !== "note" && opts.ctx?.flagged?.has(`${r.kind}:${r.name}`) ? MARKER_W : 0;
+    w = Math.max(w, textWidth(r.text, font) + 2 * PAD_X + marker);
     rows.push({ ...r, y: y + 12 });
     y += LINE;
   };
@@ -192,7 +200,7 @@ export function classBox(
   const ctx = opts.ctx ?? {};
   let hiddenAttrs = 0;
   for (const a of c.attributes) {
-    if (design && !isEnum && (ctx.inherited?.has(a.name) || ctx.associations?.has(a.name))) {
+    if (design && !isEnum && !ctx.keepAttrs?.has(a.name) && (ctx.inherited?.has(a.name) || ctx.associations?.has(a.name))) {
       hiddenAttrs++;
       continue;
     }

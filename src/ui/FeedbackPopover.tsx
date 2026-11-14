@@ -16,15 +16,16 @@ export function FeedbackPopover({ prune, onSend, onClose, onUndo }: { prune: Pru
   const top = Math.min(window.innerHeight - 220, prune.at.y + 14);
   const labels = prune.targets.map(targetLabel);
   return (
-    <div className="feedback" data-ui style={{ left, top, width: w }}>
+    <div className="feedback" data-ui role="dialog" aria-label="Pruned. Tell the agent why" style={{ left, top, width: w }}>
       <div className="fb-head">
-        <span className="scissor">✂</span>
-        <span className="fb-what">{labels.length > 3 ? `${labels.slice(0, 3).join(", ")} +${labels.length - 3}` : labels.join(", ")}</span>
-        <button className="link" onClick={onUndo}>undo</button>
+        <span className="scissor" aria-hidden>✂</span>
+        <span className="fb-what"><span className="sr-only">Pruned </span>{labels.length > 3 ? `${labels.slice(0, 3).join(", ")} +${labels.length - 3}` : labels.join(", ")}</span>
+        <button onClick={onUndo}>Undo</button>
       </div>
       <textarea
         ref={ref}
         rows={2}
+        aria-label="Feedback for the agent (optional)"
         value={text}
         placeholder="What didn't you like? What do you want instead?"
         onChange={(e) => setText(e.target.value)}
@@ -33,10 +34,10 @@ export function FeedbackPopover({ prune, onSend, onClose, onUndo }: { prune: Pru
             e.preventDefault();
             if (text.trim()) onSend(text.trim());
             else onClose();
-          } else if (e.key === "Escape") onClose();
+          } else if (e.key === "Escape") { e.stopPropagation(); onClose(); }
         }}
       />
-      <div className="fb-hint">⏎ tell the agent · esc just prune</div>
+      <div className="fb-foot"><span className="fb-hint">Pruned elements stay hidden; Undo restores them.</span><button onClick={onClose}>Done</button><button className="primary" disabled={!text.trim()} onClick={() => onSend(text.trim())}>Tell pi</button></div>
     </div>
   );
 }

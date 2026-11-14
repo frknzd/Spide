@@ -7,7 +7,7 @@ interface Props {
   onClose: () => void;
   onReimport: () => void;
   onFind: (cls: string) => void;
-  run: (p: Promise<unknown>) => void;
+  run: (p: Promise<unknown>) => Promise<boolean>;
   toast: (kind: string, text: string) => void;
 }
 

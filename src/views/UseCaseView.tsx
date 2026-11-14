@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { NodeDefs } from "../canvas/ClassNode";
 import { Edge } from "../canvas/Edge";
+import { useRoutes } from "../canvas/useRoutes";
 import { C, FONT_SANS, textWidth, type Rect } from "../canvas/visuals";
 import { Viewport, type WorldRect } from "../canvas/Viewport";
 import type { Actor, Target, UseCase } from "../state/types";
@@ -89,6 +90,17 @@ export function UseCaseView({ snap, vpRef, onPrune, onHover, onClickTarget, onRe
     ];
   };
 
+  const rBoxes = [
+    ...[...L.actors].map(([n, r]) => ({ id: "a:" + n, x: r.x, y: r.y, w: r.w, h: 60 })),
+    ...[...L.ucs].map(([n, r]) => ({ id: "u:" + n, x: r.x, y: r.y, w: r.w, h: r.h })),
+  ];
+  const rEdges = ucs.flatMap((u) => [
+    ...u.actors.map((a) => ({ id: `${a}>${u.name}`, from: "a:" + a, to: "u:" + u.name })),
+    ...u.includes.map((i) => ({ id: `${u.name}«include»${i}`, from: "u:" + u.name, to: "u:" + i, toDeco: "arrow" as const })),
+    ...u.extends.map((i) => ({ id: `${u.name}«extend»${i}`, from: "u:" + u.name, to: "u:" + i, toDeco: "arrow" as const })),
+  ]).filter((e) => e.from !== e.to);
+  const routes = useRoutes(rBoxes, rEdges);
+
   return (
     <>
       <Banner show={stale || ucs.length === 0} busy={snap.pi_status === "busy"} empty={ucs.length === 0} onRegenerate={onRegenerate}
@@ -105,7 +117,7 @@ export function UseCaseView({ snap, vpRef, onPrune, onHover, onClickTarget, onRe
             const ar = L.actors.get(a);
             const ur = L.ucs.get(u.name);
             if (!ar || !ur) return null;
-            return <Edge key={a + ">" + u.name} from={{ ...ar, h: 60 }} to={{ ...ur, w: ur.w * 0.95 }} kind="association" style={{ color: C.edge, width: 1.3, opacity: 0.9 }} />;
+            return <Edge key={a + ">" + u.name} route={routes.get(`${a}>${u.name}`)} from={{ ...ar, h: 60 }} to={{ ...ur, w: ur.w * 0.95 }} kind="association" style={{ color: C.edge, width: 1.3, opacity: 0.9 }} />;
           }),
         )}
         {ucs.flatMap((u) => [
@@ -116,7 +128,7 @@ export function UseCaseView({ snap, vpRef, onPrune, onHover, onClickTarget, onRe
           const b = L.ucs.get(other);
           if (!a || !b) return null;
           // extend points from the extension to the base
-          return <Edge key={u.name + label + other} from={a} to={b} kind="dependency" label={label} bend={0.6} style={{ color: C.dim, width: 1.2, opacity: 0.9 }} />;
+          return <Edge key={u.name + label + other} route={routes.get(u.name + label + other)} from={a} to={b} kind="dependency" label={label} bend={0.6} style={{ color: C.dim, width: 1.2, opacity: 0.9 }} />;
         }))}
         {actors.map((a) => {
           const r = L.actors.get(a.name);

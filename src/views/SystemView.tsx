@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Chip, NodeDefs } from "../canvas/ClassNode";
 import { Edge } from "../canvas/Edge";
+import { useRoutes } from "../canvas/useRoutes";
 import { elkLayout } from "../canvas/layout";
 import { C, F, FONT_SANS, textWidth } from "../canvas/visuals";
 import { Viewport, type WorldRect } from "../canvas/Viewport";
@@ -74,6 +75,8 @@ export function SystemView({ snap, vpRef, onPrune, onHover, onClickTarget, level
       return n.target && q && q.x >= r.x1 && q.x <= r.x2 && q.y >= r.y1 && q.y <= r.y2;
     }).map((n) => n.target!);
 
+  const rBoxes = nodes.flatMap((n) => { const r = rect(n.id); return r ? [{ id: n.id, x: r.x, y: r.y + (n.spof ? 12 : 0), w: r.w, h: r.h + (n.spof ? 24 : 0) }] : []; });
+  const routes = useRoutes(rBoxes, edges.filter((e) => e.from !== e.to).map((e, i) => ({ id: String(i), from: e.from, to: e.to, toDeco: "arrow" as const })));
   const empty = level === "container" ? sv.containers.length === 0 : nodes.length <= 1 && sv.actors.length === 0;
   return (
     <>
@@ -95,7 +98,7 @@ export function SystemView({ snap, vpRef, onPrune, onHover, onClickTarget, level
           const b = rect(e.to);
           if (!a || !b) return null;
           return (
-            <Edge key={i} from={a} to={b} kind={e.dashed ? "dependency" : "association"} directed label={e.label} warn={e.warn}
+            <Edge key={i} route={routes.get(String(i))} from={a} to={b} kind={e.dashed ? "dependency" : "association"} directed label={e.label} warn={e.warn}
               bend={edges.some((x) => x.from === e.to && x.to === e.from) ? 1 : 0}
               target={e.from !== sv.system && e.to !== sv.system && sv.links.some((l) => l.from === e.from && l.to === e.to) ? T({ kind: "link", id: `${e.from}->${e.to}` }) : undefined}
               style={{ color: C.edge, width: 1.5, opacity: 1, dashed: e.dashed }} />

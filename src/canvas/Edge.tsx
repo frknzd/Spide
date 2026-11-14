@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import type { RelationKind } from "../state/types";
 import { borderPoint, C, F, FONT_SANS, textWidth, type Rect } from "./visuals";
+import { labelPoint, routePath, type Route } from "./route";
 
 export interface EdgeStyle {
   color: string;
@@ -27,6 +28,10 @@ export interface EdgeProps {
   target?: string;
   hoverKey?: string;
   warn?: string | null;
+  /** orthogonal route (points + hops); without it the edge is a straight/bent line */
+  route?: Route | null;
+  /** model status (export can leave out proposed elements) */
+  status?: string;
 }
 
 type P = [number, number];
@@ -56,8 +61,15 @@ export function edgeGeometry(from: Rect, to: Rect, bend = 0) {
   return { s, e, ctrl, dirS, dirE, lp, bent: bend !== 0 };
 }
 
+const unit = (a: P, b: P): P => norm([b[0] - a[0], b[1] - a[1]]);
+
 export function Edge(p: EdgeProps) {
-  const { s, e, ctrl, dirS, dirE, lp, bent } = edgeGeometry(p.from, p.to, p.bend ?? 0);
+  const pts = p.route?.points;
+  const routed = !!pts && pts.length >= 2;
+  const geo = routed
+    ? { s: pts[0] as P, e: pts[pts.length - 1] as P, ctrl: [0, 0] as P, dirS: unit(pts[0], pts[1]), dirE: unit(pts[pts.length - 2], pts[pts.length - 1]), lp: labelPoint(pts) as P, bent: false }
+    : edgeGeometry(p.from, p.to, p.bend ?? 0);
+  const { s, e, ctrl, dirS, dirE, lp, bent } = geo;
   const st = p.style;
   const kind = p.kind;
   const color = st.color;
@@ -85,7 +97,9 @@ export function Edge(p: EdgeProps) {
     const b = add(e, mul(dirE, -11));
     head.push(<polyline key="a" points={`${pt(add(b, mul(nE, 6)))} ${pt(e)} ${pt(add(b, mul(nE, -6)))}`} fill="none" stroke={color} strokeWidth={1.4} strokeLinejoin="round" />);
   }
-  const d = bent ? `M${pt(start)} Q${pt(ctrl)} ${pt(end)}` : `M${pt(start)} L${pt(end)}`;
+  const d = routed
+    ? routePath([start, ...(pts!.slice(1, -1) as P[]), end], p.route!.hops)
+    : bent ? `M${pt(start)} Q${pt(ctrl)} ${pt(end)}` : `M${pt(start)} L${pt(end)}`;
   const dashed = st.dashed || kind === "dependency" || kind === "realization" || kind === "implicit";
   const dash = kind === "implicit" ? "2 5" : dashed ? "7 5" : undefined;
   const multLabel = (q: P, dir: P, text: string, side: number) => {
@@ -96,12 +110,12 @@ export function Edge(p: EdgeProps) {
   };
   const lw = p.label ? textWidth(p.label, F.small) + 10 : 0;
   return (
-    <g opacity={st.opacity} className={st.strained ? "edge-strained" : st.ghost ? "edge-ghost" : undefined}>
+    <g data-status={p.status} opacity={st.opacity} className={st.strained ? "edge-strained" : st.ghost ? "edge-ghost" : undefined}>
       {p.target && (
         <path d={d} stroke="transparent" strokeWidth={14} fill="none" data-target={p.target} data-hover={p.hoverKey} style={{ cursor: "context-menu" }} />
       )}
-      {st.strained && <path d={d} stroke={color} strokeWidth={st.width + 6} fill="none" opacity={0.18} className="edge-glow" pointerEvents="none" />}
-      <path d={d} stroke={color} strokeWidth={st.width} fill="none" strokeDasharray={dash} pointerEvents="none" strokeLinecap="round" className={st.strained ? "edge-line-strained" : undefined} />
+      {st.strained && <path data-diag d={d} stroke={color} strokeWidth={st.width + 6} fill="none" opacity={0.18} className="edge-glow" pointerEvents="none" />}
+      <path d={d} stroke={color} strokeWidth={st.width} fill="none" strokeDasharray={dash} pointerEvents="none" strokeLinecap="round" strokeLinejoin="round" className={st.strained ? "edge-line-strained" : undefined} />
       <g pointerEvents="none">{head}</g>
       {p.fromMult && multLabel(s, dirS, p.fromMult, 1)}
       {p.toMult && multLabel(e, mul(dirE, -1), p.toMult, -1)}
@@ -113,7 +127,7 @@ export function Edge(p: EdgeProps) {
               <text y={4} textAnchor="middle" fontFamily={FONT_SANS} fontSize={10.5} fill={C.dim} fontStyle="italic">{p.label}</text>
             </>
           )}
-          {p.warn && <text y={p.label ? -13 : 4} textAnchor="middle" fontFamily={FONT_SANS} fontSize={10.5} fontWeight={600} fill={color}>{p.warn}</text>}
+          {p.warn && <text data-diag y={p.label ? -13 : 4} textAnchor="middle" fontFamily={FONT_SANS} fontSize={10.5} fontWeight={600} fill={color}>{p.warn}</text>}
         </g>
       )}
       {st.removing && <text x={lp[0]} y={lp[1] + 4} textAnchor="middle" fontFamily={FONT_SANS} fontSize={13} fill={C.removing} pointerEvents="none">×</text>}

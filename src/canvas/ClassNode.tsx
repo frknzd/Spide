@@ -1,7 +1,7 @@
 import { memo } from "react";
 import type { Class, ClassMetrics, Status, Target } from "../state/types";
-import { badges, C, F, FONT_MONO, FONT_SANS, heatBucket, heatColor, PAD_X, statusOpacity, textWidth, type ClassBox } from "./visuals";
-import { CONCERN_COLOR, type MethodMark } from "../state/insights";
+import { badges, C, F, FONT_MONO, FONT_SANS, heatBucket, heatColor, MARKER_W, PAD_X, statusOpacity, textWidth, type ClassBox } from "./visuals";
+import { CONCERN_COLOR, FAMILY_ICON, FAMILY_LABEL, type MemberDiagnosis, type MethodMark } from "../state/insights";
 
 export interface ClassNodeProps {
   cls: Class;
@@ -11,6 +11,8 @@ export interface ClassNodeProps {
   scale: number;
   m?: ClassMetrics;
   dim?: boolean;
+  /** part of the spotlit ghost proposal: draw at full strength */
+  spotlit?: boolean;
   focus?: boolean;
   /** outline colour (stress test, drift) */
   ring?: string | null;
@@ -30,6 +32,17 @@ export interface ClassNodeProps {
   concerns?: Map<string, string>;
   /** extra chips (scattered concepts in the overlap lens) */
   chips?: string[];
+  /** findings on individual members (`attribute:x` / `method:x`) */
+  members?: Map<string, MemberDiagnosis>;
+  /** this class's hidden member findings are revealed */
+  revealed?: boolean;
+}
+
+const VIS_LABEL: Record<string, string> = { public: "public", private: "private", protected: "protected", package: "package-private" };
+
+/** strength of a member finding (severity × confidence) → colour */
+export function findingColor(score: number): string {
+  return score >= 0.3 ? C.cycle : score >= 0.15 ? C.warn : C.dim;
 }
 
 const T = (t: Target) => JSON.stringify(t);
@@ -57,17 +70,21 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
   const target: Target = ghost && cls.proposal ? { kind: "proposal", id: cls.proposal } : { kind: "class", name: cls.name };
   const italic = cls.is_abstract || cls.stereotype === "interface";
   const bs = ghost || pruned ? [] : badges(m);
-  const opacity = statusOpacity(st) * (p.dim ? 0.28 : 1) * (p.phantom ? 0.5 : 1);
+  const opacity = (p.spotlit ? 1 : statusOpacity(st)) * (p.dim ? 0.28 : 1) * (p.phantom ? 0.5 : 1);
   const hb = heatBucket(heat);
+  // member findings whose rows aren't drawn (detail level, Domain view): a chip says so and reveals them
+  const drawn = new Set(box.rows.filter((r) => r.kind !== "note").map((r) => `${r.kind}:${r.name}`));
+  const hidden = p.compact || ghost || pruned ? [] : [...(p.members?.keys() ?? [])].filter((k) => !drawn.has(k));
+  const revealable = hidden.filter((k) => k.startsWith("attribute:") || p.showMethods !== false);
 
   let bx = 0;
   return (
-    <g transform={`translate(${p.x.toFixed(1)},${p.y.toFixed(1)}) scale(${p.scale.toFixed(3)}) translate(${-w / 2},${-h / 2})`} opacity={opacity}
+    <g data-status={st} transform={`translate(${p.x.toFixed(1)},${p.y.toFixed(1)}) scale(${p.scale.toFixed(3)}) translate(${-w / 2},${-h / 2})`} opacity={opacity}
       style={{ transition: p.still ? undefined : "opacity 220ms" }}>
       <g className={p.still ? undefined : ghost ? "node-enter node-ghost" : "node-enter"}>
         {/* heat halo: plain strokes (no blur filter, which is expensive to repaint) */}
         {hb > 0 && !pruned && (
-          <g pointerEvents="none" className={p.still ? undefined : heat > 0.55 ? "halo-pulse" : undefined}>
+          <g data-diag pointerEvents="none" className={p.still ? undefined : heat > 0.55 ? "halo-pulse" : undefined}>
             <rect x={-7} y={-7} width={w + 14} height={h + 14} rx={14} fill="none" stroke={hc} strokeWidth={8 + heat * 6} strokeOpacity={0.07 + heat * 0.12} />
             <rect x={-3} y={-3} width={w + 6} height={h + 6} rx={10} fill="none" stroke={hc} strokeWidth={3} strokeOpacity={0.15 + heat * 0.3} />
           </g>
@@ -111,14 +128,28 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
           const tw = textWidth(r.text, F.member);
           const mark = r.kind === "method" ? p.marks?.get(r.name) : undefined;
           const concern = r.kind === "method" ? p.concerns?.get(r.name) : undefined;
+          const diag = r.status === "pruned" ? undefined : p.members?.get(`${r.kind}:${r.name}`);
+          const dc = diag ? findingColor(diag.severity) : C.dim;
+          const vis = member ? VIS_LABEL[member.visibility] : undefined;
+          const tagW = vis ? textWidth(vis, F.small) + 10 : 0;
           return (
-            <g key={r.kind + r.name + r.y} data-target={T(tgt)} data-hover={`${r.kind}:${cls.name}.${r.name}`} style={{ cursor: r.status === "pruned" ? "pointer" : "context-menu" }}>
+            <g key={r.kind + r.name + r.y} className="member-row" data-status={r.status} data-target={T(tgt)} data-hover={`${r.kind}:${cls.name}.${r.name}`} style={{ cursor: r.status === "pruned" ? "pointer" : "context-menu" }}>
               <rect x={2} y={r.y - 12} width={w - 4} height={16} fill="transparent">
                 {r.status === "pruned" && <title>pruned · click to restore</title>}
               </rect>
+              {diag && (
+                <g data-diag data-finding={diag.family} pointerEvents="none">
+                  <rect x={2} y={r.y - 12} width={w - 4} height={16} rx={3} fill={dc} opacity={0.1} />
+                  <rect x={w - 4} y={r.y - 11} width={2} height={14} rx={1} fill={dc} opacity={0.85} />
+                  <text x={w - 9} y={r.y} textAnchor="end" fontFamily={FONT_SANS} fontSize={11} fill={dc}>
+                    {FAMILY_ICON[diag.family]}{diag.issues.length > 1 ? diag.issues.length : ""}
+                  </text>
+                  <title>{`${FAMILY_LABEL[diag.family]}: ${diag.issues.map((i) => i.message).join("; ")}`}</title>
+                </g>
+              )}
               {concern && <rect x={3} y={r.y - 11} width={3} height={14} rx={1.5} fill={CONCERN_COLOR[concern] ?? C.dim} pointerEvents="none" />}
               {mark && (
-                <text x={w + 6} y={r.y} fontFamily={FONT_SANS} fontSize={11} fill={C.warn} pointerEvents="none">
+                <text data-diag x={w + 6} y={r.y} fontFamily={FONT_SANS} fontSize={11} fill={C.warn} pointerEvents="none">
                   {mark.home ? `↗ ${mark.home}` : `⚠ ${mark.kind.replace(/_/g, " ")}`}
                   <title>{mark.message}</title>
                 </text>
@@ -129,6 +160,12 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
               </text>
               {(r.status === "removing" || r.status === "pruned") && (
                 <line x1={PAD_X} x2={PAD_X + tw} y1={r.y - 4} y2={r.y - 4} stroke={rowColor(r.status)} strokeWidth={1.2} />
+              )}
+              {vis && !p.still && (
+                <g className="vis-tag" data-transient pointerEvents="none" transform={`translate(${w - 6 - (diag ? MARKER_W : 0) - tagW},${r.y - 11})`}>
+                  <rect width={tagW} height={14} rx={7} fill={C.bg} stroke={C.accent} strokeWidth={0.8} />
+                  <text x={tagW / 2} y={10} textAnchor="middle" fontFamily={FONT_SANS} fontSize={9.5} fill={C.accent}>{vis}</text>
+                </g>
               )}
             </g>
           );
@@ -147,12 +184,27 @@ export const ClassNode = memo(function ClassNode(p: ClassNodeProps) {
           </>
         )}
         {removing && <line x1={-6} y1={-6} x2={w + 6} y2={h + 6} stroke={C.removing} strokeWidth={1.5} opacity={0.7} pointerEvents="none" />}
-        {[...bs, ...(p.chips ?? []).map((c) => ({ text: `⁂ ${c}`, color: "#c4b5fd", title: "scattered concept" }))].map((b) => {
+        <g data-diag>{[...bs, ...(p.chips ?? []).map((c) => ({ text: `⁂ ${c}`, color: "#c4b5fd", title: "scattered concept" }))].map((b) => {
           const cw = textWidth(b.text, F.small) + 12;
           const el = <Chip key={b.text} x={bx} y={h + 6} text={b.text} color={b.color} />;
           bx += cw + 4;
           return el;
         })}
+        {(hidden.length > 0 || (p.revealed && !!p.members?.size)) && (() => {
+          const text = p.revealed ? "▴ fold member findings" : revealable.length ? `⚠ ${revealable.length} hidden member issue${revealable.length > 1 ? "s" : ""}` : `⚠ ${hidden.length} method issue${hidden.length > 1 ? "s" : ""} · inspect`;
+          if (p.still) return null;
+          const cw = textWidth(text, F.small) + 12;
+          const reveal = revealable.length > 0 || p.revealed;
+          return (
+            <g className="reveal-chip" data-transient transform={`translate(${bx},${h + 6})`} data-hover={`class:${cls.name}`} style={{ cursor: "pointer" }}
+              data-target={reveal ? JSON.stringify({ kind: "reveal", class: cls.name }) : T({ kind: "class", name: cls.name })}>
+              <rect width={cw} height={17} rx={8.5} fill={C.bg} stroke={C.warn} strokeWidth={1} strokeDasharray="3 2" />
+              <text x={cw / 2} y={12} textAnchor="middle" fontFamily={FONT_SANS} fontSize={10.5} fill={C.warn} pointerEvents="none">{text}</text>
+              <title>{reveal ? (p.revealed ? "Hide the revealed members again" : "Show the members these findings are about (this class only)") : "Methods are hidden in this view; hover for the findings or open the Class view"}</title>
+            </g>
+          );
+        })()}
+        </g>
       </g>
     </g>
   );

@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import type { Target } from "../state/types";
+import { hoverStore } from "../state/hover";
 import { C, FONT_SANS } from "./visuals";
 
 export interface Transform { x: number; y: number; k: number }
@@ -13,6 +14,7 @@ export interface ViewportApi {
   svg(): SVGSVGElement | null;
   world(): SVGGElement | null;
   transform(): Transform;
+  zoomBy(factor: number): void;
 }
 
 interface Props {
@@ -61,6 +63,7 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
   // while panning/zooming, CSS animations pause (see .interacting in styles.css)
   const interactTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const markInteracting = () => {
+    hoverStore.clear();
     const s = svgRef.current;
     if (!s) return;
     if (!interactTimer.current) s.classList.add("interacting");
@@ -71,6 +74,7 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
     }, 200);
   };
   const fitted = useRef(false);
+  useEffect(() => () => { hoverStore.clear(); if (interactTimer.current) clearTimeout(interactTimer.current); if (anim.current) cancelAnimationFrame(anim.current); }, []);
 
   useEffect(() => p.onTransform?.(t), [t]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -82,6 +86,7 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
 
   const animateTo = (to: Transform, ms = 450) => {
     if (anim.current) cancelAnimationFrame(anim.current);
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) { setT(to); return; }
     const from = tRef.current;
     const t0 = performance.now();
     const step = (now: number) => {
@@ -105,7 +110,7 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
     const r = { width: full.width - insetRef.current, height: full.height };
     if (b.width === 0 || r.width === 0) return;
     const margin = 90;
-    const bottom = 150; // keep clear of the prompt
+    const bottom = 24;
     const k = Math.min(1.25, Math.max(0.2, Math.min((r.width - 2 * margin) / b.width, (r.height - margin - bottom) / b.height)));
     const to = { k, x: r.width / 2 - (b.x + b.width / 2) * k, y: (r.height - bottom + margin) / 2 - (b.y + b.height / 2) * k + 10 };
     if (animate) animateTo(to);
@@ -117,11 +122,12 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
     if (!s) return;
     const full = s.getBoundingClientRect();
     const kk = k ?? Math.max(tRef.current.k, 0.9);
-    const bottom = 150; // keep clear of the prompt
+    const bottom = 24;
     animateTo({ k: kk, x: (full.width - insetRef.current) / 2 - x * kk, y: (full.height - bottom) / 2 - y * kk });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useImperativeHandle(ref, () => ({ toWorld, fit, zoomTo, svg: () => svgRef.current, world: () => worldRef.current, transform: () => tRef.current }), [toWorld, fit, zoomTo]);
+  useImperativeHandle(ref, () => ({ toWorld, fit, zoomTo, zoomBy: (f: number) => zoomByRef.current(f), svg: () => svgRef.current, world: () => worldRef.current, transform: () => tRef.current }), [toWorld, fit, zoomTo]);
+  const zoomByRef = useRef<(f: number) => void>(() => {});
 
   // first content → fit
   useEffect(() => {
@@ -137,6 +143,22 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
       return () => clearTimeout(id);
     }
   }, [p.empty, fit]);
+
+  useEffect(() => {
+    let previous: { width: number; height: number } | null = null;
+    const observer = new ResizeObserver(([entry]) => {
+      const next = entry.contentRect;
+      if (previous && next.width > 0 && next.height > 0) {
+        hoverStore.clear();
+        if (anim.current) cancelAnimationFrame(anim.current);
+        const t = tRef.current;
+        setT({ ...t, x: t.x + (next.width - previous.width) / 2, y: t.y + (next.height - previous.height) / 2 });
+      }
+      previous = { width: next.width, height: next.height };
+    });
+    observer.observe(svgRef.current!);
+    return () => observer.disconnect();
+  }, []);
 
   const onWheel = (e: React.WheelEvent) => {
     if (anim.current) cancelAnimationFrame(anim.current);
@@ -154,6 +176,7 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
+    hoverStore.clear();
     const el = e.target as Element;
     if (el.closest("[data-ui]")) return;
     const g = gesture.current;
@@ -218,10 +241,54 @@ export const Viewport = forwardRef<ViewportApi, Props>(function Viewport(p, ref)
     }
   };
 
+  // Keyboard: arrows pan, +/- zoom, 0 fits, [ and ] step through elements, Enter activates the inspected element.
+  const kbIndex = useRef(-1);
+  const zoomBy = (f: number) => {
+    const s = svgRef.current; if (!s) return;
+    const r = s.getBoundingClientRect(), tr = tRef.current, mx = r.width / 2, my = r.height / 2;
+    const k = Math.min(3, Math.max(0.15, tr.k * f));
+    animateTo({ k, x: mx - ((mx - tr.x) * k) / tr.k, y: my - ((my - tr.y) * k) / tr.k }, 160);
+  };
+  zoomByRef.current = zoomBy;
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tr = tRef.current, step = e.shiftKey ? 180 : 60;
+    const pan: Record<string, [number, number]> = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
+    if (pan[e.key]) { e.preventDefault(); hoverStore.clear(); setT({ ...tr, x: tr.x + pan[e.key][0], y: tr.y + pan[e.key][1] }); return; }
+    if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomBy(1.25); return; }
+    if (e.key === "-") { e.preventDefault(); zoomBy(0.8); return; }
+    if (e.key === "0") { e.preventDefault(); fit(); return; }
+    if (e.key === "[" || e.key === "]") {
+      const items = [...(worldRef.current?.querySelectorAll("[data-hover][data-target]") ?? [])];
+      if (!items.length) return;
+      e.preventDefault();
+      kbIndex.current = (kbIndex.current + (e.key === "]" ? 1 : -1) + items.length) % items.length;
+      const el = items[kbIndex.current], b = el.getBoundingClientRect();
+      hoverStore.clear();
+      p.onHover?.(el.getAttribute("data-hover"), { x: b.left + Math.min(b.width, 160) / 2, y: b.top + Math.min(b.height, 40) / 2 });
+      const label = svgRef.current?.querySelector(".kb-focus");
+      label?.classList.remove("kb-focus");
+      el.classList.add("kb-focus");
+      return;
+    }
+    if (e.key === "Enter") {
+      const el = worldRef.current?.querySelector(".kb-focus");
+      const tgt = parseTarget(el ?? null);
+      if (tgt) { e.preventDefault(); p.onClickTarget?.(tgt, e as unknown as React.PointerEvent); }
+    }
+    if (e.key === "Escape") { hoverStore.clear(); worldRef.current?.querySelector(".kb-focus")?.classList.remove("kb-focus"); kbIndex.current = -1; }
+  };
+
   return (
     <svg
       ref={svgRef}
       className="viewport"
+      tabIndex={0}
+      role="application"
+      aria-roledescription="diagram canvas"
+      aria-label="Diagram. Arrow keys pan, plus and minus zoom, 0 fits, brackets step through elements, Enter opens the selected element."
+      onKeyDown={onKeyDown}
+      onBlur={() => worldRef.current?.querySelector(".kb-focus")?.classList.remove("kb-focus")}
       onWheel={onWheel}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

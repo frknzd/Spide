@@ -2,11 +2,11 @@
 
 Spide is a desktop app for designing a system live, together with an AI agent. The class diagram is the centre; the other views are derived from it.
 
-You start with an empty dark canvas and a single prompt. The agent first asks for the **brief** (goals, quality attributes, constraints, expected changes), then proposes classes and raises **design decisions**. Before a decision takes effect, you have to choose an option and **defend** it to the agent, which acts as an examiner. Every option shows its consequences before you choose. The diagram keeps showing you how clean the design is — judged by the principles of the DOSS course (minimise coupling, increase cohesion, distribute responsibilities; RDD, GRASP, bad smells): hot classes glow, dependency cycles are drawn in red, methods in the wrong class point to their better home, and duplicated behaviour is measured. You can check the design against scenarios and expected changes, branch it and rewind it, look at it as C4 context and container diagrams, and compare it with real Java code.
+You start with an empty dark canvas beside a real interactive pi terminal. The agent first asks for the **brief** (goals, quality attributes, constraints, expected changes), then proposes classes and raises **design decisions**. Before a decision takes effect, you have to choose an option and **defend** it to the agent, which acts as an examiner. Every option shows its consequences before you choose. The diagram keeps showing you how clean the design is — judged by the principles of the DOSS course (minimise coupling, increase cohesion, distribute responsibilities; RDD, GRASP, bad smells): hot classes glow, dependency cycles are drawn in red, methods in the wrong class point to their better home, and duplicated behaviour is measured. You can check the design against scenarios and expected changes, branch it and rewind it, look at it as C4 context and container diagrams, and compare it with real Java code.
 
 ## Run
 
-Requirements: Rust (`rustup`), Node 20+, and [pi](https://pi.dev) installed and logged in. Optional: PlantUML, used only by the export tests.
+Requirements: Rust (`rustup`), Node 24+ (including the native TypeScript test runner), and [pi](https://pi.dev) installed and logged in. The embedded-terminal/control transport currently targets macOS/Unix; Windows is not supported by this transport. Optional: PlantUML, used only by the export tests.
 
 ```sh
 npm install
@@ -14,13 +14,13 @@ npm run app            # = tauri dev (loads ~/.cargo/env first)
 npm run app:build      # release .app bundle in target/release/bundle/macos
 ```
 
-Spide opens the project folder `~/Documents/Spide/untitled`. Set `SPIDE_PROJECT=/path/to/folder` to open another one, or use `/new` and `/open` inside the app. Each project folder contains:
+Spide opens the project folder `~/Documents/Spide/untitled`. Set `SPIDE_PROJECT=/path/to/folder` to open another one, or use `/spide new` and `/spide open` inside pi (or the terminal header's **Commands** button). Each project folder contains:
 
 | file | purpose |
 |---|---|
 | `design.json` | The design (the active branch). It is autosaved on every change and watched for edits made outside Spide. |
 | `.pi/mcp.json` | Points pi to Spide's MCP server (`spide`, `http://127.0.0.1:47800/mcp`). |
-| `.spide/agent.md` | The system prompt Spide appends for its agent (copied from `agent/spide-skill.md`). |
+| `.spide/terminal-bridge.ts` | App-owned pi extension for private structured prompts, context and `/spide` commands. The skill in `agent/spide-skill.md` is appended at launch. |
 | `.spide/sessions/` | The agent's pi sessions. Spide continues the latest one on start. |
 | `.spide/history.jsonl` | One snapshot per change of the model, for the timeline. |
 | `.spide/branches/` | Inactive branches (`<name>.json`); `.spide/branch` names the active one. |
@@ -30,10 +30,18 @@ Older `design.json` files (schema 1) open unchanged.
 
 ## Using it
 
+### Native pi and workspace
+
+- Pi runs once in a real PTY in the project folder, with **all available tools** (`--tools '*'`), configured extensions/MCP servers and the user's permission controls. Code edits and shell commands are allowed; diagram mutations still use Spide MCP proposals/decisions. Trust/permission dialogs remain interactive. On first opening a project you may need to approve pi's **Trust project folder?** prompt before Spide's integration becomes ready.
+- The native editor is the only chat input. `Ctrl+P` cycles configured models, `Ctrl+Shift+P` cycles backward, `Ctrl+L` opens the model picker; Shift+Tab, Escape, multiline input and transcript scrolling belong to pi. Canvas shortcuts do not run while the terminal is focused. Ordinary selection/copy/paste uses xterm.
+- Drag separators to resize panes; collapse/reopen without restarting pi. Widths/visibility are saved locally, not in the design. Narrow windows put decisions in a drawer that doesn't cover pi. **Restart** is in the terminal header, even when pi is offline.
+- **All Spide `/command` examples below mean `/spide command` in the terminal**, or the same command in **Commands**. Native pi `/new`, `/model`, `/settings`, `/resume`, `/export`, etc. retain their own meanings. For example, use `/spide detail 3`, `/spide tidy`, `/spide import`, `/spide open`, `/spide save`.
+- Examiner/fix/generation requests go through an authenticated private Unix socket into that same session, never by pasting into a partly typed draft. Busy requests use pi follow-ups. Terminal bytes never drive app/design state.
+
 ### The loop
 
 1. **Brief.** On an empty design the agent asks one question at a time and records your answers as forces (goals, quality attributes, constraints, expected changes) with a priority. ⌘B or `/brief` opens the brief panel, where you can add, edit, reprioritise or remove forces yourself. `/skip` starts designing without a brief.
-2. **Decide.** The decision panel on the right shows the agent's question and 2–3 options. Each option has a mini preview, the health it would give, which forces it helps (+) or hurts (−), and a line of **consequences** (added, changed and removed elements, new and resolved issues, flipped dependencies, scenarios to re-check; click it for details). `compare` (or `/compare`) shows the options side by side on one shared layout. Hover over an option to preview it on the canvas, pick one or describe your own, and **defend** it. The examiner judges the defence against the brief. In *lenient* mode you can **overrule** a rejection (the elements are marked `⚠ overruled`); in *strict* mode you have to keep defending.
+2. **Decide.** The decision panel on the right shows the agent's question and 2–3 options. Each compact option has a selectable radio control, summary and health delta. **Details** lazily opens its mini diagram, brief trade-offs and **consequences** (added, changed and removed elements, new and resolved issues, flipped dependencies, scenarios to re-check; click it for details). `compare` (or `/compare`) shows the options side by side on one shared layout. **Preview / Stop preview** explicitly controls the read-only canvas preview; hovering, selecting or expanding never replaces it. Pick an option or describe your own, then **defend** it in the persistent footer. Drafts survive navigation and snapshots; previews close on decision/revision changes. The examiner judges the defence against the brief. In *lenient* mode you can **overrule** a rejection (the elements are marked `⚠ overruled`); in *strict* mode you have to keep defending.
 3. **Check behaviour.** In the Sequence tab each scenario gets a fit score: calls, call depth, package, layer and container crossings, aggregates touched, unknown calls. In the brief panel, **change scenarios** ("what if we must support e-books?") are analysed by the agent: Spide shows which classes must change, which depend on them (the ripple) and a locality score. **stress test** (or `/stress <name>`) highlights that footprint on the canvas.
 4. **Evolve.** ⌘T or `/timeline` scrubs through the design's history (read-only preview); *restore here* proposes the changes that bring a past state back, *fork* starts a branch from it. `/branch <name>` branches from now and switches to it, `/switch`, `/compare <branch>` and `/merge <branch>` (the other branch's changes arrive as ghost proposals, additions and removals separately).
 5. **Close the loop.** `/export adr` writes one Markdown ADR per decided decision (context, drivers, options, defence, examiner verdict, consequences). `/export archunit` writes an ArchUnit test that enforces the rules in Java (set `/coderoot org.your.app` first). `/import` reads a Java source folder; `/drift` then shows what is designed but not in the code, what is only in the code (faded "only in code" classes on the canvas), members, relations and packages that differ, and which rules the code breaks. *adopt code into design* turns the code-only parts into ghost proposals; *copy code to-do list* copies a Markdown checklist.
@@ -56,7 +64,7 @@ Health is **one number** (0–100): a weighted geometric mean of five principle 
 
 ### On the canvas
 
-- **Prompt.** Type `/` to see all commands.
+- **Commands.** Type `/spide ` in pi for completion, or open **Commands** in its header.
 - **Ghost proposals.** Changes from the agent show up as translucent, breathing ghosts. Click a ghost to accept it, right-click to reject it.
 - **Direct edits.** Double-click a class, attribute or method name to rename it. Drag a class onto another package to move it. `/add <Class> [in <package>]` adds a class. ⌥-click pins a class where it is (📌); pinned classes stay put, also on `/tidy`. Direct edits are yours: they apply immediately and ⌘Z undoes them.
 - **Prune.** Right-click an element to remove it, or hold the right mouse button and drag a box around several. A small box asks what you didn't like; ⏎ sends it to the agent, Esc prunes without comment. Pruned elements stay in the model, hidden by default (`/pruned` shows them), and the agent is told not to bring them back. Click a pruned element to restore it (restoring a package restores its classes).
@@ -64,7 +72,7 @@ Health is **one number** (0–100): a weighted geometric mean of five principle 
 - **External.** `/external <package|Class>` tags library/framework code (Spide suggests it once for packages like `zap` or `swing`): drawn as a compact strip, coupling to it counts less, and it isn't judged.
 - **Lenses.** `/lens concerns` colours method rows by what they do; `/lens overlap` draws dashed links between classes that duplicate each other and marks scattered concepts (⁂); `/lens off`. `/implicit` shows all implicit dependencies (otherwise only the hovered class's).
 - **Hover** over an element for its details: its **purpose** (the agent's sentence, the role Spide reads and why, methods in the wrong place → suggested home, what the code says), members, responsibilities, rationale, metrics, and **why it's here** — the decision (question, chosen option, your defence) or proposal that introduced it. Click an element that came from a decision to see the whole decision record.
-- **Navigate.** Drag to pan, pinch or ⌘-scroll to zoom, double-click empty space to fit. `/find <class>` zooms to a class and focuses it; `/focus <package>` zooms to a package and dims the rest; Esc clears. ⌘1–6 switch tabs, ⌘Z / ⇧⌘Z undo and redo, ⌘J opens the conversation, ⌘E exports a PNG and ⇧⌘E PlantUML.
+- **Navigate.** Drag to pan, pinch or ⌘-scroll to zoom, double-click empty space to fit. `/find <class>` zooms to a class and focuses it; `/focus <package>` zooms to a package and dims the rest; Esc clears. ⌘1–6 switch tabs, ⌘Z / ⇧⌘Z undo and redo, ⌘E exports a PNG and ⇧⌘E PlantUML.
 
 ### What the visuals mean
 
@@ -80,7 +88,7 @@ Health is **one number** (0–100): a weighted geometric mean of five principle 
 | `↗ Home` / `⚠ kind` after a method | the method is in the wrong place (suggested home) or breaks a course rule |
 | dashed purple edge (overlap lens) | duplicated behaviour (share) or a method dealing with another class's concept |
 | red / amber ring | stress test: impacted / ripple · drift: missing in code (dashed) / differs from code |
-| health ring (next to the prompt) | 0–100. Hover over it for the five principle scores and the issues per principle. `→ n` shows the health after accepting pending ghosts. |
+| health ring (canvas toolbar) | 0–100. Hover over it for the five principle scores and the issues per principle. `→ n` shows the health after accepting pending ghosts. |
 
 The layout is computed by ELK with packages as compound nodes (ui and infrastructure on top, application, then domain; external packages beside their users), so packages and classes never overlap. It only moves after a change, a drag or `/tidy`, then stops: an idle canvas costs no CPU. Decorative animations (ghosts, hot halos, cycles) play briefly and rest.
 
@@ -112,10 +120,10 @@ crates/spide-core     pure Rust: model, ops, store (proposals, decisions, undo),
                       impact, scenarios, drift, derived views (incl. C4), diff, agent tool API,
                       exporters (PlantUML, C4, PNG, ADR, ArchUnit)
 crates/spide-import   Java source import (tree-sitter) into a read-only design for drift checks, with body facts
-src-tauri             Tauri v2 shell: commands, MCP server (axum), pi bridge (pi --mode rpc),
-                      design.json watcher, history, branches, prompts for the agent
+src-tauri             Tauri v2 shell: commands, MCP server (axum), real pi PTY + private control socket,
+                      design.json watcher, history, branches, structured prompts for the agent
 src                   React + TypeScript UI: SVG canvas with d3-force physics and ELK layout
-agent/spide-skill.md  the agent's instructions (examiner workflow, modelling conventions)
+agent/               appended skill (examiner workflow) and bundled native pi integration extension
 ```
 
 - The Rust store is the single source of truth. The UI only sends intents (prompt, prune, accept, defend, overrule, undo) and renders the snapshots it receives.
@@ -123,7 +131,7 @@ agent/spide-skill.md  the agent's instructions (examiner workflow, modelling con
 - Every committed element records its origin (decision, proposal, `user` or `import`); accepted decisions keep the consequences they had.
 - Other agents can join the session. A pi you start in a terminal in the project folder picks up `.pi/mcp.json`, and any agent can also edit `design.json` directly. Spide turns such edits into ghost proposals instead of applying them silently.
 - The MCP server is a small streamable-HTTP JSON-RPC implementation (initialize, tools/list, tools/call) on `127.0.0.1` only. Every route (including the dev routes) requires a loopback `Host` header and, when a browser sends one, a local `Origin`, which blocks cross-site requests and DNS rebinding. It replaces the `rmcp` crate that was originally planned, to avoid tracking that crate's fast-changing API.
-- Environment variables: `SPIDE_PROJECT` (project folder), `SPIDE_PI` (path to the pi binary), `SPIDE_PI_ARGS` (extra pi arguments, e.g. `--model …`).
+- Environment variables: `SPIDE_PROJECT` (project folder), `SPIDE_PI` (path to the pi binary), native pi configuration and `/model` select the model. Legacy `SPIDE_PI_ARGS` is no longer used (it could override interactive transport/tool flags).
 
 ## Development
 
@@ -134,12 +142,16 @@ cargo test --workspace                         # core, import, app (golden files
 UPDATE_GOLDEN=1 cargo test -p spide-core       # accept changed golden output (PlantUML, ADR, ArchUnit)
 SPIDE_SMOKE_DIR=/abs/path/to/java/project cargo test -p spide-import smoke -- --nocapture   # import smoke test
 npm run typecheck
+npm test                                      # hover fake timers, extension/control lifecycle, drafts, modified keys
+npm run test:terminal                         # real pi PTY: tool inventory, Ctrl+P, native /reload; no model requests
 cargo test -p spide-core calibration -- --nocapture   # health ranks the course's good/bad designs correctly
 python3 scripts/perf_probe.py "http://localhost:1420/?perf=1"   # FPS/renders while idle and panning (needs Playwright + Chrome)
 ```
 
+Browser smoke (Chrome installed; no browser download needed): run `npm run dev` and a debug backend on a disposable copy of `examples/library.json`, then `npm run test:browser`. The script intercepts **all browser mutations** and tests six-view hover, read-only preview, lazy details, drafts and 1440×900 / 800×560 panes. Optional `SPIDE_SMOKE_SNAPSHOT=/path/to/snapshot.json` avoids needing a live backend; `SPIDE_BROWSER_CHANNEL` selects the Playwright browser channel. Screenshots go in ignored `.local/`.
+
 `?perf=1` (or `localStorage.spidePerf = "1"`) shows an overlay with frames per second, renders per second per component and the last snapshot build time.
 
-Debug builds also serve `GET /dev/snapshot` and `POST /dev/invoke/<command>` on the MCP port, so `http://localhost:1420` can drive the running app from a normal browser (used for automated UI checks). In dev, `?tab=<tab>&cmd=/command` in that URL opens a tab and runs prompt commands once the first snapshot arrives. Release builds don't expose `/dev/invoke`.
+Debug builds also serve `GET /dev/snapshot` and `POST /dev/invoke/<command>` on the MCP port, so `http://localhost:1420` can drive the running app from a normal browser (used for automated UI checks). In dev, `?tab=<tab>&cmd=/command` in that URL opens a tab and runs prompt commands once the first snapshot arrives. Release builds don't expose `/dev/invoke`. Agent/terminal/lifecycle commands are desktop-IPC-only even in debug builds; browser previews cannot submit shell-capable agent turns.
 
 `examples/library.json` is a small design with deliberate problems (a cycle, layer violations, an orphan). Copy it to a project's `design.json` while Spide is running to see it arrive as ghost proposals.

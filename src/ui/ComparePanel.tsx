@@ -6,6 +6,7 @@ import { elkLayout, type LayoutEdge } from "../canvas/layout";
 import { healthColor } from "../canvas/visuals";
 import type { Class, Decision, Design, Impact, Pos, Snapshot } from "../state/types";
 import { ImpactDetails } from "./Impact";
+import { useOverlay } from "./overlay";
 
 export interface CompareCol {
   id: string;
@@ -37,23 +38,22 @@ export function ComparePanel({ title, kicker = "compare options", cols, snap, on
   }, [snap, cols.map((c) => c.id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
   const boxes = useMemo(() => boxesFor(union, true, 3, snap.view.relations), [union]); // eslint-disable-line react-hooks/exhaustive-deps
   const [pos, setPos] = useState<Map<string, Pos> | null>(null);
+  const [layoutError, setLayoutError] = useState("");
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let alive = true;
+    setPos(null); setLayoutError("");
     const rels = new Map<string, LayoutEdge>();
     for (const r of snap.view.relations) rels.set(r.id, r);
     for (const col of cols) for (const r of col.design?.relations ?? []) rels.set(r.id, r);
     elkLayout(union.map((c) => ({ id: c.name, w: boxes.get(c.name)!.w, h: boxes.get(c.name)!.h })), [...rels.values()])
-      .then((p) => alive && setPos(p));
+      .then((p) => alive && setPos(p), (e) => alive && setLayoutError(String(e)));
     return () => {
       alive = false;
     };
-  }, [union, boxes]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [union, boxes, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useOverlay(onClose);
 
   let vb = "0 0 100 100";
   if (pos) {
@@ -72,11 +72,11 @@ export function ComparePanel({ title, kicker = "compare options", cols, snap, on
   }
 
   return (
-    <div className="compare" data-ui>
+    <section className="compare" data-ui role="region" aria-label={`${kicker}: ${title}`}>
       <div className="cmp-head">
         <span className="dp-kicker">{kicker}</span>
         <span className="cmp-q">{title}</span>
-        <button className="link" onClick={onClose}>close (Esc)</button>
+        <button className="icon-button" aria-label="Close comparison" title="Close · Esc" autoFocus onClick={onClose}>×</button>
       </div>
       <div className="cmp-cols" style={{ gridTemplateColumns: `repeat(${cols.length}, 1fr)` }}>
         {cols.map((col) => {
@@ -88,7 +88,9 @@ export function ComparePanel({ title, kicker = "compare options", cols, snap, on
                 <span className="o-label">{col.label}</span>
                 {col.health != null && <span className="o-health" style={{ color: healthColor(col.health) }}>{col.health}</span>}
               </div>
-              {col.error ? (
+              {!col.error && layoutError ? <div className="mini err">Couldn't lay out this comparison. <button className="link" onClick={() => setAttempt((n) => n + 1)}>Retry</button></div> :
+               !col.error && !pos ? <div className="mini loading"><span className="spinner" /> Laying out…</div> :
+               col.error ? (
                 <div className="mini err">✗ {col.error}</div>
               ) : (
                 <svg className="cmp-svg" viewBox={vb} preserveAspectRatio="xMidYMid meet">
@@ -105,6 +107,6 @@ export function ComparePanel({ title, kicker = "compare options", cols, snap, on
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }

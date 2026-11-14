@@ -16,7 +16,14 @@ export interface Attribute {
   origin: string | null;
 }
 export interface Param { name: string; type: string }
+export interface CodeFacts {
+  file: string; start_line: number; end_line: number;
+  loc: number; statements: number; max_chain: number; chains: string[];
+  loops: number; switches: number; instanceofs: number;
+  fingerprint: number[];
+}
 export interface Method {
+  code?: CodeFacts | null;
   name: string;
   params: Param[];
   returns: string | null;
@@ -350,19 +357,6 @@ export type Target =
   | { kind: "link"; id: string };
 
 export type Tab = "system" | "class" | "domain" | "package" | "usecase" | "sequence";
-
-export type AgentEvent =
-  | { kind: "user"; text: string }
-  | { kind: "assistant_start" }
-  | { kind: "text"; delta: string }
-  | { kind: "assistant_end" }
-  | { kind: "thinking" }
-  | { kind: "tool"; name: string }
-  | { kind: "tool_error"; name: string; text: string }
-  | { kind: "status"; text: string }
-  | { kind: "error"; text: string }
-  | { kind: "settled" }
-  | { kind: "exit" };
 
 export function targetLabel(t: Target): string {
   switch (t.kind) {

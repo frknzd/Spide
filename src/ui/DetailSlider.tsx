@@ -9,12 +9,12 @@ const HELP = [
 ];
 
 /** Granularity slider: how much of each class the diagram shows (also /detail 0–4). */
-export function DetailSlider({ level, onChange }: { level: number; onChange: (l: number) => void }) {
+export function DetailSlider({ level, onChange, disabled }: { level: number; onChange: (l: number) => void; disabled?: boolean }) {
   return (
-    <div className="detail-slider" data-ui title={`detail: ${DETAIL_LABELS[level]} — ${HELP[level]}  (/detail 0–4)`}>
-      <span className="faint">detail</span>
-      <input type="range" min={0} max={4} step={1} value={level} onChange={(e) => onChange(Number(e.target.value))} />
+    <label className="detail-slider" data-ui title={disabled ? "Exit preview to change detail" : `${DETAIL_LABELS[level]} — ${HELP[level]}`}>
+      <span>Detail</span>
+      <input type="range" min={0} max={4} step={1} value={level} disabled={disabled} aria-valuetext={`${DETAIL_LABELS[level]}: ${HELP[level]}`} onChange={(e) => onChange(Number(e.target.value))} />
       <span className="detail-label">{DETAIL_LABELS[level]}</span>
-    </div>
+    </label>
   );
 }
