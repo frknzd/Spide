@@ -25,11 +25,9 @@ pub async fn serve(st: AppState) -> std::io::Result<u16> {
     let port = listener.local_addr()?.port();
     let app = Router::new()
         .route("/mcp", post(handle).get(|| async { StatusCode::METHOD_NOT_ALLOWED }).delete(|| async { StatusCode::OK }))
-        .route("/dev/snapshot", axum::routing::get(dev_snapshot))
-        .route("/dev/invoke/{cmd}", post(dev_invoke).options(dev_preflight))
         .layer(middleware::from_fn(local_only))
         .with_state(st);
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
             eprintln!("spide mcp: {e}");
         }
@@ -51,11 +49,8 @@ fn is_loopback_authority(authority: &str) -> bool {
     port_ok && matches!(host.to_ascii_lowercase().as_str(), "127.0.0.1" | "localhost" | "::1")
 }
 
-/// A browser Origin (`scheme://host[:port]`) that belongs to a local page or the Tauri webview.
+/// A browser Origin (`scheme://host[:port]`) that belongs to a local page.
 fn is_local_origin(origin: &str) -> bool {
-    if matches!(origin, "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost") {
-        return true;
-    }
     match origin.split_once("://") {
         Some(("http" | "https", authority)) => is_loopback_authority(authority),
         _ => false,
@@ -167,31 +162,6 @@ fn get_code(st: &AppState, args: &Value) -> Result<String, String> {
     spide_core::code::snippet(&reality, std::path::Path::new(&dir), class, method)
 }
 
-/// Read-only snapshot for browser-based previews of the UI (dev aid).
-async fn dev_snapshot(State(st): State<AppState>) -> Response {
-    let snap = st.snapshot();
-    let mut resp = Json(snap).into_response();
-    resp.headers_mut().insert("access-control-allow-origin", HeaderValue::from_static("http://localhost:1420"));
-    resp
-}
-
-/// Debug builds only: lets a plain browser drive the UI (used for automated UI checks).
-async fn dev_invoke(State(st): State<AppState>, axum::extract::Path(cmd): axum::extract::Path<String>, Json(args): Json<Value>) -> Response {
-    let mut resp = if cfg!(debug_assertions) {
-        let st2 = st.clone();
-        let r = tokio::task::spawn_blocking(move || crate::commands::dev_dispatch(&st2, &cmd, args)).await;
-        match r {
-            Ok(Ok(v)) => Json(v).into_response(),
-            Ok(Err(e)) => (StatusCode::BAD_REQUEST, e).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    } else {
-        StatusCode::NOT_FOUND.into_response()
-    };
-    resp.headers_mut().insert("access-control-allow-origin", HeaderValue::from_static("http://localhost:1420"));
-    resp
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,20 +178,11 @@ mod tests {
 
     #[test]
     fn local_origins() {
-        for ok in ["http://localhost:1420", "http://127.0.0.1", "tauri://localhost", "http://[::1]:3000"] {
+        for ok in ["http://localhost:1420", "http://127.0.0.1", "http://[::1]:3000"] {
             assert!(is_local_origin(ok), "{ok}");
         }
-        for bad in ["http://localhost.evil.com", "http://127.0.0.1.evil.com", "https://evil.com", "null", "file://localhost"] {
+        for bad in ["http://localhost.evil.com", "http://127.0.0.1.evil.com", "https://evil.com", "null", "file://localhost", "tauri://localhost"] {
             assert!(!is_local_origin(bad), "{bad}");
         }
     }
-}
-
-async fn dev_preflight() -> Response {
-    let mut resp = StatusCode::NO_CONTENT.into_response();
-    let h = resp.headers_mut();
-    h.insert("access-control-allow-origin", HeaderValue::from_static("http://localhost:1420"));
-    h.insert("access-control-allow-methods", HeaderValue::from_static("POST"));
-    h.insert("access-control-allow-headers", HeaderValue::from_static("content-type"));
-    resp
 }

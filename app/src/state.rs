@@ -7,9 +7,9 @@ use spide_core::impact::{impact_of_ops, Impact};
 use spide_core::{derive, Design, DecisionState, Store};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
-use tauri::{AppHandle, Emitter};
+use crate::events::{Events, UiEvent};
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PiStatus {
     Starting,
@@ -41,7 +41,7 @@ impl Shared {
 #[derive(Clone)]
 pub struct AppState {
     pub inner: Arc<Mutex<Shared>>,
-    pub app: AppHandle,
+    pub events: Events,
 }
 
 #[derive(Serialize)]
@@ -84,12 +84,10 @@ pub struct Snapshot {
     pub pi_error: Option<String>,
     pub mcp_url: String,
     pub branch: String,
-    /// Time spent building this snapshot (metrics, previews, derived views), for the perf overlay.
-    pub build_ms: f64,
 }
 
 impl AppState {
-    pub fn new(app: AppHandle, project_dir: PathBuf) -> Self {
+    pub fn new(events: Events, project_dir: PathBuf) -> Self {
         let path = project_dir.join("design.json");
         let mut store = Store::default();
         let mut last_written = None;
@@ -122,7 +120,7 @@ impl AppState {
                 last_history,
                 branch,
             })),
-            app,
+            events,
         }
     }
 
@@ -143,17 +141,17 @@ impl AppState {
             save(&mut s);
             build_snapshot(&s)
         };
-        let _ = self.app.emit("snapshot", &snap);
+        self.events.send(UiEvent::Snapshot(Arc::new(snap)));
     }
 
     /// Broadcast without saving (status changes).
     pub fn emit(&self) {
         let snap = self.snapshot();
-        let _ = self.app.emit("snapshot", &snap);
+        self.events.send(UiEvent::Snapshot(Arc::new(snap)));
     }
 
     pub fn toast(&self, kind: &str, text: impl Into<String>) {
-        let _ = self.app.emit("toast", serde_json::json!({ "kind": kind, "text": text.into() }));
+        self.events.send(UiEvent::Toast { kind: kind.to_string(), text: text.into() });
     }
 }
 
@@ -258,7 +256,6 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
         pi_error: s.pi_error.clone(),
         mcp_url: mcp_url(s.mcp_port),
         branch: s.branch.clone(),
-        build_ms,
     }
 }
 

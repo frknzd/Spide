@@ -6,7 +6,6 @@ use std::io::{Read, Write};
 use std::os::unix::{fs::PermissionsExt, net::{UnixListener, UnixStream}};
 use std::sync::{atomic::{AtomicBool, AtomicU64, Ordering}, mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::Emitter;
 
 const LIMIT: usize = 1024 * 1024;
 fn valid_hello(v: &Value, token: &str, generation: u64) -> bool {
@@ -116,13 +115,18 @@ impl Control {
                         if id.is_empty() || id.len() > 128 { break 'connection; }
                         if let Some(r) = seen.get(&id) { let _ = self.send(r); continue; }
                         let payload = &v["payload"];
-                        let result = match v["method"].as_str() {
+                        let result: Result<Value, String> = match v["method"].as_str() {
                             Some("context") => {
                                 let s = st.lock();
                                 let tab = self.tab.lock().unwrap();
                                 Ok(json!({"text": crate::prompts::user_prompt(payload["text"].as_str().unwrap_or(""), &tab, &s.store.design)}))
                             }
-                            Some("command") => st.app.emit("spide-command", json!({"id":id,"generation":self.generation,"project":st.lock().project_dir.display().to_string(),"command":payload["command"]})).map(|_| json!({"queued":true})).map_err(|e| e.to_string()),
+                            Some("command") => {
+                                let project = st.lock().project_dir.display().to_string();
+                                let command = payload["command"].as_str().unwrap_or("").to_string();
+                                st.events.send(crate::events::UiEvent::SpideCommand { id: id.clone(), generation: self.generation, project, command });
+                                Ok(json!({"queued":true}))
+                            }
                             _ => Err("unknown integration request".into()),
                         };
                         let r = match result {

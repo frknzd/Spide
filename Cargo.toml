@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/spide-core", "crates/spide-import", "src-tauri"]
+members = ["crates/spide-core", "crates/spide-import", "crates/spide-diagram", "app"]
 
 [workspace.package]
 edition = "2021"
@@ -8,4 +8,6 @@ version = "0.1.0"
 
 # The metrics engine runs on every change (and per decision option): keep it fast in dev builds too.
 [profile.dev.package.spide-core]
+opt-level = 2
+[profile.dev.package.spide-diagram]
 opt-level = 2
