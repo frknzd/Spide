@@ -2,7 +2,7 @@
 //! grid with egui. No terminal bytes or keystrokes drive design state.
 
 use super::state::terminal_keys::{modified_key, KeyEvent};
-use super::theme::{css, hex, mono, sans, MONO_BOLD, MONO_BOLD_ITALIC, MONO_ITALIC};
+use super::theme::{css, hex, sans, MONO_BOLD, MONO_BOLD_ITALIC, MONO_ITALIC};
 use crate::events::{Events, UiEvent};
 use crate::pi_bridge::PiBridge;
 use alacritty_terminal::event::{Event as TermEvent, EventListener};
@@ -750,6 +750,36 @@ mod tests {
         assert!(s.modify_other_keys);
         s.scan_modify_other_keys(b"\x1b[>4;0m");
         assert!(!s.modify_other_keys);
+    }
+
+    #[test]
+    fn fake_pty_stream_renders_in_workspace() {
+        use portable_pty::CommandBuilder;
+        use crate::ui::tests::{harness, project, steps, shot};
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        cmd.args(["-c", "printf '\\033[38;2;122;162;255mFake pi\\033[0m\\r\\nready > '"]);
+        let pty = crate::terminal::Terminal::spawn(cmd, 42).unwrap();
+        let mut state = TermState::new(Listener::default());
+        let mut cursor = 0;
+        for _ in 0..100 {
+            let f = pty.read(cursor).unwrap();
+            cursor = f.next;
+            state.scan_modify_other_keys(&f.bytes);
+            state.parser.advance(&mut state.term, &f.bytes);
+            if f.exited { break; }
+        }
+        pty.stop();
+        assert_eq!(state.term.grid()[TPoint::new(Line(0), Column(0))].c, 'F');
+        let dir = project("library");
+        let mut h = harness(dir.path(), (1440.0, 900.0));
+        h.state_mut().term = Some(TermSession {
+            state: Arc::new(Mutex::new(state)), pi: Arc::new(PiBridge::new()),
+            stop: Arc::new(AtomicBool::new(false)), tab: "class".into(),
+            selecting: false, has_focus: false, scroll_acc: 0.0, focus_requested: false,
+        });
+        steps(&mut h, 150);
+        shot(&mut h, "terminal-fake-pty");
+        assert!(h.state().term.as_ref().unwrap().state.lock().unwrap().cols > 10);
     }
 
     #[test]

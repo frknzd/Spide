@@ -2,9 +2,9 @@
 //! side-by-side comparison.
 
 use super::paint::{AnimClock, EguiMeasure, ScenePainter, View};
-use super::state::decision_drafts::{DecisionDraft, Drafts};
-use super::theme::{bold, css, hex, italic, mono, sans};
-use super::widgets::{self, button, icon_button, link, primary_enabled, warn_button};
+use super::state::decision_drafts::Drafts;
+use super::theme::{bold, css, hex, mono, sans};
+use super::widgets::{self, icon_button, link, primary_enabled, warn_button};
 use crate::backend::Backend;
 use crate::state::{OptionPreview, Snapshot};
 use egui::{Color32, Margin, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
@@ -414,7 +414,7 @@ pub fn panel(ui: &mut Ui, st: &mut DecisionUi, pending: &[&Decision], snap: &Sna
 
 fn mini_preview(ui: &mut Ui, st: &mut DecisionUi, pv: Option<&OptionPreview>, decision: &str, option: &str, m: &EguiMeasure) {
     let w = ui.available_width();
-    let mut box_msg = |ui: &mut Ui, text: &str, color: Color32, h: f32| {
+    let box_msg = |ui: &mut Ui, text: &str, color: Color32, h: f32| {
         egui::Frame::new().fill(css::BG).stroke(Stroke::new(1.0, css::LINE)).corner_radius(8).inner_margin(Margin::same(8)).show(ui, |ui| {
             ui.set_width(w - 16.0);
             ui.set_min_height(h);

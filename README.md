@@ -6,12 +6,19 @@ You start with an empty dark canvas beside a real interactive pi terminal. The a
 
 ## Run
 
-Requirements: Rust (`rustup`), Node 24+ (including the native TypeScript test runner), and [pi](https://pi.dev) installed and logged in. The embedded-terminal/control transport currently targets macOS/Unix; Windows is not supported by this transport. Optional: PlantUML, used only by the export tests.
+Requirements: Rust (`rustup`) and [pi](https://pi.dev) installed and logged in. Node 24+ is needed for pi and its native TypeScript extension test, not for a frontend build. Spide uses native Rust/egui widgets, with no browser or webview. The PTY/control transport targets macOS/Unix; Windows is not supported. Optional: PlantUML for exporter syntax tests. Linux builds need the usual native graphics/windowing development libraries (X11/Wayland and OpenGL/Vulkan).
 
 ```sh
-npm install
-npm run app            # = tauri dev (loads ~/.cargo/env first)
-npm run app:build      # release .app bundle in target/release/bundle/macos
+cargo run -p spide
+./scripts/bundle-macos.sh   # release app: target/release/bundle/macos/Spide.app
+```
+
+The bundle is unsigned; signing/notarization for distribution is separate. Launch from a shell with `pi` on `PATH`, or set `SPIDE_PI` to its absolute path. Example project:
+
+```sh
+project=$(mktemp -d)
+cp examples/library.json "$project/design.json"
+SPIDE_PROJECT="$project" cargo run -p spide
 ```
 
 Spide opens the project folder `~/Documents/Spide/untitled`. Set `SPIDE_PROJECT=/path/to/folder` to open another one, or use `/spide new` and `/spide open` inside pi (or the terminal header's **Commands** button). Each project folder contains:
@@ -33,7 +40,7 @@ Older `design.json` files (schema 1) open unchanged.
 ### Native pi and workspace
 
 - Pi runs once in a real PTY in the project folder, with **all available tools** (`--tools '*'`), configured extensions/MCP servers and the user's permission controls. Code edits and shell commands are allowed; diagram mutations still use Spide MCP proposals/decisions. Trust/permission dialogs remain interactive. On first opening a project you may need to approve pi's **Trust project folder?** prompt before Spide's integration becomes ready.
-- The native editor is the only chat input. `Ctrl+P` cycles configured models, `Ctrl+Shift+P` cycles backward, `Ctrl+L` opens the model picker; Shift+Tab, Escape, multiline input and transcript scrolling belong to pi. Canvas shortcuts do not run while the terminal is focused. Ordinary selection/copy/paste uses xterm.
+- The native editor is the only chat input. `Ctrl+P` cycles configured models, `Ctrl+Shift+P` cycles backward, `Ctrl+L` opens the model picker; Shift+Tab, Escape, multiline input and transcript scrolling belong to pi. Canvas shortcuts do not run while the terminal is focused. Selection/copy/paste uses the native terminal widget.
 - Drag separators to resize panes; collapse/reopen without restarting pi. Widths/visibility are saved locally, not in the design. Narrow windows put decisions in a drawer that doesn't cover pi. **Restart** is in the terminal header, even when pi is offline.
 - **All Spide `/command` examples below mean `/spide command` in the terminal**, or the same command in **Commands**. Native pi `/new`, `/model`, `/settings`, `/resume`, `/export`, etc. retain their own meanings. For example, use `/spide detail 3`, `/spide tidy`, `/spide import`, `/spide open`, `/spide save`.
 - Examiner/fix/generation requests go through an authenticated private Unix socket into that same session, never by pasting into a partly typed draft. Busy requests use pi follow-ups. Terminal bytes never drive app/design state.
@@ -73,7 +80,7 @@ Health is **one number** (0–100): a weighted geometric mean of five principle 
 - **External.** `/external <package|Class>` tags library/framework code (Spide suggests it once for packages like `zap` or `swing`): drawn as a compact strip, coupling to it counts less, and it isn't judged.
 - **Lenses.** `/lens concerns` colours method rows by what they do; `/lens overlap` draws dashed links between classes that duplicate each other and marks scattered concepts (⁂); `/lens off`. `/implicit` shows all implicit dependencies (otherwise only the hovered class's).
 - **Hover** over an element for its details: its **purpose** (the agent's sentence, the role Spide reads and why, methods in the wrong place → suggested home, what the code says), members, responsibilities, rationale, metrics, and **why it's here** — the decision (question, chosen option, your defence) or proposal that introduced it. Click an element that came from a decision to see the whole decision record.
-- **Navigate.** Drag to pan, pinch or ⌘-scroll to zoom, double-click empty space to fit. `/find <class>` zooms to a class and focuses it; `/focus <package>` zooms to a package and dims the rest; Esc clears. ⌘1–6 switch tabs, ⌘Z / ⇧⌘Z undo and redo, ⌘E exports a PNG and ⇧⌘E PlantUML.
+- **Navigate.** Drag to pan, pinch or ⌘-scroll to zoom, double-click empty space to fit. `/find <class>` zooms to a class and focuses it; `/focus <package>` zooms to a package and dims the rest; Esc clears. ⌘1–6 switch tabs, ⌘Z / ⇧⌘Z undo and redo, ⌘E opens Export and ⇧⌘E repeats the last export.
 
 ### What the visuals mean
 
@@ -91,7 +98,7 @@ Health is **one number** (0–100): a weighted geometric mean of five principle 
 | red / amber ring | stress test: impacted / ripple · drift: missing in code (dashed) / differs from code |
 | health ring (canvas toolbar) | 0–100. Hover over it for the five principle scores and the issues per principle. `→ n` shows the health after accepting pending ghosts. |
 
-The layout is computed by ELK with packages as compound nodes (ui and infrastructure on top, application, then domain; external packages beside their users), so packages and classes never overlap. It only moves after a change, a drag or `/tidy`, then stops: an idle canvas costs no CPU. Decorative animations (ghosts, hot halos, cycles) play briefly and rest.
+The layout uses Rust Sugiyama layering with compound package packing (ui and infrastructure on top, application, then domain; external packages beside their users). A bounded force simulation separates nodes and package hulls after changes. It only moves after a change, a drag or `/tidy`, then stops: an idle canvas costs no CPU. Decorative animations (ghosts, hot halos, cycles) play briefly and rest.
 
 Package names such as `domain`, `ui` or `persistence` are mapped to their layer automatically.
 
@@ -106,7 +113,7 @@ Package names such as `domain`, `ui` or `persistence` are mapped to their layer 
 
 ## Exports
 
-- **PNG** renders the same SVG the canvas shows, using `resvg` at 2×. Animations are frozen in the image.
+- **PNG, SVG and PDF** use the same retained scene as the native canvas. Export settings include theme, scale, legend, diagnostics and ghost visibility, and persist per project. PNG uses `resvg` (default 2×); PDF uses `svg2pdf`. Animations are frozen. **File → Export Again** repeats the previous format/path.
 - **PlantUML** is exported per tab, or for every non-empty diagram at once with `/export all`. The System tab exports C4-PlantUML (context and container diagrams). The export keeps every member with its visibility and type, plus stereotypes, multiplicities, layer-coloured packages, cycles and layer violations in colour, a health legend, and `down`/`right` direction hints taken from the canvas. PlantUML uses its own layout engine, so the PNG is the pixel-exact export.
 - **JSON** via `/save` and `/open`. The project's `design.json` is always up to date.
 - **ADRs** via `/export adr` (Markdown, MADR style, one per accepted or overruled decision).
@@ -121,9 +128,11 @@ crates/spide-core     pure Rust: model, ops, store (proposals, decisions, undo),
                       impact, scenarios, drift, derived views (incl. C4), diff, agent tool API,
                       exporters (PlantUML, C4, PNG, ADR, ArchUnit)
 crates/spide-import   Java source import (tree-sitter) into a read-only design for drift checks, with body facts
-src-tauri             Tauri v2 shell: commands, MCP server (axum), real pi PTY + private control socket,
+crates/spide-diagram  GUI-independent scenes, orthogonal routing, compound Sugiyama layout, physics,
+                      diagnostics/focus, all diagram views, themes and shared-scene SVG export
+app                   eframe/egui desktop app: canvas, native panels, alacritty_terminal widget,
+                      commands, MCP server (axum), real pi PTY + private control socket,
                       design.json watcher, history, branches, structured prompts for the agent
-src                   React + TypeScript UI: SVG canvas with d3-force physics and ELK layout
 agent/               appended skill (examiner workflow) and bundled native pi integration extension
 ```
 
@@ -131,28 +140,25 @@ agent/               appended skill (examiner workflow) and bundled native pi in
 - Agents change the design **only** through MCP tools: `get_design`, `get_metrics`, `get_view`, `propose_decision`, `propose_ops`, `evaluate_defense`, `set_use_cases`, `set_sequence`, `set_change_impact`. Analysis tools: `get_responsibilities`, `get_overlap`, `suggest_home`, `get_code` (read the imported implementation) and `assess_class` (record the agent's judgement); the first two take `on: "code"`. Every change becomes a proposal or a decision, and invalid ops are rejected atomically with a clear error. Forces, change scenarios, containers, external systems and links are ops too, so they go through the same proposals, undo and file watcher. Architecture rules are the user's: only the user changes them.
 - Every committed element records its origin (decision, proposal, `user` or `import`); accepted decisions keep the consequences they had.
 - Other agents can join the session. A pi you start in a terminal in the project folder picks up `.pi/mcp.json`, and any agent can also edit `design.json` directly. Spide turns such edits into ghost proposals instead of applying them silently.
-- The MCP server is a small streamable-HTTP JSON-RPC implementation (initialize, tools/list, tools/call) on `127.0.0.1` only. Every route (including the dev routes) requires a loopback `Host` header and, when a browser sends one, a local `Origin`, which blocks cross-site requests and DNS rebinding. It replaces the `rmcp` crate that was originally planned, to avoid tracking that crate's fast-changing API.
+- The MCP server is a small streamable-HTTP JSON-RPC implementation (initialize, tools/list, tools/call) on `127.0.0.1` only. Every route requires a loopback `Host` header and, when a browser sends one, a local `Origin`, which blocks cross-site requests and DNS rebinding. It replaces the `rmcp` crate that was originally planned, to avoid tracking that crate's fast-changing API.
 - Environment variables: `SPIDE_PROJECT` (project folder), `SPIDE_PI` (path to the pi binary), native pi configuration and `/model` select the model. Legacy `SPIDE_PI_ARGS` is no longer used (it could override interactive transport/tool flags).
 
 ## Development
 
-Verification results, known limitations and remaining manual checks are tracked in [`plans/interactive-design-verification.md`](plans/interactive-design-verification.md). In particular, concurrent views may overwrite pinned layouts; Java import and aggregate-write warnings are heuristic, and branch merging is not a three-way merge.
+The native migration is documented in [`plans/native-rust-gui.md`](plans/native-rust-gui.md); test results and remaining manual checks are in [`plans/native-rust-verification.md`](plans/native-rust-verification.md). Older verification notes in `plans/interactive-design-verification.md` describe the pre-egui app. Java import and aggregate-write warnings remain heuristic, and branch merging is not a three-way merge.
 
 ```sh
-cargo test --workspace                         # core, import, app (golden files; PlantUML syntax check if installed)
-UPDATE_GOLDEN=1 cargo test -p spide-core       # accept changed golden output (PlantUML, ADR, ArchUnit)
-SPIDE_SMOKE_DIR=/abs/path/to/java/project cargo test -p spide-import smoke -- --nocapture   # import smoke test
-npm run typecheck
-npm test                                      # hover fake timers, extension/control lifecycle, drafts, modified keys
-npm run test:terminal                         # real pi PTY: tool inventory, Ctrl+P, native /reload; no model requests
-cargo test -p spide-core calibration -- --nocapture   # health ranks the course's good/bad designs correctly
-python3 scripts/perf_probe.py "http://localhost:1420/?perf=1"   # FPS/renders while idle and panning (needs Playwright + Chrome)
+cargo test --workspace                      # core, import, diagrams, headless egui UI, fake PTY, real file exports
+node --test tests/pi-extension.test.ts       # or npm test; no npm install needed
+python3 scripts/terminal_smoke.py            # real pi PTY: Ctrl+P, /reload; no model requests
+cargo test -p spide macos_view_snapshots -- --ignored   # macOS visual comparison (system fonts)
+UPDATE_SNAPSHOTS=1 cargo test -p spide macos_view_snapshots -- --ignored  # deliberately update baselines
+UPDATE_GOLDEN=1 cargo test -p spide-core      # accept changed exporter golden output
+SPIDE_SMOKE_DIR=/abs/path/to/java/project cargo test -p spide-import smoke -- --nocapture
 ```
 
-Browser smoke (Chrome installed; no browser download needed): run `npm run dev` and a debug backend on a disposable copy of `examples/library.json`, then `npm run test:browser`. The script intercepts **all browser mutations** and tests six-view hover, read-only preview, lazy details, drafts and 1440×900 / 800×560 panes. Optional `SPIDE_SMOKE_SNAPSHOT=/path/to/snapshot.json` avoids needing a live backend; `SPIDE_BROWSER_CHANNEL` selects the Playwright browser channel. Screenshots go in ignored `.local/`.
+Headless UI tests render both examples in all tabs and cover canvas interaction, layout persistence, narrow drawers, panels, export and a fake PTY stream. Diagnostic PNGs are written to `target/ui-shots/`; reviewed macOS baselines live in `app/tests/snapshots/`. Visual comparisons are explicit because system fonts/rasterization differ by OS. Browser dev mode, the browser perf overlay, Playwright and the `/dev/*` routes are removed.
 
-`?perf=1` (or `localStorage.spidePerf = "1"`) shows an overlay with frames per second, renders per second per component and the last snapshot build time.
-
-Debug builds also serve `GET /dev/snapshot` and `POST /dev/invoke/<command>` on the MCP port, so `http://localhost:1420` can drive the running app from a normal browser (used for automated UI checks). In dev, `?tab=<tab>&cmd=/command` in that URL opens a tab and runs prompt commands once the first snapshot arrives. Release builds don't expose `/dev/invoke`. Agent/terminal/lifecycle commands are desktop-IPC-only even in debug builds; browser previews cannot submit shell-capable agent turns.
+For manual verification, use a disposable project, walk through the workflows above, compare all six tabs against reference images, and check terminal input, resize and restart. Check idle CPU and large-diagram pan/zoom in a native release build; automated headless tests do not establish native frame-rate or interactive permission-dialog behavior.
 
 `examples/library.json` is a small design with deliberate problems (a cycle, layer violations, an orphan). Copy it to a project's `design.json` while Spide is running to see it arrive as ghost proposals.

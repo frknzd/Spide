@@ -1,7 +1,7 @@
 //! Ghost proposal review: one plan at a time, before/after, impact, an operation editor (structured
 //! fields + advanced JSON), local drafts, save / accept / reject.
 
-use super::decisions::{impact_details, impact_line};
+use super::decisions::impact_line;
 use super::state::proposal_review::{field_diffs, next_proposal_id, operation_label, operation_target, patch_operation, same_plan, PlanDraft, PlanDrafts};
 use super::theme::{bold, css, hex, mono, sans};
 use super::widgets::{self, button, link, primary_enabled};

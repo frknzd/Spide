@@ -5,5 +5,8 @@ target/
 *.log
 /.spide/
 /.pi/
-src-tauri/gen/
 /.local/
+# Visual-test failure artifacts (reviewed baseline PNGs stay tracked).
+app/tests/snapshots/**/*.diff.png
+app/tests/snapshots/**/*.new.png
+app/tests/snapshots/**/*.old.png

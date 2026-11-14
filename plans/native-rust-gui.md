@@ -130,11 +130,11 @@ app/                   renamed from src-tauri; package `spide`, bin; eframe app 
 - [x] **1. Restructure:** `git mv src-tauri app`, add `crates/spide-diagram`, update the workspace, remove Tauri, introduce the `Events` sink and the `Backend` call helper, and delete the dev routes. A minimal eframe window shows the snapshot's rev and health. `cargo test` passes.
 - [x] **2. `spide-diagram` core:** visuals/theme/text, then port `route.rs` and `physics.rs`, then `layout.rs` on `rust-sugiyama`. Check the layout on the examples; if it is poor, hand-port the layered layout.
 - [x] **3. Scene + class view:** class nodes at every detail level (0–4), with folding, role names, `↗ Home` markers, inherited-attribute rules and zoom-based detail. Edge notation (association, directed, inheritance, realization, dependency, composition, aggregation), cycles, violations, ghosts and removals, package hulls, heat glow, pins, overruled and pruned states, the external strip, lenses (concerns, overlap), implicit dependencies.
-- [ ] **4. Canvas interaction:** viewport, drag, physics loop, tidy, pin, prune (click and box), feedback popover, restore, inline rename, drag into a package, hover cards (purpose, members, metrics, why it's here), find/focus/dim, stress footprint, layout persistence via `set_layout`.
-- [ ] **5. Other views:** domain, package, system (C4 context/container), use case, sequence (scenario fit scores, regenerate).
-- [ ] **6. Workspace + chrome:** panes, drawer, tabs, health ring and popover, toasts, proposal bar, detail slider, keyboard shortcuts, menu, fonts and visuals.
-- [ ] **7. Terminal widget:** connect it to `terminal.rs`, add key encoding and modifyOtherKeys, resizing, selection and clipboard, restart and status, the command palette, and the `spide-command` bridge into `handle_command` with dedup (256 seen).
-- [ ] **8. Panels:**
+- [x] **4. Canvas interaction:** viewport, drag, physics loop, tidy, pin, prune (click and box), feedback popover, restore, inline rename, drag into a package, hover cards (purpose, members, metrics, why it's here), find/focus/dim, stress footprint, layout persistence via `set_layout`.
+- [x] **5. Other views:** domain, package, system (C4 context/container), use case, sequence (scenario fit scores, regenerate).
+- [x] **6. Workspace + chrome:** panes, drawer, tabs, health ring and popover, toasts, proposal bar, detail slider, keyboard shortcuts, menu, fonts and visuals.
+- [x] **7. Terminal widget:** connect it to `terminal.rs`, add key encoding and modifyOtherKeys, resizing, selection and clipboard, restart and status, the command palette, and the `spide-command` bridge into `handle_command` with dedup (256 seen).
+- [x] **8. Panels:**
   - decisions: cards, compare, history, preview, defend, overrule
   - proposals: review and op editor with drafts
   - brief, rules and change scenarios
@@ -142,8 +142,8 @@ app/                   renamed from src-tauri; package `spide`, bin; eframe app 
   - timeline: preview, restore, fork
   - branch compare
   - code view
-- [ ] **9. Export:** the `Scene` → SVG writer and export dialog (settings persisted, Export Again), PNG/PDF/SVG through core, PlantUML/ADR/ArchUnit, reveal.
-- [ ] **10. Tests:**
+- [x] **9. Export:** the `Scene` → SVG writer and export dialog (settings persisted, Export Again), PNG/PDF/SVG through core, PlantUML/ADR/ArchUnit, reveal.
+- [x] **10. Tests:**
   - Port `route`, `hover`, `proposal-focus`, `proposal-review`, `commands`, `terminal-keys`, `export-theme`, `member-diagnostics` and `decision-drafts` to Rust `#[test]`.
   - Add `egui_kittest` UI tests that replace the Playwright smokes:
     - startup and tabs
@@ -152,7 +152,7 @@ app/                   renamed from src-tauri; package `spide`, bin; eframe app 
     - export routing: routes are orthogonal and no box is crossed, exported files are non-empty
     - the terminal pane, with a fake PTY
   - Add snapshot images for each view on `examples/library.json`.
-- [ ] **11. Remove the TS frontend:** delete the files listed above, cut down `package.json`, update the README (Run: `cargo run -p spide`; release bundle via `cargo bundle` or a documented `.app` script) and `.gitignore`. Commit.
+- [x] **11. Remove the TS frontend:** delete the files listed above, cut down `package.json`, update the README (Run: `cargo run -p spide`; release bundle via `cargo bundle` or a documented `.app` script) and `.gitignore`. Commit.
 
 ## Verification
 

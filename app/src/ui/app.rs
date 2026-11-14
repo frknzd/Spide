@@ -2114,6 +2114,37 @@ fn rail(ui: &mut egui::Ui, r: Rect, label: &str) -> egui::Response {
     resp
 }
 
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    use crate::ui::tests::{harness, project, steps, shot};
+
+    #[test]
+    fn export_dialog_and_real_files() {
+        let dir = project("library");
+        let mut h = harness(dir.path(), (1440.0, 900.0));
+        steps(&mut h, 150);
+        h.state_mut().open_export();
+        steps(&mut h, 10);
+        assert!(h.state().export.is_some());
+        shot(&mut h, "export-dialog");
+        h.state_mut().export = None;
+        for (format, ext, magic) in [
+            (Format::Svg, "svg", b"<svg".as_slice()),
+            (Format::Png, "png", b"\x89PNG".as_slice()),
+            (Format::Pdf, "pdf", b"%PDF".as_slice()),
+            (Format::Puml, "puml", b"@startuml".as_slice()),
+        ] {
+            let path = dir.path().join(format!("test.{ext}"));
+            let settings = ExportSettings { format, ..Default::default() };
+            h.state_mut().run_export(&settings, Some(path.to_string_lossy().into())).unwrap();
+            let data = std::fs::read(&path).unwrap();
+            assert!(data.len() > 100);
+            assert!(data.windows(magic.len()).any(|w| w == magic), "{ext} signature");
+        }
+    }
+}
+
 impl eframe::App for SpideApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.frame(ui);

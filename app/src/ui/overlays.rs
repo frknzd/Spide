@@ -276,7 +276,7 @@ pub fn palette(ui: &mut egui::Ui, p: &mut Palette) -> Option<PaletteAction> {
                 }
             });
         });
-        let mut choose = |p: &mut Palette, c: &super::state::commands::CommandInfo| -> Option<PaletteAction> {
+        let choose = |p: &mut Palette, c: &super::state::commands::CommandInfo| -> Option<PaletteAction> {
             if c.required {
                 if let Some(t) = c.template {
                     p.text = t.into();
