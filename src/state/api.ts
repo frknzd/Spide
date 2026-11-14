@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { BranchCompare, BranchInfo, Design, DriftReport, ImportSummary, HistoryEntry, Issue, Op, Pos, Rules, Snapshot, Tab, Target } from "./types";
+import type { BranchCompare, BranchInfo, Design, DriftReport, ImportSummary, HistoryEntry, Issue, Op, Pos, Proposal, ProposalReviewData, Rules, Snapshot, Tab, Target } from "./types";
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const DEV_URL = "http://127.0.0.1:47800/dev/snapshot";
@@ -28,9 +28,11 @@ export const api = {
   prompt: (text: string, tab: Tab) => call("send_prompt", { text, tab }),
   abort: () => call("abort_agent"),
   restartAgent: () => call("restart_agent"),
-  accept: (id: string) => call("accept_proposal", { id }),
+  reviewProposal: (id: string, ops?: Op[]) => call<ProposalReviewData>("review_proposal", { id, ops: ops ?? null }),
+  updateProposal: (p: Proposal, expectedRev: number) => call("update_proposal", { id: p.id, expectedRev, ops: p.ops, rationale: p.rationale, decision: p.decision ?? null, option: p.option ?? null }),
+  accept: (id: string, expectedRev?: number) => call("accept_proposal", { id, expectedRev: expectedRev ?? null }),
   acceptAll: () => call("accept_all"),
-  reject: (id: string) => call("reject_proposal", { id }),
+  reject: (id: string, expectedRev?: number) => call("reject_proposal", { id, expectedRev: expectedRev ?? null }),
   prune: (targets: Target[]) => call("prune", { targets }),
   pruneFeedback: (targets: Target[], text: string, tab: Tab) => call("prune_feedback", { targets, text, tab }),
   restore: (target: Target) => call("restore", { target }),

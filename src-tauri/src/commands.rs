@@ -56,8 +56,22 @@ pub fn restart_agent(st: State<'_, AppState>, pi: State<'_, PiBridge>) -> R {
 }
 
 #[tauri::command]
-pub fn accept_proposal(st: State<'_, AppState>, id: String) -> R {
-    st.lock().store.accept_proposal(&id).map_err(|e| e.0)?;
+pub fn review_proposal(st: State<'_, AppState>, id: String, ops: Option<Vec<Op>>) -> R<spide_core::proposal_review::ProposalReview> {
+    st.lock().store.review_proposal(&id, ops.as_deref()).map_err(|e| e.0)
+}
+
+#[tauri::command]
+pub fn update_proposal(st: State<'_, AppState>, id: String, expected_rev: u64, ops: Vec<Op>, rationale: Option<String>, decision: Option<String>, option: Option<String>) -> R {
+    st.lock().store.update_proposal(&id, expected_rev, ops, rationale, decision, option).map_err(|e| e.0)?;
+    done(&st)
+}
+
+#[tauri::command]
+pub fn accept_proposal(st: State<'_, AppState>, id: String, expected_rev: Option<u64>) -> R {
+    { let mut state = st.lock();
+      if expected_rev.is_some_and(|rev| rev != state.store.design.rev) { return Err("Workspace changed. Review the latest plan before accepting.".into()); }
+      state.store.accept_proposal(&id).map_err(|e| e.0)?;
+    }
     done(&st)
 }
 
@@ -68,8 +82,11 @@ pub fn accept_all(st: State<'_, AppState>) -> R {
 }
 
 #[tauri::command]
-pub fn reject_proposal(st: State<'_, AppState>, id: String) -> R {
-    st.lock().store.reject_proposal(&id, None).map_err(|e| e.0)?;
+pub fn reject_proposal(st: State<'_, AppState>, id: String, expected_rev: Option<u64>) -> R {
+    { let mut state = st.lock();
+      if expected_rev.is_some_and(|rev| rev != state.store.design.rev) { return Err("Workspace changed. Review the latest plan before rejecting.".into()); }
+      state.store.reject_proposal(&id, None).map_err(|e| e.0)?;
+    }
     done(&st)
 }
 
@@ -767,9 +784,11 @@ pub fn dev_dispatch(st: &AppState, cmd: &str, a: serde_json::Value) -> R<serde_j
         "send_prompt" => send_prompt(s, pi, req("text")?, req("tab")?),
         "abort_agent" => abort_agent(pi),
         "restart_agent" => restart_agent(s, pi),
-        "accept_proposal" => accept_proposal(s, req("id")?),
+        "review_proposal" => return review_proposal(s, req("id")?, serde_json::from_value(de("ops")).map_err(|e| e.to_string())?).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+        "update_proposal" => update_proposal(s, req("id")?, serde_json::from_value(de("expectedRev")).map_err(|e| e.to_string())?, serde_json::from_value(de("ops")).map_err(|e| e.to_string())?, serde_json::from_value(de("rationale")).map_err(|e| e.to_string())?, serde_json::from_value(de("decision")).map_err(|e| e.to_string())?, serde_json::from_value(de("option")).map_err(|e| e.to_string())?),
+        "accept_proposal" => accept_proposal(s, req("id")?, serde_json::from_value(de("expectedRev")).map_err(|e| e.to_string())?),
         "accept_all" => accept_all(s),
-        "reject_proposal" => reject_proposal(s, req("id")?),
+        "reject_proposal" => reject_proposal(s, req("id")?, serde_json::from_value(de("expectedRev")).map_err(|e| e.to_string())?),
         "prune" => prune(s, targets()?),
         "prune_feedback" => prune_feedback(s, pi, targets()?, req("text")?, req("tab")?),
         "restore" => restore(s, serde_json::from_value(de("target")).map_err(|e| e.to_string())?),

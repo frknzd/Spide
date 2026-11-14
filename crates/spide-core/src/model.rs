@@ -329,6 +329,9 @@ pub struct Package {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Proposal {
+    /// Informational provenance, never an examiner verdict on amended operations.
+    pub decision: Option<String>,
+    pub option: Option<String>,
     pub id: String,
     pub ops: Vec<crate::ops::Op>,
     pub rationale: Option<String>,

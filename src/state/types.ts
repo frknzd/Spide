@@ -78,7 +78,12 @@ export interface Package {
   external?: boolean; system?: string | null;
 }
 export type Op = { op: string; [k: string]: unknown };
-export interface Proposal { id: string; ops: Op[]; rationale: string | null; source: string }
+export interface Proposal { id: string; ops: Op[]; rationale: string | null; source: string; decision?: string | null; option?: string | null }
+export interface ProposalReviewData {
+  rev: number; baseline: Design; design: Design;
+  steps: { index: number; changes: { path: string; before: unknown; after: unknown }[]; error: string | null }[];
+  errors: string[]; prerequisites: string[]; notices: string[]; can_accept: boolean; impact: Impact | null;
+}
 export interface Tradeoff { force: string; effect: string; note: string | null }
 export interface DecisionOption { id: string; label: string; summary: string | null; ops: Op[]; pros: string[]; cons: string[]; tradeoffs: Tradeoff[] }
 export type ForceKind = "goal" | "quality" | "constraint" | "change";

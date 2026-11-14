@@ -6,7 +6,7 @@ import type { ViewportApi } from "./canvas/Viewport";
 import { standaloneSvg } from "./export/svg";
 import { api } from "./state/api";
 import { on, useSnapshot } from "./state/store";
-import type { Design, DriftReport, Tab, Target } from "./state/types";
+import type { Design, DriftReport, ProposalReviewData, Tab, Target } from "./state/types";
 import { Workspace } from "./ui/Workspace";
 import { SpideCommandPalette } from "./ui/SpideCommandPalette";
 import { ExportDialog, loadExportSettings, runExport, type ExportContext } from "./ui/ExportDialog";
@@ -19,12 +19,14 @@ import { ChangeSection } from "./ui/ChangeSection";
 import { ComparePanel, decisionCols, type CompareCol } from "./ui/ComparePanel";
 import { DecisionPanel } from "./ui/DecisionCard";
 import { DecisionHistory } from "./ui/DecisionHistory";
+import { ProposalReview } from "./ui/ProposalReview";
 import { DriftPanel } from "./ui/DriftPanel";
 import { FeedbackPopover, type PruneState } from "./ui/FeedbackPopover";
 import { HoverLayer } from "./ui/HoverLayer";
 import { useSpideCommandBridge } from "./state/commands";
 import { hoverStore } from "./state/hover";
-import { ghostSpotlight, proposalSummary } from "./state/proposal-focus";
+import { reviewFootprint } from "./state/proposal-review";
+import { ghostSpotlight, proposalAt } from "./state/proposal-focus";
 import { InlineEdit, type InlineEditState } from "./ui/InlineEdit";
 import { PerfOverlay } from "./ui/PerfOverlay";
 import { DetailSlider } from "./ui/DetailSlider";
@@ -56,6 +58,15 @@ export default function App() {
   const [compare, setCompare] = useState<string | null>(null);
   const [branchCmp, setBranchCmp] = useState<{ name: string; cols: CompareCol[] } | null>(null);
   const [stress, setStress] = useState<string | null>(null);
+  const [reviewActive, setReviewActive] = useState(false);
+  const [selectedProposal, setSelectedProposal] = useState<string | null>(null);
+  const [proposalCanvas, setProposalCanvas] = useState<Design | null>(null);
+  const [proposalReviewData, setProposalReviewData] = useState<ProposalReviewData | null>(null);
+  const proposalFocus = useMemo(() => reviewActive ? reviewFootprint(proposalReviewData, selectedProposal) : null, [reviewActive, proposalReviewData, selectedProposal]);
+  const focusProposalTarget = (name: string) => { setTab("class"); window.setTimeout(() => { if (!canvasRef.current?.focus(name)) toast("info", "This target is not drawn on the class diagram. See the change details."); }, 150); };
+  const [proposalDirty, setProposalDirty] = useState(false);
+  const leaveProposalReview = () => !proposalDirty || window.confirm("Leave proposal review? Your draft will be kept locally; unfinished operation form edits may be lost.");
+  const openProposalReview = (id?: string) => { if (id && id !== selectedProposal && !leaveProposalReview()) return; if (id) setSelectedProposal(id); setReviewActive(true); setPreview(null); setCompare(null); setBranchCmp(null); setDrift(null); setTimeline(false); setBrief(false); setInline(null); setPrune(null); window.dispatchEvent(new Event("spide-open-inspector")); };
   const [shownDecision, setShownDecision] = useState<string | null>(null);
   const [timeline, setTimeline] = useState(false);
   const [drift, setDrift] = useState<DriftReport | null>(null);
@@ -89,10 +100,12 @@ export default function App() {
   // ------------------------------------------------------------ actions
   const doPrune = useStableCallback(
     (targets: Target[], at: { x: number; y: number }) => {
+      if (reviewActive) return toast("info", "Use the proposal editor to plan deletions; canvas editing is disabled during review.");
       const proposals = targets.filter((t) => t.kind === "proposal") as { kind: "proposal"; id: string }[];
+      if (proposals.length) { openProposalReview(proposals[0].id); return; }
       // phantoms (code-only classes in the drift view) can't be pruned
       const rest = targets.filter((t) => t.kind !== "proposal" && !(t.kind === "class" && drift?.drift.extra_in_code.includes(t.name)));
-      Promise.all([...proposals.map((p) => api.reject(p.id)), rest.length ? api.prune(rest) : Promise.resolve()])
+      (rest.length ? api.prune(rest) : Promise.resolve())
         .then(() => setPrune({ targets, at }))
         .catch((e) => toast("error", String(e)));
       setHover(null);
@@ -102,7 +115,11 @@ export default function App() {
   const onClickTarget = useStableCallback(
     (t: Target) => {
       if (!view) return;
-      if (t.kind === "proposal") return void run(api.accept(t.id));
+      if (t.kind === "proposal") return openProposalReview(t.id);
+      const key = t.kind === "class" ? `class:${t.name}` : t.kind === "relation" ? `relation:${t.id}` : t.kind === "attribute" || t.kind === "method" ? `${t.kind}:${t.class}.${t.name}` : null;
+      const ghostPlan = proposalAt(key, view);
+      if (ghostPlan) return openProposalReview(ghostPlan);
+      if (reviewActive) return;
       if (isPruned(view, t)) return void run(api.restore(t));
       // clicking a member pins its card: evidence, similar members and findings can then be explored
       if (t.kind === "attribute" || t.kind === "method") hoverStore.pin(`${t.kind}:${t.class}.${t.name}`);
@@ -118,6 +135,7 @@ export default function App() {
   // direct edits: double-click to rename, drop a class onto another package
   const onDoubleClickTarget = useStableCallback(
     (t: Target, at: { x: number; y: number }) => {
+      if (reviewActive) return;
       if (!view) return;
       const cls = (n: string) => view.classes.find((c) => c.name === n && c.status !== "pruned" && c.status !== "proposed");
       if (t.kind === "class" && cls(t.name)) {
@@ -255,15 +273,28 @@ export default function App() {
     catch (e) { toast("error", String(e)); throw e; }
   };
   const executeCommand = async (text: string) => {
-    // Explicit app commands leave preview mode before operating on the accepted design.
+    // Intentional app commands can leave review; drafts stay persisted, never committed implicitly.
+    if (reviewActive && !/^\/(accept|reject)( |$)/.test(text)) {
+      if (!leaveProposalReview()) return;
+      setReviewActive(false);
+    }
     setPreview(null);
     const [cmd, ...args] = text.split(" ");
     const arg = args.join(" ").trim();
     switch (cmd) {
       case "/undo": return run(api.undo());
       case "/redo": return run(api.redo());
-      case "/accept": return run(api.acceptAll());
-      case "/reject": return run(Promise.all((view?.proposals ?? []).map((p) => api.reject(p.id))));
+      case "/accept":
+      case "/reject": {
+        if (!arg || !view?.proposals.some((p) => p.id === arg)) return toast("error", `usage: ${cmd} <proposal-id> · review one saved plan at a time`);
+        if (proposalDirty) return toast("error", "Save or discard the current draft before resolving proposals.");
+        if (cmd === "/accept") {
+          const review = await api.reviewProposal(arg);
+          if (!review.can_accept) return toast("error", [...review.errors, ...review.prerequisites.map((id) => `Accept ${id} first`)].join("; ") || "This plan cannot be accepted yet.");
+          return run(api.accept(arg, review.rev));
+        }
+        return run(api.reject(arg, snap?.rev));
+      }
       case "/tidy": return canvasRef.current?.tidy();
       case "/focus": {
         if (!arg) return canvasRef.current?.focus(null);
@@ -456,18 +487,19 @@ export default function App() {
         }
         if (e.key === "z" && !inField) {
           e.preventDefault();
-          run(e.shiftKey ? api.redo() : api.undo());
+          void command(e.shiftKey ? "/redo" : "/undo");
           return;
         }
         if (e.key === "t") {
           e.preventDefault();
+          if (reviewActive) { if (!leaveProposalReview()) return; setReviewActive(false); }
           setTab("class");
           setTimeline((t) => !t);
           return;
         }
         if (e.key === "b") {
           e.preventDefault();
-          setBrief((b) => !b);
+          if (!reviewActive) setBrief((b) => !b);
           return;
         }
         if (e.key === "s") {
@@ -506,8 +538,8 @@ export default function App() {
   // ------------------------------------------------------------ data per tab
   const classData: DiagramData | null = useMemo(() => {
     if (!view || !metrics) return null;
-    const d = preview ?? view;
-    if (drift && !preview) {
+    const d = (reviewActive ? proposalCanvas : null) ?? preview ?? view;
+    if (drift && !preview && !reviewActive) {
       // code-only classes join the canvas as phantoms
       const phantom = new Set(drift.drift.extra_in_code);
       const extra = drift.reality.classes.filter((c) => phantom.has(c.name));
@@ -515,8 +547,8 @@ export default function App() {
       const rels = drift.reality.relations.filter((r) => (phantom.has(r.from) || phantom.has(r.to)) && names.has(r.from) && names.has(r.to));
       return { classes: [...d.classes, ...extra], relations: [...d.relations, ...rels], packages: d.packages, metrics, implicit: metrics.implicit_edges };
     }
-    return { classes: d.classes, relations: d.relations, packages: d.packages, metrics, implicit: preview ? [] : metrics.implicit_edges };
-  }, [view, metrics, preview, drift]);
+    return { classes: d.classes, relations: d.relations, packages: d.packages, metrics, implicit: preview || reviewActive ? [] : metrics.implicit_edges };
+  }, [view, metrics, preview, drift, reviewActive, proposalCanvas]);
 
   const domainData: DiagramData | null = useMemo(() => {
     if (!snap) return null;
@@ -528,12 +560,6 @@ export default function App() {
       metrics: null,
     };
   }, [snap]);
-
-  // the agent recorded forces → show them so the user can accept/reject
-  const ghostForces = view?.forces.filter((f) => f.status === "proposed").length ?? 0;
-  useEffect(() => {
-    if (ghostForces) setBrief(true);
-  }, [ghostForces]);
 
   // keep the drift report current while it's open
   useEffect(() => {
@@ -565,7 +591,6 @@ export default function App() {
       {snapshotError ? <button className="primary" onClick={retrySnapshot}>Try again</button> : <span className="spinner" />}
     </section>
   </div>;
-  const proposalSummaries = view.proposals.map((p) => proposalSummary(p, view));
   const detailOf = (v: string) => view.settings.detail?.[v] ?? DEFAULT_DETAIL;
 
   const pending = view.decisions.filter((d) => d.state === "open" || d.state === "evaluating" || d.state === "rejected");
@@ -575,14 +600,17 @@ export default function App() {
     <div className={`app ${hasClasses ? "" : "empty"}`}>
       <div className="titlebar" data-tauri-drag-region />
       <Workspace pending={pending.length} terminal={(collapse) => <TerminalPane tab={tab} status={snap.pi_status} integrationError={snap.pi_error} onCollapse={collapse} />} inspector={
-        pending.length > 0 ? <DecisionPanel decisions={pending} snap={snap} onPreview={optionPreview} toast={toast} onCompare={setCompare} /> :
-        shownDecision ? <DecisionHistory design={view} id={shownDecision} onClose={() => setShownDecision(null)} /> : null
+        <>
+          <nav className="inspector-modes" aria-label="Inspector mode"><button aria-pressed={!reviewActive} onClick={() => { if (leaveProposalReview()) setReviewActive(false); }}>Decisions ({pending.length})</button><button aria-pressed={reviewActive} onClick={() => openProposalReview()}>Proposals ({view.proposals.length})</button></nav>
+          <div hidden={!reviewActive}><ProposalReview snap={snap} selected={selectedProposal} onSelect={setSelectedProposal} onPreview={setProposalCanvas} onReviewData={setProposalReviewData} onFocus={focusProposalTarget} active={reviewActive} onDirty={setProposalDirty} /></div>
+          {!reviewActive && (pending.length > 0 ? <DecisionPanel decisions={pending} snap={snap} onPreview={optionPreview} toast={toast} onCompare={setCompare} /> : shownDecision ? <DecisionHistory design={view} id={shownDecision} onClose={() => setShownDecision(null)} /> : <p className="inspector-empty">No open decisions.</p>)}
+        </>
       }>
       <div className="stage">
         {tab === "class" && classData && (
-          <Canvas ref={canvasRef} key={`${snap.project_dir}:${preview ? "preview" : "class"}`} readOnly={!!preview} viewKey="class" data={classData} saved={(preview ?? view).layout["class"]} tension={preview ? 0 : metrics.tension} level={detailOf("class")} showImplicit={showImplicit} lens={preview ? "none" : lens}
+          <Canvas ref={canvasRef} key={`${snap.project_dir}:${preview ? "preview" : "class"}`} readOnly={!!preview || reviewActive} reviewFocus={proposalFocus} viewKey="class" data={classData} saved={(preview ?? view).layout["class"]} tension={preview ? 0 : metrics.tension} level={detailOf("class")} showImplicit={showImplicit} lens={preview ? "none" : lens}
             onPrune={doPrune} onClickTarget={onClickTarget} onHover={onHover}
-            stress={stressSets} drift={driftSets} onMoveToPackage={preview || drift ? undefined : onMoveToPackage} onDoubleClickTarget={preview ? undefined : onDoubleClickTarget} />
+            stress={stressSets} drift={driftSets} onMoveToPackage={preview || drift || reviewActive ? undefined : onMoveToPackage} onDoubleClickTarget={preview || reviewActive ? undefined : onDoubleClickTarget} />
         )}
         {tab === "domain" && domainData && (
           <Canvas ref={canvasRef} key={`${snap.project_dir}:domain`} viewKey="domain" data={domainData} saved={view.layout["domain"] ?? view.layout["class"]} showMethods={false} tension={0} level={detailOf("domain")}
@@ -613,8 +641,8 @@ export default function App() {
             {stressSets && <span className="preview-tag stress-tag">what if: {stress} · <span style={{ color: "#ff5c6c" }}>impacted</span> · <span style={{ color: "#ffb454" }}>ripple</span></span>}
           </div>
           <div className="workspace-actions">
-            <button onClick={() => setBrief((v) => !v)} aria-expanded={brief}>Brief</button>
-            <button onClick={() => { setTab("class"); setTimeline((v) => !v); }} aria-expanded={timeline}>Timeline</button>
+            <button disabled={reviewActive} onClick={() => setBrief((v) => !v)} aria-expanded={brief}>Brief</button>
+            <button disabled={reviewActive} onClick={() => { setTab("class"); setTimeline((v) => !v); }} aria-expanded={timeline}>Timeline</button>
             <button onClick={() => openCommands("find ")}>Find</button>
             <button className="commands-trigger" onClick={() => openCommands()} aria-expanded={commandsOpen}>Commands <kbd>⌘K</kbd></button>
           </div>
@@ -634,7 +662,7 @@ export default function App() {
         <DriftPanel report={drift} onClose={() => setDrift(null)} onReimport={() => view.settings.code_dir && run(api.importCode(view.settings.code_dir).then(() => api.drift()).then(setDrift))}
           onFind={(c) => canvasRef.current?.focus(c)} run={run} toast={toast} />
       )}
-      {brief && !drift && (
+      {brief && !drift && !reviewActive && (
         <BriefPanel design={view} onClose={() => setBrief(false)} run={run}>
           <ChangeSection design={view} metrics={metrics} stress={stress} run={run}
             onStress={(n) => {
@@ -660,16 +688,14 @@ export default function App() {
 
       </div>
       {view.proposals.length > 0 && <div className={`proposal-dock ${timeline ? "above-timeline" : ""}`}>
-        <ProposalBar disabled={!!preview} count={view.proposals.length} ids={view.proposals.map((x) => x.id)} summaries={proposalSummaries}
-          onLocate={(id) => { if (tab !== "class") { setTab("class"); setTimeout(() => canvasRef.current?.locateProposal(id), 300); } else if (!canvasRef.current?.locateProposal(id)) toast("info", "This proposal has no element on the class diagram (it may change the brief, use cases or system view)."); }}
-          onAccept={() => !preview && run(api.acceptAll())}
-          onReject={() => !preview && run(Promise.all(view.proposals.map((p) => api.reject(p.id))))} />
+        <ProposalBar count={view.proposals.length}
+          onReview={() => openProposalReview()} />
       </div>}
       {timeline && <div className="canvas-timeline"><Timeline key={`${snap.project_dir}:${snap.branch}`} rev={snap.rev} onPreview={historyPreview} onClose={() => setTimeline(false)} run={run} toast={toast} /></div>}
       {exportOpen && <ExportDialog ctx={exportCtx} onClose={() => setExportOpen(false)} onDone={(p) => toast("info", `exported ${p}`)} />}
       {codeView && <CodeView title={codeView.title} text={codeView.text} onClose={() => setCodeView(null)} />}
       {inline && <InlineEdit s={inline} onClose={() => setInline(null)} />}
-      <HoverLayer scope={`${snap.project_dir}:${tab}`} disabled={!!prune} snap={snap} design={preview ?? view} metrics={metrics} drift={drift} />
+      <HoverLayer scope={`${snap.project_dir}:${tab}`} disabled={!!prune} snap={snap} design={(reviewActive ? proposalCanvas : null) ?? preview ?? view} metrics={metrics} drift={drift} />
       {prune && (
         <FeedbackPopover
           prune={prune}

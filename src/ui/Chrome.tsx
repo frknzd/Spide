@@ -1,7 +1,6 @@
 // Small chrome pieces: health ring, tabs, proposal bar, toasts.
 import { useEffect, useRef, useState } from "react";
 import { healthColor } from "../canvas/visuals";
-import { type ProposalSummary, ghostSpotlight } from "../state/proposal-focus";
 import type { Issue, Metrics, Principle, Tab } from "../state/types";
 
 const PRINCIPLES: { id: Principle; label: string; help: string }[] = [
@@ -146,76 +145,8 @@ export function Tabs({ tab, onTab, stale }: { tab: Tab; onTab: (t: Tab) => void;
   );
 }
 
-export function ProposalBar({ count, ids = [], summaries = [], onAccept, onReject, onLocate, disabled }: { count: number; ids?: string[]; summaries?: ProposalSummary[]; onAccept: () => void; onReject: () => void; onLocate?: (id: string) => void; disabled?: boolean }) {
-  const [at, setAt] = useState(-1);
-  const [open, setOpen] = useState(false);
-  const key = ids.join();
-  useEffect(() => { setAt(-1); ghostSpotlight.set(null); }, [key]);
-  useEffect(() => () => ghostSpotlight.set(null), []);
-  if (!count) return null;
-  const rest = () => ghostSpotlight.set(at >= 0 ? ids[at] ?? null : null);
-  const go = (next: number) => {
-    setAt(next);
-    ghostSpotlight.set(ids[next]);
-    onLocate?.(ids[next]);
-  };
-  const step = (d: number) => {
-    if (!ids.length || !onLocate) return;
-    go((at + d + ids.length) % ids.length);
-  };
-  const enter = () => { setOpen(true); if (!disabled) ghostSpotlight.set(at >= 0 ? ids[at] ?? "all" : "all"); };
-  const one = at >= 0 ? summaries.find((x) => x.id === ids[at]) : summaries.length === 1 ? summaries[0] : null;
-  return (
-    <div className="proposal-wrap" data-ui onPointerEnter={enter} onPointerLeave={() => { setOpen(false); rest(); }}
-      onFocus={enter} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) { setOpen(false); rest(); } }}
-      onKeyDown={(e) => { if (e.key === "Escape" && open) { e.stopPropagation(); setOpen(false); } }}>
-      {open && summaries.length > 0 && (
-        <div className="proposal-panel" role="region" aria-label="Ghost proposal details">
-          <div className="proposal-panel-inner">
-            {one ? <ProposalDetail s={one} index={at >= 0 ? at : 0} total={ids.length} /> : (
-              <>
-                <div className="pp-head">{summaries.length} ghost proposals <span className="faint">· ‹ › or pick one to locate it</span></div>
-                <ul className="pp-list">
-                  {summaries.map((s, i) => (
-                    <li key={s.id}><button className="pp-pick" disabled={disabled || !onLocate} onClick={() => go(i)}>
-                      <b>{s.rationale ?? s.items[0]?.text ?? s.ops}</b>
-                      <span className="faint"> · {s.changes} change{s.changes === 1 ? "" : "s"} · {s.source}</span>
-                    </button></li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-      <div className="proposal-bar">
-        <span className="pg">{count} ghost proposal{count > 1 ? "s" : ""}</span>
-        {onLocate && ids.length > 0 && <span className="locate" role="group" aria-label="Locate proposals">
-          <button className="icon-button" disabled={disabled} aria-label="Previous proposal" title="Show previous proposal" onClick={() => step(-1)}>‹</button>
-          <span className="faint" aria-live="polite">{at >= 0 ? `${at + 1}/${ids.length}` : "Locate"}</span>
-          <button className="icon-button" disabled={disabled} aria-label="Next proposal" title="Show next proposal" onClick={() => step(1)}>›</button>
-        </span>}
-        <button disabled={disabled} onClick={onAccept} aria-label={`Accept all ${count} proposals`} title="Accept every ghost proposal">Accept all</button>
-        <button disabled={disabled} className="ghostbtn" onClick={onReject} aria-label={`Reject all ${count} proposals`} title="Reject every ghost proposal">Reject all</button>
-      </div>
-    </div>
-  );
-}
-
-const MAX_ITEMS = 8;
-function ProposalDetail({ s, index, total }: { s: ProposalSummary; index: number; total: number }) {
-  return (
-    <>
-      <div className="pp-head">{total > 1 ? `Proposal ${index + 1} of ${total}` : "Ghost proposal"} <span className="faint">· by {s.source}</span></div>
-      {s.rationale ? <p className="pp-why">{s.rationale}</p> : <p className="pp-why faint">No rationale was given. What it changes:</p>}
-      {s.items.length > 0 ? (
-        <ul className="pp-items">
-          {s.items.slice(0, MAX_ITEMS).map((it, k) => <li key={k} className={it.sign === "−" ? "minus" : "plus"}><span>{it.sign}</span> {it.text}</li>)}
-          {s.items.length > MAX_ITEMS && <li className="faint">… {s.items.length - MAX_ITEMS} more</li>}
-        </ul>
-      ) : <div className="faint small">{s.ops || "no operations"} (not drawn on the class diagram)</div>}
-    </>
-  );
+export function ProposalBar({ count, onReview }: { count: number; onReview: () => void }) {
+  return count ? <button className="proposal-bar" onClick={onReview}>Review proposals ({count})</button> : null;
 }
 
 export interface Toast { id: number; kind: string; text: string }

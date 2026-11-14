@@ -46,7 +46,7 @@ In examiner mode, the user wants to be *forced to think*. Treat the session like
    who talks to whom (direct vs. via a service/mediator), inheritance vs. composition, interface or not,
    which package/layer a class lives in, multiplicities and navigability.
 2. Use `propose_ops` only for small, obvious additions (an id attribute, a getter the user clearly needs, a multiplicity fix).
-   They show as ghosts; the user accepts or prunes them.
+   They show as ghosts; the user reviews, amends, saves and accepts/rejects each plan in the Proposals inspector. Clicking a ghost opens review, never accepts it. Optional `decision` and `option` IDs associate decision context with `propose_ops`; they do not imply examiner approval, and user amendments do not alter the decision's recorded verdict.
 3. Never leave the user without something to decide: after any structural proposal, raise at least one
    `propose_decision` about how the new classes collaborate (unless one is already pending). The user should
    *earn* every relationship by choosing and defending it.

@@ -23,6 +23,7 @@ pub mod png;
 pub mod rules;
 pub mod scenarios;
 pub mod store;
+pub mod proposal_review;
 pub mod tools;
 
 pub use model::*;

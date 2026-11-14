@@ -102,14 +102,14 @@ try {
   await page.setViewportSize({ width: 800, height: 560 });
   await page.waitForTimeout(200);
   assert.equal(await page.locator('.decision-panel').isVisible(), false);
-  await page.getByRole('button', { name: 'Open decision inspector' }).click();
+  await page.getByRole('button', { name: 'Open design inspector' }).click();
   const footer = await box('.decision-footer');
   assert.ok(footer.y >= 30 && footer.y + footer.height <= 561);
   terminal = await box('.workspace-left'); inspector = await box('.workspace-right');
   assert.ok(inspector.x >= terminal.x + terminal.width, 'drawer covers pi');
   assert.equal(await page.getByLabel('Your defence').inputValue(), 'This keeps the changing behaviour in one place.');
   await page.screenshot({ path: '.local/workspace-800.png' });
-  await page.getByRole('button', { name: 'Collapse decision inspector' }).click();
+  await page.getByRole('button', { name: 'Collapse design inspector' }).click();
   await page.getByRole('button', { name: 'Collapse pi pane' }).click();
   await page.getByRole('button', { name: 'Open pi pane' }).click();
   assert.equal(await page.locator('.terminal-host').count(), 1);

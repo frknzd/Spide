@@ -15,6 +15,11 @@ export function Workspace({ terminal, inspector, pending = 0, children }: { term
   const [width, setWidth] = useState(window.innerWidth);
   const narrow = width < 1120;
   const [drawer, setDrawer] = useState(false);
+  useEffect(() => {
+    const open = () => { setDrawer(true); setSettings((s) => ({ ...s, rightOpen: true })); };
+    window.addEventListener("spide-open-inspector", open);
+    return () => window.removeEventListener("spide-open-inspector", open);
+  }, []);
   const leftOpen = settings.leftOpen && width >= 570;
   const rightOpen = narrow ? drawer : settings.rightOpen;
   const left = leftOpen ? Math.max(280, Math.min(settings.left, width - 252 - (!narrow && rightOpen ? 300 : 30))) : 30;
@@ -58,8 +63,8 @@ export function Workspace({ terminal, inspector, pending = 0, children }: { term
     {separator("left", leftOpen)}
     <main className="canvas-workspace" onPointerDown={(e) => { if (!(e.target as Element).closest(".hovercard")) hoverStore.clear(); if (!(e.target as Element).closest(".proposal-wrap")) ghostSpotlight.set(null); }}>{children}</main>
     {separator("right", rightOpen && !narrow)}
-    <aside className={`workspace-right ${rightOpen ? "open" : ""}`} aria-label="Decision inspector">
-      <button className="inspector-toggle pane-rail" onClick={() => narrow ? setDrawer((d) => !d) : setSettings((s) => ({ ...s, rightOpen: !s.rightOpen }))} aria-expanded={rightOpen} aria-label={rightOpen ? "Collapse decision inspector" : `Open decision inspector${pending ? `, ${pending} pending` : ""}`}>{rightOpen ? "›" : "‹"} {narrow || !rightOpen ? <>Decisions{pending > 0 && <span className="count-badge">{pending}</span>}</> : ""}</button>
+    <aside className={`workspace-right ${rightOpen ? "open" : ""}`} aria-label="Design inspector">
+      <button className="inspector-toggle pane-rail" onClick={() => narrow ? setDrawer((d) => !d) : setSettings((s) => ({ ...s, rightOpen: !s.rightOpen }))} aria-expanded={rightOpen} aria-label={rightOpen ? "Collapse design inspector" : `Open design inspector${pending ? `, ${pending} pending` : ""}`}>{rightOpen ? "›" : "‹"} {narrow || !rightOpen ? <>Review{pending > 0 && <span className="count-badge">{pending}</span>}</> : ""}</button>
       <div className="inspector-content" style={{ display: rightOpen ? undefined : "none" }}>{inspector || <div className="inspector-empty"><span className="empty-icon" aria-hidden>◇</span><h2>No open decisions</h2><p>When pi finds a design fork, the options appear here. Choose one and defend it to the examiner.</p></div>}</div>
     </aside>
   </div>;

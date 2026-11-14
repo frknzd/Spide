@@ -804,3 +804,28 @@ g.kb-focus > * { stroke: var(--accent); }
 .pp-pick:hover:not(:disabled), .pp-pick:focus-visible { background: rgba(94, 234, 212, .08); }
 @media (prefers-reduced-motion: reduce) { .proposal-panel-inner { animation: none; } }
 .hovercard.pinned .hc-title { padding-right: 22px; }
+
+.inspector-content { display: flex; flex-direction: column; min-height: 0; }
+.inspector-content > div:not([hidden]) { flex: 1; min-height: 0; overflow: auto; }
+.workspace-right .decision-panel { height: auto; flex: 1; min-height: 0; }
+.inspector-modes { flex-shrink: 0; display: flex; gap: 6px; padding: 12px; position: sticky; top: 0; background: var(--bg, #17191e); z-index: 2; }
+.inspector-modes button[aria-pressed="true"] { color: var(--ghost); border-color: var(--ghost); }
+.proposal-review { padding: 4px 16px 24px; overflow-wrap: anywhere; }
+.proposal-review header { display: grid; gap: 10px; }
+.proposal-review h2 { font-size: 19px; }
+.proposal-review h3 { margin: 18px 0 10px; }
+.proposal-review label { display: grid; gap: 6px; margin: 10px 0; font-size: 12px; }
+.proposal-review label:has(input[type="checkbox"]) { display: flex; align-items: center; }
+.proposal-review select, .proposal-review input:not([type="checkbox"]), .proposal-review textarea { width: 100%; min-width: 0; box-sizing: border-box; background: #1c2027; color: inherit; border: 1px solid #3b424f; border-radius: 6px; padding: 8px; }
+.proposal-review pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; max-height: 300px; overflow: auto; background: #11151b; padding: 8px; }
+.plan-operation, .proposal-decision { margin: 12px 0; padding: 12px; border: 1px solid #343c48; border-radius: 8px; }
+.plan-operation h4 { margin: 0 0 8px; }
+.plan-field { margin: 6px 0; font-size: 12px; }
+.plan-field > span { color: #9aa9bb; }
+.plan-field del, .plan-field ins { display: block; white-space: pre-wrap; overflow-wrap: anywhere; padding: 4px; text-decoration: none; }
+.plan-field del { color: #ffb2b2; background: #371f27; }
+.plan-field ins { color: #a5efdd; background: #17322f; }
+.proposal-review [role="alert"] { color: #ffb2b2; }
+.proposal-review .d-actions { flex-wrap: wrap; }
+.plan-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+.proposal-review button:focus-visible, .proposal-review summary:focus-visible { outline: 2px solid var(--ghost); outline-offset: 2px; }

@@ -89,6 +89,8 @@ fn main() {
             commands::send_prompt,
             commands::abort_agent,
             commands::restart_agent,
+            commands::review_proposal,
+            commands::update_proposal,
             commands::accept_proposal,
             commands::accept_all,
             commands::reject_proposal,

@@ -80,8 +80,8 @@ pub fn tool_list() -> Value {
                 "ops": ops_schema},"required":["label","ops"]}}},
           "required":["question","options"]}},
         {"name":"propose_ops","description":"Propose small, unambiguous changes (e.g. adding obvious attributes, fixing a multiplicity). They appear as \
-           ghosts the user accepts with one click or prunes. Use propose_decision instead for anything the user should think about.",
-         "inputSchema":{"type":"object","properties":{"ops": ops_schema,"rationale":{"type":"string"}},"required":["ops"]}},
+           ghosts the user reviews and can amend in the Proposals inspector before accepting. Optional decision/option fields associate context only, not approval. Use propose_decision instead for anything the user should think about.",
+         "inputSchema":{"type":"object","properties":{"ops": ops_schema,"rationale":{"type":"string"},"decision":{"type":"string"},"option":{"type":"string"}},"required":["ops"]}},
         {"name":"evaluate_defense","description":"Examiner verdict on the user's defence of a decision (only when Spide asks you to examine). \
            accept applies the chosen option; reject sends your feedback back so the user can try again. For a CUSTOM answer pass the ops that implement it.",
          "inputSchema":{"type":"object","properties":{
@@ -333,12 +333,14 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             struct A {
                 ops: Vec<Op>,
                 rationale: Option<String>,
+                decision: Option<String>,
+                option: Option<String>,
             }
             let a: A = parse(args)?;
             let before = compute(&store.view(), true);
             let summary = summarize(&a.ops);
             let standalone = crate::impact::impact_of_ops(&store.design, &a.ops).ok();
-            let id = store.propose_ops(a.ops, a.rationale, "agent").map_err(|e| e.0)?;
+            let id = store.propose_linked_ops(a.ops, a.rationale, "agent", a.decision, a.option).map_err(|e| e.0)?;
             let after = compute(&store.view(), true);
             let mut text = format!("Proposal {id} shown as ghosts ({summary}). {}", health_delta(&before, &after));
             if let Some(im) = standalone.filter(|im| !im.flipped_deps.is_empty() || !im.affected_scenarios.is_empty()) {

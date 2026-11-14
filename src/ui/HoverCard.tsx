@@ -78,7 +78,7 @@ function proposalNote(design: Design, id: string | null): ReactNode {
           {fp.items.length > 8 && <div className="faint small">+{fp.items.length - 8} more</div>}
         </div>
       )}
-      <div className="faint">Click to accept the whole proposal · right-click to reject</div>
+      <div className="faint">Click to review this proposal and edit its planned changes</div>
     </div>
   );
 }

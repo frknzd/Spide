@@ -41,6 +41,7 @@ interface Props {
   onHover: (key: string | null, at: { x: number; y: number }) => void;
   insetRight?: number;
   readOnly?: boolean;
+  reviewFocus?: ProposalFootprint | null;
   stress?: { impacted: Set<string>; ripple: Set<string> } | null;
   drift?: { missing: Set<string>; drifted: Set<string>; phantom: Set<string> } | null;
   /** a class was dropped onto another package */
@@ -274,12 +275,13 @@ export const Canvas = memo(forwardRef<CanvasApi, Props>(function Canvas(p, ref) 
   const hoveredProposal = useSyncExternalStore(hoverStore.subscribe, () => proposalAt(hoverStore.snapshot()?.key ?? null, p.data));
   const spotlight = useGhostSpotlight();
   const proposalFocus = useMemo(() => {
+    if (p.reviewFocus) return p.reviewFocus;
     if (p.readOnly) return null;
     const ids = hoveredProposal ? [hoveredProposal]
       : spotlight === "all" ? [...new Set([...p.data.classes.flatMap((c) => [c.proposal, ...c.attributes.map((a) => a.proposal), ...c.methods.map((m) => m.proposal)]), ...p.data.relations.map((r) => r.proposal)])].filter((x): x is string => !!x)
       : spotlight ? [spotlight] : [];
     return ids.length ? footprintOf(p.data, new Set(ids)) : null;
-  }, [hoveredProposal, spotlight, p.data, p.readOnly]);
+  }, [hoveredProposal, spotlight, p.data, p.readOnly, p.reviewFocus]);
   const focusClass = proposalFocus ? null : hoveredClass ?? pinned;
 
   return (

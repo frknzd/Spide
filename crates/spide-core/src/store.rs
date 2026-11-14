@@ -179,6 +179,11 @@ impl Store {
     // ------------------------------------------------------------ proposals
 
     pub fn propose_ops(&mut self, ops: Vec<Op>, rationale: Option<String>, source: &str) -> Result<String, OpError> {
+        self.propose_linked_ops(ops, rationale, source, None, None)
+    }
+
+    pub fn propose_linked_ops(&mut self, ops: Vec<Op>, rationale: Option<String>, source: &str, decision: Option<String>, option: Option<String>) -> Result<String, OpError> {
+        self.validate_proposal_association(decision.as_deref(), option.as_deref())?;
         if ops.is_empty() {
             return Err(OpError("no ops".into()));
         }
@@ -188,7 +193,7 @@ impl Store {
         let summary = summarize(&ops);
         self.mutate(source, format!("proposed: {summary}"), |d| {
             let id = d.next_id("P");
-            d.proposals.push(Proposal { id: id.clone(), ops, rationale, source: source.to_string() });
+            d.proposals.push(Proposal { id: id.clone(), ops, rationale, source: source.to_string(), decision, option });
             Ok(id)
         })
     }
@@ -242,6 +247,10 @@ impl Store {
             .find(|p| p.id == id)
             .cloned()
             .ok_or_else(|| OpError(format!("unknown proposal {id}")))?;
+        let review = self.review_proposal(id, None)?;
+        if !review.can_accept {
+            return Err(OpError(format!("Cannot accept {id}: {}", if review.errors.is_empty() { format!("accept prerequisites first: {}", review.prerequisites.join(", ")) } else { review.errors.join("; ") })));
+        }
         let summary = summarize(&p.ops);
         self.mutate("user", format!("accepted {id}: {summary}"), |d| {
             let mut next = apply_all(d, &p.ops, Mode::Commit(Status::Accepted, Some(&p.id)))?;
