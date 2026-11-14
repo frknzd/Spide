@@ -635,7 +635,7 @@ pub fn import_code(st: &AppState, pi: &PiBridge, dir: String) -> R<ImportSummary
     Ok(summary)
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct DriftReport {
     pub drift: spide_core::drift::Drift,
     /// The code judged like the design: both health scores, code-only issues, clones, design-vs-code disagreements.

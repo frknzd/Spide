@@ -142,9 +142,10 @@ fn rect_pack(nodes: &[(String, f64, f64)], gap: f64, aspect: f64) -> Placed {
     pack(nodes.iter().map(|n| Placed { at: vec![(n.0.clone(), [0.0, 0.0])], w: n.1, h: n.2 }).collect(), gap, aspect)
 }
 
-/// Wrap a tall layered drawing into side-by-side chunks of layers (ELK's MULTI_EDGE wrapping).
+/// Wrap a tall layered drawing into side-by-side chunks of layers (ELK's MULTI_EDGE wrapping):
+/// the number of chunks is the one whose drawing comes closest to the wanted aspect ratio.
 fn wrap_layers(p: Placed, sizes: &HashMap<String, (f64, f64)>, gap: f64, aspect: f64) -> Placed {
-    if p.h <= 0.0 || p.w / p.h >= aspect / 2.5 {
+    if p.h <= 0.0 || p.w / p.h >= aspect * 0.8 {
         return p;
     }
     // rows by top y
@@ -153,28 +154,37 @@ fn wrap_layers(p: Placed, sizes: &HashMap<String, (f64, f64)>, gap: f64, aspect:
         rows.entry(at[1].round() as i64).or_default().push((id.clone(), *at));
     }
     let rows: Vec<Vec<(String, [f64; 2])>> = rows.into_values().collect();
-    if rows.len() < 4 {
+    if rows.len() < 2 {
         return p;
     }
-    let chunks = ((aspect * p.h / p.w.max(1.0)).sqrt().round() as usize).clamp(2, rows.len());
-    let per = rows.len().div_ceil(chunks);
-    let mut comps = vec![];
-    for chunk in rows.chunks(per) {
-        let boxes: Vec<(String, [f64; 2], f64, f64)> = chunk.iter().flatten().map(|(id, at)| (id.clone(), *at, sizes[id].0, sizes[id].1)).collect();
-        comps.push(normalise(boxes));
-    }
-    // side by side, in layer order
-    let mut out = Placed::default();
-    let mut x = 0.0;
-    for c in comps {
-        for (id, at) in c.at {
-            out.at.push((id, [at[0] + x, at[1]]));
+    let arrange = |chunks: usize| -> Placed {
+        let per = rows.len().div_ceil(chunks);
+        let mut out = Placed::default();
+        let mut x = 0.0;
+        for chunk in rows.chunks(per) {
+            let boxes: Vec<(String, [f64; 2], f64, f64)> = chunk.iter().flatten().map(|(id, at)| (id.clone(), *at, sizes[id].0, sizes[id].1)).collect();
+            let c = normalise(boxes);
+            for (id, at) in c.at {
+                out.at.push((id, [at[0] + x, at[1]]));
+            }
+            out.h = out.h.max(c.h);
+            x += c.w + gap;
+            out.w = x - gap;
         }
-        out.h = out.h.max(c.h);
-        x += c.w + gap;
-        out.w = x - gap;
+        out
+    };
+    let score = |q: &Placed| ((q.w / q.h.max(1.0)) / aspect).ln().abs();
+    let mut best = p.clone();
+    let mut best_score = score(&p);
+    for k in 2..=rows.len() {
+        let q = arrange(k);
+        let sc = score(&q);
+        if sc < best_score {
+            best = q;
+            best_score = sc;
+        }
     }
-    out
+    best
 }
 
 fn centred(p: &Placed, sizes: &HashMap<String, (f64, f64)>) -> Positions {
