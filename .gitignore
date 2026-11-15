@@ -17,3 +17,4 @@ app/tests/snapshots/**/*.old.png
 .clj-kondo/.cache/
 .cpcache/
 .lsp/.cache/
+.ruff_cache/
