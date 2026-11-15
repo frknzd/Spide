@@ -325,7 +325,16 @@ impl TermSession {
                     let lines = self.scroll_acc.trunc() as i32;
                     if lines != 0 {
                         self.scroll_acc -= lines as f32;
-                        if mode.contains(TermMode::ALT_SCREEN) && mode.contains(TermMode::ALTERNATE_SCROLL) {
+                        if mode.intersects(TermMode::MOUSE_MODE) {
+                            // The app captures the mouse (pi's fullscreen transcript): report wheel events.
+                            let p = ui.input(|i| i.pointer.hover_pos()).unwrap_or(inner.left_top());
+                            let col = (((p.x - inner.left()) / cw).floor().max(0.0) as usize).min(s.cols.saturating_sub(1));
+                            let row = (((p.y - inner.top()) / ch).floor().max(0.0) as usize).min(s.rows.saturating_sub(1));
+                            let mods = ui.input(|i| i.modifiers);
+                            for _ in 0..lines.abs() {
+                                out.extend_from_slice(&encode_wheel(lines > 0, col, row, mods, mode));
+                            }
+                        } else if mode.contains(TermMode::ALT_SCREEN) && mode.contains(TermMode::ALTERNATE_SCROLL) {
                             let key = if lines > 0 { b"\x1b[A" } else { b"\x1b[B" };
                             for _ in 0..lines.abs() {
                                 out.extend_from_slice(key);
@@ -737,9 +746,33 @@ pub fn error_banner(ui: &mut egui::Ui, text: &str) {
     });
 }
 
+/// Encode a mouse-wheel event for an app that enabled mouse reporting (`col`/`row` are 0-based).
+fn encode_wheel(up: bool, col: usize, row: usize, mods: Modifiers, mode: TermMode) -> Vec<u8> {
+    let mut button = if up { 64 } else { 65 };
+    if mods.shift { button += 4; }
+    if mods.alt { button += 8; }
+    if mods.ctrl { button += 16; }
+    if mode.contains(TermMode::SGR_MOUSE) {
+        format!("\x1b[<{button};{};{}M", col + 1, row + 1).into_bytes()
+    } else {
+        // Legacy X10 encoding: each value offset by 32 and limited to one byte.
+        let enc = |v: usize| (32 + v).min(255) as u8;
+        vec![0x1b, b'[', b'M', enc(button), enc(col + 1), enc(row + 1)]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wheel_reports_follow_mouse_mode() {
+        let sgr = TermMode::MOUSE_DRAG | TermMode::SGR_MOUSE;
+        assert_eq!(encode_wheel(true, 0, 0, Modifiers::NONE, sgr), b"\x1b[<64;1;1M".to_vec());
+        assert_eq!(encode_wheel(false, 9, 4, Modifiers::NONE, sgr), b"\x1b[<65;10;5M".to_vec());
+        assert_eq!(encode_wheel(true, 0, 0, Modifiers::ALT, sgr), b"\x1b[<72;1;1M".to_vec());
+        assert_eq!(encode_wheel(false, 1, 2, Modifiers::NONE, TermMode::MOUSE_REPORT_CLICK), vec![0x1b, b'[', b'M', 97, 34, 35]);
+    }
 
     #[test]
     fn modify_other_keys_negotiation_survives_split_reads() {
