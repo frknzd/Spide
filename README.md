@@ -1,204 +1,319 @@
 # Spide
 
-Spide is a desktop app for designing a system live, together with an AI agent. The class diagram is the centre; the other views are derived from it.
+**Spide is a native desktop app for designing software systems live, together with an AI agent.**
 
-You start with an empty dark canvas beside a real interactive pi terminal. The agent first asks for the **brief** (goals, quality attributes, constraints, expected changes), then proposes classes and raises **design decisions**. Small changes are single-option decisions; larger improvements offer alternatives. You review them **on the diagram**: proposed changes appear in place, one click switches between alternatives, and **Approve design** applies the plan you see and moves on to the next one—notes are optional, and no defence or examiner verdict is required. Every option shows its consequences before you choose. The diagram keeps showing you how clean the design is — judged by the principles of the DOSS course (minimise coupling, increase cohesion, distribute responsibilities; RDD, GRASP, bad smells): hot classes glow, dependency cycles are drawn in red, methods in the wrong class point to their better home, and duplicated behaviour is measured. You can check the design against scenarios and expected changes, branch it and rewind it, look at it as C4 context and container diagrams, and keep it in sync with its Java code as a Spide Project.
+The UML class diagram is the centre of the workspace and every other view is derived from it. An embedded [pi](https://pi.dev) agent proposes changes as reviewable design decisions. Spide continuously measures the design against established object-oriented design principles: coupling, cohesion, responsibility assignment (RDD, GRASP) and code smells.
 
-## Run
+Spide is written in Rust with [egui](https://github.com/emilk/egui). It uses native widgets throughout, with no browser or webview.
 
-Requirements: Rust (`rustup`) and [pi](https://pi.dev) installed and logged in. Node 24+ is needed for pi and its native TypeScript extension test, not for a frontend build. Spide uses native Rust/egui widgets, with no browser or webview. The PTY/control transport targets macOS/Unix; Windows is not supported. Optional: PlantUML for exporter syntax tests. Linux builds need the usual native graphics/windowing development libraries (X11/Wayland and OpenGL/Vulkan).
+## Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Getting started](#getting-started)
+- [Configuration](#configuration)
+- [Project layout](#project-layout)
+- [Usage](#usage)
+- [Spide Projects: design and code together](#spide-projects-design-and-code-together)
+- [Design diagnostics](#design-diagnostics)
+- [Views](#views)
+- [Exports](#exports)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Known limitations](#known-limitations)
+
+## Features
+
+- **Agent-assisted design.** A real interactive pi terminal runs beside the canvas. The agent gathers a design brief, proposes classes and raises design decisions. All changes go through MCP tools and are only applied after you approve them.
+- **Review on the diagram.** Proposed changes are drawn in place as ghosts. You can switch between alternatives with one click, inspect their consequences and approve, dismiss or request revisions.
+- **Continuous design health.** A single 0–100 score combines coupling, cohesion, responsibility assignment, architecture rules and UML hygiene. Problems are shown on the canvas: hot classes, red dependency cycles, misplaced methods with a suggested home, and duplicated behaviour.
+- **Architecture rules.** Presets for clean, hexagonal, layered and modular-monolith styles, plus custom forbidden dependencies and thresholds. Rules can be exported as ArchUnit tests.
+- **Scenarios and change impact.** Spide scores sequence scenarios for fit and shows the ripple effect of anticipated changes.
+- **History and branches.** Scrub through the design's timeline, restore earlier states, and fork, compare and merge branches.
+- **Multiple views.** C4 context and container diagrams, class, domain, package, use case and UML sequence diagrams.
+- **Design ↔ code synchronisation.** A Spide Project keeps the design next to its Java sources. Spide tracks a three-way sync status per element and supports agent-driven implementation and readjustment in both directions.
+- **Exports.** PNG, SVG, PDF, Obsidian Canvas, PlantUML (including C4), JSON, Markdown ADRs and ArchUnit tests, individually or as a batch.
+
+## Requirements
+
+| Requirement | Notes |
+|---|---|
+| Rust toolchain | Install via [`rustup`](https://rustup.rs). |
+| [pi](https://pi.dev) | Installed and logged in. Must be on `PATH`, or set `SPIDE_PI`. |
+| Node.js 24+ | Required by pi and the TypeScript extension test. No frontend build is involved. |
+| macOS or Linux | The PTY and control transport target macOS/Unix. **Windows is not supported.** Linux builds need the usual native graphics and windowing development libraries (X11/Wayland, OpenGL/Vulkan). |
+| PlantUML *(optional)* | Only used by the exporter syntax tests. |
+
+## Getting started
+
+### Run from source
 
 ```sh
 cargo run -p spide
-./scripts/bundle-macos.sh   # release app: target/release/bundle/macos/Spide.app
 ```
 
-The bundle is unsigned; signing/notarization for distribution is separate. Launch from a shell with `pi` on `PATH`, or set `SPIDE_PI` to its absolute path. Example project:
+By default Spide opens the project folder `~/Documents/Spide/untitled`. Set `SPIDE_PROJECT` to open a different folder:
 
 ```sh
 project=$(mktemp -d)
-cp examples/library.json "$project/design.json"
+cp tests/fixtures/library.json "$project/design.json"
 SPIDE_PROJECT="$project" cargo run -p spide
 ```
 
-Spide opens the project folder `~/Documents/Spide/untitled`. Set `SPIDE_PROJECT=/path/to/folder` to open another one, or use `/spide new` and `/spide open` inside pi (or the terminal header's **Commands** button). A design-only folder contains the files below; a [Spide Project](#spide-project-design-and-code-together) keeps its design next to its code instead.
+`tests/fixtures/library.json` is a small design with deliberate problems: a dependency cycle, layer violations and an orphan class. If you copy it into a project's `design.json` while Spide is running, it arrives as ghost proposals for review.
 
-| file | purpose |
+Inside the app, use `/spide new` and `/spide open` in the pi terminal (or the terminal header's **Commands** button) to create or open projects.
+
+### Build the macOS app
+
+```sh
+./scripts/setup-signing-macos.sh   # once: creates the local identity "Spide Local Signing" in the login keychain
+./scripts/bundle-macos.sh          # builds target/release/bundle/macos/Spide.app
+./scripts/install-macos.sh         # bundles and replaces /Applications/Spide.app (quit Spide first)
+```
+
+Bundles are signed with a stable, self-signed local identity, so macOS keeps granted privacy permissions across rebuilds. Without it, bundles are ad-hoc signed and macOS asks for permissions again after every build. Use `SPIDE_SIGN_IDENTITY` to choose a different identity and `SPIDE_INSTALL_DIR` to install somewhere other than `/Applications`. Developer ID signing and notarization for public distribution are not part of these scripts.
+
+When launching the bundle, make sure `pi` is on `PATH`, or set `SPIDE_PI` to its absolute path.
+
+## Configuration
+
+| Variable | Purpose |
 |---|---|
-| `design.json` | The design (the active branch). It is autosaved on every change and watched for edits made outside Spide. |
+| `SPIDE_PROJECT` | Project folder to open (default `~/Documents/Spide/untitled`). |
+| `SPIDE_PI` | Absolute path to the `pi` binary. |
+| `SPIDE_SIGN_IDENTITY` | Code-signing identity used by the macOS scripts (default `Spide Local Signing`). |
+| `SPIDE_INSTALL_DIR` | Install location used by `install-macos.sh` (default `/Applications`). |
+
+The model is selected through pi's own configuration or `/model`. The legacy `SPIDE_PI_ARGS` variable is no longer read.
+
+## Project layout
+
+A design-only project folder contains:
+
+| Path | Purpose |
+|---|---|
+| `design.json` | The design (active branch). Autosaved on every change and watched for external edits. |
 | `.pi/mcp.json` | Points pi to Spide's MCP server (`spide`, `http://127.0.0.1:47800/mcp`). |
-| `.spide/terminal-bridge.ts` | App-owned pi extension for private structured prompts, context and `/spide` commands. The skill in `agent/spide-skill.md` is appended at launch. |
+| `.spide/terminal-bridge.ts` | App-owned pi extension for structured prompts, context and `/spide` commands. The skill in `agent/spide-skill.md` is appended at launch. |
 | `.spide/sessions/` | The agent's pi sessions. Spide continues the latest one on start. |
-| `.spide/history.jsonl` | One snapshot per change of the model, for the timeline. |
-| `.spide/branches/` | Inactive branches (`<name>.json`); `.spide/branch` names the active one. |
-| `spide/project.json`, `spide/design.json`, `spide/sync.json` | Spide Project only (committed with the code): manifest, the design, the sync baseline. `.spide/` and `.pi/mcp.json` stay local. |
-| `.spide/skills/` | Spide Project only: the bundled `spide-readjust` and `spide-implement` pi skills, refreshed at launch. |
+| `.spide/history.jsonl` | One snapshot per model change, used by the timeline. |
+| `.spide/branches/` | Inactive branches (`<name>.json`). `.spide/branch` names the active one. |
 
-Older `design.json` files (schema 1) open unchanged. Files of the removed source attachment and code import (`.spide/source.json`, `implementations.json`, `reality.json`) are ignored.
+A [Spide Project](#spide-projects-design-and-code-together) stores the design next to its code under `spide/` instead.
 
-## Using it
+Older `design.json` files (schema 1) open unchanged. Files from the removed source attachment and code import (`.spide/source.json`, `implementations.json`, `reality.json`) are ignored.
 
-### Native pi and workspace
+## Usage
 
-- Pi runs once in a real PTY in the project folder, with **all available tools** (`--tools '*'`), configured extensions/MCP servers and the user's permission controls. Code edits and shell commands are allowed; diagram mutations still use Spide MCP proposals/decisions. Trust/permission dialogs remain interactive. On first opening a project you may need to approve pi's **Trust project folder?** prompt before Spide's integration becomes ready.
-- The native editor is the only chat input. `Ctrl+P` cycles configured models, `Ctrl+Shift+P` cycles backward, `Ctrl+L` opens the model picker; Shift+Tab, Escape, multiline input and transcript scrolling belong to pi. Canvas shortcuts do not run while the terminal is focused. Selection/copy/paste uses the native terminal widget.
-- Drag separators to resize panes; collapse/reopen without restarting pi. Widths/visibility are saved locally, not in the design. Narrow windows put the review rail in a drawer that doesn't cover pi. **Restart** is in the terminal header, even when pi is offline.
-- **All Spide `/command` examples below mean `/spide command` in the terminal**, or the same command in **Commands**. Native pi `/new`, `/model`, `/settings`, `/resume`, `/export`, etc. retain their own meanings. For example, use `/spide detail 3`, `/spide tidy`, `/spide project`, `/spide open`, `/spide save`.
-- Examiner/fix/generation requests go through an authenticated private Unix socket into that same session, never by pasting into a partly typed draft. Busy requests use pi follow-ups. Terminal bytes never drive app/design state.
+### Workspace and pi terminal
 
-### The loop
+- pi runs once in a real PTY in the project folder, with all available tools (`--tools '*'`), its configured extensions and MCP servers, and your permission settings. The agent may edit code and run shell commands. Diagram changes always go through Spide's MCP proposals and decisions. When you first open a project, you may need to approve pi's **Trust project folder?** prompt.
+- The terminal editor is the only chat input. `Ctrl+P` / `Ctrl+Shift+P` cycle models and `Ctrl+L` opens the model picker. Shift+Tab, Escape, multiline input and transcript scrolling belong to pi. The mouse wheel and trackpad are forwarded to pi's fullscreen transcript, and PageUp/PageDown also scroll it. Canvas shortcuts are disabled while the terminal has focus.
+- Drag the separators to resize panes, and collapse or reopen panes without restarting pi. Layout preferences are stored locally, not in the design. On narrow windows the review rail becomes a drawer. **Restart** is always available in the terminal header.
+- **In this document, `/command` means `/spide command` in the terminal** (or the same entry under **Commands**). pi's built-in commands such as `/new`, `/model`, `/settings`, `/resume` and `/export` keep their usual meaning.
+- App-initiated requests (examiner, fixes, generation) reach the same session through an authenticated private Unix socket. They are never pasted into a draft you are typing. Terminal output never drives application or design state.
 
-1. **Brief.** On an empty design the agent asks one question at a time and records your answers as forces (goals, quality attributes, constraints, expected changes) with a priority. ⌘B or `/brief` opens the brief panel, where you can add, edit, reprioritise or remove forces yourself. `/skip` (or **Skip brief** on the empty canvas) starts designing without a brief.
-2. **Review on the diagram.** Pending changes (small single-option changes and substantive alternatives alike) open in the **Review** rail beside the canvas, and the canvas shows the selected plan in place: new and changed elements in teal, removals in red, everything else faded. The rail lists all pending plans by title — one click switches — and shows, without expanding anything, the question, the alternatives with their pros/cons and health, the consequences, blocking problems and a readable list of changes (click one to locate it). Clicking an alternative replaces the plan on the diagram; **Before / Proposed** and **Fit changes** sit at the bottom of the canvas, and positions stay put while you toggle. `compare` (or `/compare`, **Compare side by side**) still compares alternatives on a shared layout.
-   - **Click elements on the diagram** to see exactly what the plan does to them (before → after) and to add them to a change request; they appear as chips above the notes. **Request changes** sends your notes, the selected elements, the decision/option and the design revision to the same pi session — nothing is applied, and the revised plan replaces the one under review. Requests need pi running (the rail says why when they can't be sent); failed requests keep your notes and selection.
-   - **Approve design** applies exactly the saved, visible plan (notes are recorded with it) and then opens the next pending plan in queue order — it never approves that one. New proposals arriving meanwhile don't steal the selection. **Dismiss** rejects without applying. ⌘Z undoes either. When the queue is empty the rail shows **Review complete** with next steps: check behaviour in the Sequence view, **Implement in code** (in a Spide Project with approved changes the code doesn't have yet) or the decision history.
-   - **Edit plan manually (advanced)** keeps the structured operation editor and JSON for when you'd rather edit than ask; **Save plan** saves amendments, not the design. Unsaved manual edits block approval and alternative switching until saved or discarded. There is no defence/examiner gate, even in legacy strict projects. **History** lists resolved decisions read-only, including legacy verdicts.
-3. **Check behaviour.** In the Sequence tab each scenario gets a fit score: calls, call depth, package, layer and container crossings, aggregates touched, unknown calls. In the brief panel, **change scenarios** ("what if we must support e-books?") are analysed by the agent: Spide shows which classes must change, which depend on them (the ripple) and a locality score. **stress test** (or `/stress <name>`) highlights that footprint on the canvas.
-4. **Evolve.** ⌘T or `/timeline` scrubs through the design's history (read-only preview); *restore here* proposes the changes that bring a past state back, *fork* starts a branch from it. `/branch <name>` branches from now and switches to it, `/switch`, `/compare <branch>` and `/merge <branch>` (the other branch's changes arrive as ghost proposals, additions and removals separately).
-5. **Close the loop.** `/export adr` writes an ADR per approved decision, including optional notes and consequences (legacy defences/verdicts remain historical evidence). `/export archunit` writes Java architecture tests. A **Spide Project** keeps the design with its Java code and the agent keeps both in sync in either direction; see below.
+### Design workflow
 
-### Partner modes and rules
+1. **Brief.** On an empty design, the agent asks one question at a time and records your answers as prioritised *forces*: goals, quality attributes, constraints and expected changes. ⌘B or `/brief` opens the brief panel for direct editing. `/skip` (or **Skip brief**) starts without a brief.
+2. **Review.** Pending decisions open in the **Review** rail, and the selected plan is drawn on the canvas. New and changed elements are teal, removals red, and everything else faded. The rail lists every pending plan with its question, alternatives (pros, cons and health), consequences, blocking problems and a readable list of changes.
+   - Click an alternative to show it on the diagram. **Before / Proposed** and **Fit changes** are at the bottom of the canvas. `/compare` (or **Compare side by side**) compares alternatives on a shared layout.
+   - Click diagram elements to see the before → after change and to attach them to a change request. **Request changes** sends your notes, the selected elements and the design revision to the agent. Nothing is applied; the revised plan replaces the current one.
+   - **Approve design** applies exactly the visible plan, records any notes, and opens the next pending plan. **Dismiss** rejects it. ⌘Z undoes either. When the queue is empty, the rail suggests next steps.
+   - **Edit plan manually (advanced)** opens a structured operation editor and the plan's JSON. Unsaved manual edits block approval until they are saved or discarded. **History** lists resolved decisions.
+3. **Check behaviour.** In the Sequence view, each scenario gets a fit score: number of calls, call depth, package, layer and container crossings, aggregates touched and unknown calls. In the brief panel, the agent analyses **change scenarios** (for example "what if we must support e-books?") and Spide shows the affected classes, the ripple effect and a locality score. `/stress <name>` highlights the footprint on the canvas.
+4. **Evolve.** ⌘T or `/timeline` previews the design's history. *Restore here* proposes the changes that bring that state back, and *fork* starts a branch from it. Use `/branch <name>`, `/switch`, `/compare <branch>` and `/merge <branch>`. Merged changes arrive as ghost proposals.
+5. **Close the loop.** `/export adr` writes an Architecture Decision Record for each approved decision, and `/export archunit` writes Java architecture tests. A Spide Project keeps the design and Java code in sync.
 
-- `/mode examiner | socratic | devils_advocate | sketch` (also in the brief panel). *Examiner* is the default. *Socratic* only asks questions and never changes the design. *Devil's advocate* explains counterarguments as advice, never an approval gate. *Sketch* proposes freely and keeps alternatives for big forks. Legacy strict/lenient settings do not restrict user approval.
-- **Architecture rules** live in the brief panel (and `/rules <preset>`): a style preset — `clean` (dependencies point inward), `hexagonal` (adapters never depend on each other), `layered` (downward only), `modular_monolith` (`<module>.<layer>` packages, other modules only via `<module>.api`), `none` — plus your own forbidden dependencies (`*Controller -> *Repository : go via a service`), forbidden types per layer (`Http*` in domain) and thresholds. Editing `rules` in `design.json` applies directly.
-- Every issue explains why it matters and how to fix it, names the course principle and reference it comes from (e.g. *GRASP Controller (Ch. 3)*), and says how sure Spide is (confidence, and whether it comes from structure, a heuristic, the agent or the code). In the health popover, click an issue to jump to it, or **fix with agent** to get a decision with ways to resolve it — for misplaced or duplicated behaviour the options are the ranked homes from `suggest_home` (the Information Expert, a new Pure Fabrication, or keeping it).
+### Partner modes and architecture rules
 
-### Spide Project: design and code together
+- `/mode examiner | socratic | devils_advocate | sketch`:
+  - *Examiner* (default) proposes and reviews changes.
+  - *Socratic* only asks questions.
+  - *Devil's advocate* offers counterarguments as advice.
+  - *Sketch* proposes freely and keeps alternatives for major forks.
 
-Pure-design projects need no code, Git or Java. A **Spide Project** is a module folder (for example `zap-extensions/addOns/restextraction`) where the design lives with its Java code:
+  No mode blocks your approval.
+- **Architecture rules** (brief panel, or `/rules <preset>`) are owned by the user. The agent cannot change them. They consist of a style preset, custom rules and thresholds:
+  - **Presets:** `clean` (dependencies point inward), `hexagonal` (adapters never depend on each other), `layered` (downward only), `modular_monolith` (`<module>.<layer>` packages; other modules only via `<module>.api`) or `none`.
+  - **Custom rules:** forbidden dependencies (`*Controller -> *Repository : go via a service`) and forbidden types per layer (`Http*` in domain).
+  - **Thresholds.**
+- Every issue explains why it matters and how to fix it, cites the principle it is based on (for example *GRASP Controller*), and states its confidence and source: structure, a heuristic, the agent or the code. From the health popover, **fix with agent** raises a decision with ranked resolutions.
 
-```
-addOns/restextraction/      ← project root; pi runs here (AGENTS.md of the repo and parents apply)
-  spide/project.json        manifest: name, roots (src/main/java), exclude, code_root, compare filters, test command   (committed)
-  spide/design.json         the design (active branch)                                                              (committed)
-  spide/sync.json           sync baseline: both sides when they last agreed                                         (committed)
-  .spide/  .pi/mcp.json     local (sessions, history, branches, skills) — kept out of git via .git/info/exclude
-```
+### Canvas
 
-- **Create / open.** **Project** in the rail (or `/spide project`, File › Open Spide Project…). *Create Spide Project in a code folder…* picks the module folder; the form proposes roots, finds the Java root package (**Preview**), takes a test command for the agent (e.g. `./gradlew :addOns:restextraction:test` in `../..`) and copies the current design (with its history) into `spide/`. The old folder is untouched.
-- **Index.** The Java sources under the roots are parsed (tree-sitter) on open and whenever a `.java` file changes. A partial or failed index is labelled; absences aren't trusted then.
-- **Identity is exact.** A design class is the Java type `code_root.package.Name`, or the symbol of an explicit `link_code` op (for another name or package). Same simple names elsewhere never match. Methods match by name and parameter types (untyped design parameters match the only overload with that arity); fields by name. A code field the design draws as an association counts as present.
-- **Compared:** classes (package, kind), fields (type, static), methods (parameter types, return type, static, abstract), extends/implements. Not compared by default: private methods, plain getters/setters, constructors, static code fields the design doesn't list, external (library) classes. Empty design types match any code type.
-- **Sync status per element**, three-way against the baseline: **in sync** · **design ahead** (implement it) · **code ahead** (readjust the design) · **conflict** (both changed; **Keep design** / **Keep code**) · **unreconciled** (no baseline yet) · **accepted** (a difference you accepted). Elements that agree move the baseline along automatically; **Mark in sync…** (`/spide synced`) accepts the remaining differences. Only approved design is compared, never pending ghosts.
-- **Readjust (code → design).** **Readjust design** / `/spide readjust [Class …]`: the agent (skill `spide-readjust`) reads `get_sync` and `get_code` and raises proposals and decisions — the usual review on the diagram. With an empty design it bootstraps the class model per package, then the domain model and use cases.
-- **Implement (design → code).** **Implement in code** / `/spide implement [Class …]`: Spide sends the agent (skill `spide-implement`) a brief per class — target file, exact changes, responsibilities, the decisions behind them. The agent edits with pi's normal tools and permissions, follows the repository's instructions, never commits, stashes, resets or switches branches, asks before deleting files and runs the test command. When it settles, Spide re-indexes and shows *Implemented n/m* with what remains.
-- **Verify.** `/spide verify` re-indexes and asks the agent to run the test command. Structural agreement doesn't prove behaviour.
-- **On the canvas.** `/lens sync` rings classes (teal design ahead, violet code ahead, red conflict, amber dashed unreconciled), dots changed members and draws code-only classes as faded *only in code* ghosts. Hover cards show `code: org.x.Foo · src/…/Foo.java:12 · status`. Linked methods carry the code's facts, so long methods, real clones and the code-based course checks count in health.
-- **Agent tools** (project only): `get_project`, `get_sync`, `get_code`; ops `link_code` / `unlink_code`.
+- **Ghost changes.** Click a ghost or **Review N changes on the diagram** to start reviewing. Direct edits are disabled during review; pan, zoom, focus and the brief remain available. There are no bulk actions. Legacy `/accept <plan-id>` and `/reject <plan-id>` require an explicit ID.
+- **Direct edits.** Double-click a name to rename it, and drag a class onto a package to move it. `/add <Class> [in <package>]` adds a class. ⌥-click pins a class in place (📌), including during `/tidy`. Direct edits apply immediately and can be undone.
+- **Prune.** Right-click an element, or right-drag a box around several, to remove them. You can say what you didn't like (⏎ sends it to the agent; Esc prunes silently). Pruned elements stay in the model, hidden (`/pruned` shows them), and the agent is told not to reintroduce them. Click a pruned element to restore it.
+- **Detail levels.** The slider (or `/detail 0–4`) switches between five levels:
 
-### Diagnostics: what the course grades
+  | Level | Shows |
+  |---|---|
+  | 0 | packages |
+  | 1 | names |
+  | 2 | responsibilities |
+  | 3 *(default)* | **design**: public behaviour with argument types; accessors, constructors and private helpers folded together; associations as role names |
+  | 4 | full |
 
-Health is **one number** (0–100): a weighted geometric mean of five principle scores — **coupling** (.25), **cohesion** (.2), **responsibilities** (.3), **architecture rules** (.15) and **UML hygiene** (.1) — each computed from its issues (severity × confidence) relative to the size of the design, so one bad class in five hurts more than one in fifty. Hover the health ring for the breakdown. The checks:
+  Zooming out reduces detail automatically. Exports follow the slider. Flagged methods are always visible.
+- **External code.** `/external <package|Class>` marks library or framework code. External code is drawn compactly, counts less towards coupling and is not judged.
+- **Lenses.**
+  - `/lens concerns` colours methods by concern.
+  - `/lens overlap` links duplicated behaviour and marks scattered concepts (⁂).
+  - `/lens sync` shows the design ↔ code status.
+  - `/lens off` turns lenses off.
+  - `/implicit` shows all implicit dependencies.
+- **Hover** shows an element's purpose, role, members, responsibilities, rationale, metrics and the decision that introduced it. Click an element to open its full decision record.
+- **Navigation.**
 
-- **Purpose vs behaviour.** Every class gets a role (presentation, controller, service, domain, persistence, adapter, output, creator, utility, value) from, in order: an explicit `role`, the agent's assessment, its name (`*Panel`, `*Controller`, `*Repository`, `*Writer`, …), its stereotype, its layer. Every method gets a concern (presentation, coordination, domain logic, persistence, formatting, creation, accessor) and an RDD kind (knowing, doing, deciding) from its verb, signature, `uses` and `calls` — or from its body when code is imported. Mismatches are flagged: a UI class doing domain calculations, an entity saving or formatting itself (the `Sale.save()` example), a fat controller, vague names (`*Manager`, `*Util`), name/stereotype/layer disagreeing, a class mixing several concerns.
-- **Duplication and the right home.** Method pairs get an explainable similarity (name, signature, what the bodies touch, description, and with code a normalised fingerprint). Pass-through delegation (a controller forwarding to the domain), polymorphic overrides and UI event handlers are not duplication. Spide also flags behaviour that another class claims (its data, or its stated responsibility), concepts scattered over ≥ 3 classes (shotgun surgery) and middle men. For each, `suggest_home` ranks where the behaviour belongs (Information Expert; wholes take over their parts), checks every caller may depend on it, simulates the health/coupling/cohesion effect, and offers a new Pure Fabrication class when no expert fits.
-- **Course checks.** Law of Demeter (talking to strangers), Feature Envy, data classes / no behaviour, the UI driving the domain without a controller, Creator, switches on a type code in several places (replace with Polymorphism), long methods, long parameter lists, and the exam notes on UML: argument types, no repeated inherited attributes, a Composite needs add/remove/getChildren, a Visitor with one element is a Strategy.
-- **The agent's judgement.** The agent records its own assessment per class (`assess_class`: purpose, role, a verdict per method). Agreement raises an issue's confidence; when it disagrees on a serious issue you see the disagreement and have to resolve it. Assessments go stale when the class changes.
-- **Long functions.** Java methods/constructors over **30 nonblank, non-comment body lines** get a `long_method` warning and lower cohesion/overall health. Configure **long method: code lines >** in Brief → Thresholds (`rules.thresholds.max_method_lines`). Brace-only lines and nested type bodies are excluded. This is a heuristic: hovers show measured length, threshold, source location and an Extract Method suggestion. In a Spide Project, methods linked to the code carry its measured facts (also call chains, switches, loops, creations, UI calls, clone fingerprints) into design health; pure-design methods have unknown length, not an invented penalty.
+  | Action | Input |
+  |---|---|
+  | Pan | drag |
+  | Zoom | pinch or ⌘-scroll |
+  | Fit | double-click empty space |
+  | Zoom to and focus a class | `/find <class>` |
+  | Focus a package | `/focus <package>` (Esc clears) |
+  | Switch tabs | ⌘1–6 |
+  | Undo / redo | ⌘Z / ⇧⌘Z |
+  | Export / export again | ⌘E / ⇧⌘E |
 
-### On the canvas
+### Visual language
 
-- **Commands.** Type `/spide ` in pi for completion, or open **Commands** in its header.
-- **Ghost changes.** Click a ghost or **Review N changes on the diagram** to start reviewing. During review, clicking an element of an earlier pending plan switches to that plan; clicking any other element inspects it and toggles it as a change-request target. Review actions stay outside the scroll area. There are no bulk actions; legacy `/accept <plan-id>` and `/reject <plan-id>` require an explicit ID. Direct canvas edits (rename, drag into packages, prune) are disabled during review; pan, zoom and focus still work. The brief stays available.
-- **Safe plan drafts.** Draft previews never commit accepted elements. Unsaved plan drafts are kept locally per workspace/branch/proposal; operation forms must be added to the draft first. Workspace changes require explicit revalidation before saving. Dependent plans must have prerequisites accepted first; invalid plans show errors rather than disappearing. Undo/redo restores plan saves and individual resolutions. Amendments update the associated option but never approve it. Legacy proposal IDs remain stable internal plan IDs.
-- **Direct edits.** Double-click a class, attribute or method name to rename it. Drag a class onto another package to move it. `/add <Class> [in <package>]` adds a class. ⌥-click pins a class where it is (📌); pinned classes stay put, also on `/tidy`. Direct edits are yours: they apply immediately and ⌘Z undoes them.
-- **Prune.** Right-click an element to remove it, or hold the right mouse button and drag a box around several. A small box asks what you didn't like; ⏎ sends it to the agent, Esc prunes without comment. Pruned elements stay in the model, hidden by default (`/pruned` shows them), and the agent is told not to bring them back. Click a pruned element to restore it (restoring a package restores its classes).
-- **Detail.** The slider bottom-left (or `/detail 0–4`) sets how much each class shows: packages · names · responsibilities · **design** (default: public behaviour with argument types; accessors, constructors and private helpers folded into one line; attributes that repeat a drawn association become the edge's role name; inherited attributes not repeated) · full. Zooming far out shows less on its own (names, then packages). Exports follow the slider. Methods the diagnostics flag always stay visible, with `↗ Home` next to them.
-- **External.** `/external <package|Class>` tags library/framework code (Spide suggests it once for packages like `zap` or `swing`): drawn as a compact strip, coupling to it counts less, and it isn't judged.
-- **Lenses.** `/lens concerns` colours method rows by what they do; `/lens overlap` draws dashed links between classes that duplicate each other and marks scattered concepts (⁂); `/lens off`. `/implicit` shows all implicit dependencies (otherwise only the hovered class's).
-- **Hover** over an element for its details: its **purpose** (the agent's sentence, the role Spide reads and why, methods in the wrong place → suggested home, what the code says), members, responsibilities, rationale, metrics, and **why it's here** — the decision (question, chosen option, optional notes and historical evidence) that introduced it. Member hovers use more of the available canvas height and keep long evidence scrollable. Click an element that came from a decision to see the whole decision record.
-- **Navigate.** Drag to pan, pinch or ⌘-scroll to zoom, double-click empty space to fit. `/find <class>` zooms to a class and focuses it; `/focus <package>` zooms to a package and dims the rest; Esc clears. ⌘1–6 switch tabs, ⌘Z / ⇧⌘Z undo and redo, ⌘E opens Export and ⇧⌘E repeats the last export.
-
-### What the visuals mean
-
-| visual | meaning |
+| Visual | Meaning |
 |---|---|
-| node size | coupling (fan-in + fan-out) |
-| halo colour blue → amber → red | heat: coupling, cycles, god class, low cohesion, broken rules |
-| red, straining edge | the relation is part of a dependency cycle (animates briefly, then rests) |
-| amber edge `layer ↑` / `module` / `forbidden` | the relation breaks a layering, module-boundary or custom rule |
-| `«async»` / `«event»` on an edge | the dependency is not a synchronous call |
-| faint dotted edge | a hidden dependency through attribute or parameter types, or method calls, that has no drawn relation (shown for the hovered class, or all with `/implicit`) |
-| chips | `cycle`, `god class`, `LCOM n`, `rule ✗`, `orphan`, `◆ aggregate`, `«external»`, `only in code`, `⁂ concept` (overlap lens) |
-| `↗ Home` / `⚠ kind` after a method | the method is in the wrong place (suggested home) or breaks a course rule |
-| dashed purple edge (overlap lens) | duplicated behaviour (share) or a method dealing with another class's concept |
-| red / amber ring | stress test: impacted / ripple |
-| teal / violet / red / amber ring, member dots (sync lens) | Spide Project: design ahead / code ahead / conflict / unreconciled (dashed); faded *only in code* boxes exist only in the code |
-| health ring (canvas toolbar) | 0–100. Hover over it for the five principle scores and the issues per principle. `→ n` shows the health after accepting pending ghosts. |
+| Node size | Coupling (fan-in + fan-out). |
+| Halo, blue → amber → red | Heat: coupling, cycles, god class, low cohesion, broken rules. |
+| Red, straining edge | The relation is part of a dependency cycle. |
+| Amber edge `layer ↑` / `module` / `forbidden` | The relation breaks a layering, module-boundary or custom rule. |
+| `«async»` / `«event»` on an edge | The dependency is not a synchronous call. |
+| Faint dotted edge | An implicit dependency (via attribute or parameter types or method calls) with no drawn relation. |
+| Chips | `cycle`, `god class`, `LCOM n`, `rule ✗`, `orphan`, `◆ aggregate`, `«external»`, `only in code`, `⁂ concept`. |
+| `↗ Home` / `⚠ kind` after a method | The method belongs elsewhere (suggested home), or it breaks a design rule. |
+| Dashed purple edge (overlap lens) | Duplicated behaviour, or a method handling another class's concept. |
+| Red / amber ring | Stress test: directly impacted / ripple. |
+| Teal / violet / red / amber ring (sync lens) | Design ahead / code ahead / conflict / unreconciled. |
+| Health ring | Overall score, 0–100. Hover for the per-principle breakdown. `→ n` is the score after accepting pending ghosts. |
 
-The layout favours presentation quality over keeping old positions. Every change to classes, relations or box sizes (including a different detail level) lays the whole diagram out again; review keeps positions only while you toggle alternatives. Packages are compact layered drawings: tight layers, boxes centred under their neighbours, and long chains wrapped beside each other, but never splitting a parent from its subclasses. Packages sit in bands (ui and infrastructure on top, application, then domain). Each band flows into rows, and the row width and package shapes are chosen for the most compact, near-rectangular result. External (library) packages and classes go into a band along the right or bottom edge, next to their clients.
+### Layout
 
-Class footprints include their status chips and metric badges, so nothing overlaps. Package frames are wide enough for their titles. Long member signatures and responsibilities wrap rather than truncate. Edge labels go where they clear every box, chip and other label, and are drawn above the lines and boxes. Edges are orthogonal, with short stubs so they turn early, 12px lanes for parallel runs, and shared triangles for generalisations.
+The layout optimises for presentation quality over positional stability. Any change to classes, relations or box sizes triggers a full relayout. Positions are held only while you toggle between alternatives during review.
 
-The layout lands exactly on its computed positions and stops; physics only moves classes you drag. An idle canvas costs no CPU. Decorative animations (ghosts, hot halos, cycles) play briefly and rest.
+- **Packages** are compact layered (Sugiyama) drawings that never separate a parent from its subclasses.
+- **Package placement:** packages sit in layer bands (UI and infrastructure, then application, then domain). External code goes along the right or bottom edge.
+- **Layers** are inferred from package names such as `domain`, `ui` and `persistence`.
+- **Edges** are orthogonal, with lanes for parallel runs and shared triangles for generalisations.
+- **Labels** are placed so they clear every box and chip.
+- **Animation:** the layout settles without animated drift. Physics only moves classes you drag, and an idle canvas uses no CPU.
 
-Package names such as `domain`, `ui` or `persistence` are mapped to their layer automatically.
+## Spide Projects: design and code together
 
-### Views
+Pure-design projects need no code, Git or Java. A **Spide Project** is a module folder where the design lives alongside its Java sources:
 
-- **System** (C4). *Context*: actors, the system and external systems. *Containers*: deployable units with their technology and replicas, the packages that run in them, datastores, links to external systems. Container-to-container dependencies are derived from the class dependencies. Spide flags single points of failure, synchronous call chains across containers, and views that disagree (a package that runs in no container, an unconnected external system, an actor without use cases).
-- **Class.** The main canvas.
-- **Domain.** Built by the agent (`set_domain_model`): a conceptual model of the problem domain — concepts with attributes (no methods, no software or framework classes), associations with verb-phrase labels and multiplicities, generalisations. It is separate from the class design (no references to it) and marked out of date when the class model changes; **↻ generate / regenerate** asks the agent. Prune concepts with feedback like any element.
-- **Package.** Computed: a plain UML package diagram — folders with the package name (and «layer»), their classes, and dashed dependency arrows. Package metrics (I / A / D) stay with the agent's `get_metrics`.
-- **Use case.** Generated by the agent from the class model. The tab is marked stale when the class model changes.
-- **Sequence.** A UML sequence diagram generated by the agent for a scenario you pick from the use cases or name in the prompt. Lifelines are objects (`l : Loan`, `: Catalog`, multi-objects `loans : Loan[*]`) or actors. Combined fragments `loop`, `alt` (with `else`), `opt`, `par`, `break` and `critical` frame their messages with `[guards]`; `ref` frames another interaction (click it to open that sequence). A created object's header appears at its «create» message, a «destroy» message (or an object ending itself) ends the lifeline with ✗. Activation bars follow the calls, and replies are drawn automatically (dashed, with the returned value) when an activation ends; explicit replies are never doubled. Calls are numbered. Every call is checked against the receiver's class; calls to methods that don't exist are red. The side panel shows the scenario's fit. The PlantUML export draws the same diagram.
+```
+addOns/restextraction/      project root; pi runs here (repository AGENTS.md files apply)
+  spide/project.json        manifest: name, roots, excludes, code root, compare filters, test command   (committed)
+  spide/design.json         the design (active branch)                                                  (committed)
+  spide/sync.json           sync baseline: both sides as they last agreed                               (committed)
+  .spide/  .pi/mcp.json     local state, excluded from Git via .git/info/exclude
+```
+
+- **Create or open** via **Project** in the rail, `/project`, or *File › Open Spide Project…*. The setup form detects source roots and the Java root package, records a test command for the agent, and copies the current design and its history into `spide/`.
+- **Indexing.** Java sources are parsed with tree-sitter when the project opens and whenever a `.java` file changes. A partial or failed index is labelled as such, and absences are not trusted.
+- **Identity** is exact: a design class maps to `code_root.package.Name`, or to an explicit `link_code` target. Methods match by name and parameter types, and fields by name.
+- **What is compared:** package, kind, fields, method signatures and modifiers, and inheritance. **Not compared by default:** private methods, plain accessors, constructors, unlisted static fields and external classes.
+- **Sync status** is a three-way comparison against the baseline: **in sync**, **design ahead**, **code ahead**, **conflict** (resolve with **Keep design** or **Keep code**), **unreconciled** or **accepted**. Matching elements advance the baseline automatically. `/synced` accepts the remaining differences. Pending ghosts are never compared.
+- **Readjust (code → design).** `/readjust [Class …]` has the agent (skill `spide-readjust`) raise proposals from the code. If the design is empty, this bootstraps it.
+- **Implement (design → code).** `/implement [Class …]` sends the agent (skill `spide-implement`) a brief per class. The agent edits with pi's normal tools and permissions and runs the test command. It never commits, stashes, resets or switches branches, and it asks before deleting files. Spide then re-indexes and reports progress.
+- **Verify.** `/verify` re-indexes and asks the agent to run the tests. Structural agreement does not prove correct behaviour.
+- **Agent tools** (Spide Projects only): `get_project`, `get_sync`, `get_code`, and the `link_code` / `unlink_code` operations.
+
+## Design diagnostics
+
+Health is a weighted geometric mean of five principle scores. Each score is computed from the severity and confidence of its issues, relative to the size of the design:
+
+| Principle | Weight |
+|---|---|
+| Coupling | 0.25 |
+| Cohesion | 0.20 |
+| Responsibilities | 0.30 |
+| Architecture rules | 0.15 |
+| UML hygiene | 0.10 |
+
+- **Purpose vs behaviour.** Each class is assigned a role from, in order of precedence: an explicit `role`, the agent's assessment, its name, its stereotype or its layer. Possible roles are presentation, controller, service, domain, persistence, adapter, output, creator, utility and value. Each method is assigned a concern and an RDD kind (knowing, doing, deciding). Mismatches are flagged: UI classes doing domain work, entities persisting or formatting themselves, fat controllers, vague names (`*Manager`, `*Util`) and classes mixing concerns.
+- **Duplication and responsibility placement.** Method pairs get an explainable similarity score. Delegation, polymorphic overrides and UI event handlers are not counted as duplication. Spide also detects shotgun surgery and middle men. `suggest_home` ranks better homes for misplaced behaviour, using Information Expert and, where no expert fits, a new Pure Fabrication. It checks caller dependencies and simulates the effect on health.
+- **Rule checks.** Law of Demeter, Feature Envy, data classes, UI driving the domain without a controller, Creator, type-code switches (replace with polymorphism), long methods and long parameter lists. UML checks cover argument types, repeated inherited attributes, incomplete Composites and single-element Visitors.
+- **Agent judgement.** The agent records a per-class assessment (`assess_class`). Agreement raises an issue's confidence. On serious issues, disagreement is surfaced for you to resolve. Assessments go stale when the class changes.
+- **Long methods.** Java methods with more than 30 non-blank, non-comment body lines are flagged. The threshold is configurable as `rules.thresholds.max_method_lines`. Methods in a pure design have unknown length and are not penalised.
+
+## Views
+
+| View | Description |
+|---|---|
+| **System** (C4) | *Context*: actors, the system and external systems. *Containers*: deployable units, their packages, datastores and links. Container dependencies are derived from class dependencies. Spide flags single points of failure, synchronous cross-container call chains and inconsistencies between views. |
+| **Class** | The main design canvas. |
+| **Domain** | A conceptual domain model generated by the agent (`set_domain_model`): concepts, attributes, associations with multiplicities, and generalisations. It is marked stale when the class model changes. |
+| **Package** | A computed UML package diagram with layers and dependencies. |
+| **Use case** | Generated by the agent from the class model. |
+| **Sequence** | UML sequence diagrams for a scenario: objects, multi-objects and actors; `loop`, `alt`, `opt`, `par`, `break`, `critical` and `ref` fragments; creation and destruction; activation bars and implied replies. Every call is checked against the receiver's class. |
 
 ## Exports
 
-- **PNG, SVG and PDF** use the same retained scene and layout as the native canvas, including classes you dragged. Exports wait for the layout to settle. Hiding diagnostics hides their marks but keeps box sizes, so an export never rearranges the canvas. Export settings include theme, scale, legend, diagnostics and ghost visibility, and persist per project. PNG uses `resvg` (default 2×) and records its resolution (72 dpi × scale, so 2× is 144 dpi): Preview, Pages, Word and other viewers show it at its 1× size with every pixel sharp on Retina, instead of enlarging a "72-dpi" image and blurring it. PDF uses `svg2pdf`. The export dialog's preview renders at the screen's pixel density. Animations are frozen. **File → Export Again** repeats the previous format/path. Detail 0 (packages) exports the package overview.
-- **Obsidian Canvas** (`.canvas`, [JSON Canvas 1.0](https://jsoncanvas.org)) for every diagram, in the same layout as the PNG (scaled up so the cards fit Obsidian's 16 px text). Classes, concepts, packages (package diagram and detail 0), C4 elements, actors and use cases become Markdown cards with the text the diagram shows at its detail level: stereotype, **name**, compartments separated by `---`, members as `code`. Package frames become groups; the use case system boundary is a group too. Classes and packages keep their layer colours, C4 elements their kind colours. Edges run between the sides the routes use. A canvas edge is a plain arrow, so UML notation is spelled out in its label: `extends`, `implements`, `is a` (domain), `◆ composed of`, `◇ aggregates`, `depends on`, `«include»`, `«extend»`, `«async»`, the relation name and `1 → 0..*` multiplicities; directed relations get an arrowhead. Sequence diagrams: each lifeline is a group with a header card, each message an edge between small numbered anchor cards on the two lifelines (replies `↩`, a «create» ends on the new object's header, self-calls loop), fragments are groups labelled e.g. `alt [ok] / [else]`. Options: title, date, package frames and ghost proposals; diagnostics, legend and health are never included.
-- **All diagrams (batch).** In Export (⌘E), switch to **All diagrams**. Out-of-date agent-built diagrams (domain model, use cases, sequences) are regenerated first: the batch asks the agent and waits, then writes; if the agent can't (pi offline, or it didn't update them) you choose **Export anyway** or **Stop**. Choose:
-  - the diagrams: by default every non-empty one, including both C4 levels and every sequence scenario;
-  - the detail levels: these apply to Class and Domain, while other views export once;
-  - PNG, SVG, PDF and/or Obsidian Canvas;
-  - settings profiles: by default the current settings; or add several, e.g. light 2× and dark with diagnostics.
+| Format | Notes |
+|---|---|
+| **PNG / SVG / PDF** | Rendered from the same scene and layout as the canvas. You can set the theme, scale, legend, diagnostics and ghost visibility, and these settings are saved per project. PNGs record their DPI (72 × scale), so they display at the intended size and stay sharp on Retina screens. |
+| **Obsidian Canvas** | [JSON Canvas 1.0](https://jsoncanvas.org) for every diagram, in the same layout. Elements become Markdown cards, package frames become groups, and UML notation is spelled out in edge labels. |
+| **PlantUML** | Exported per view, or all views at once with `/export all`. The System view exports C4-PlantUML. PlantUML uses its own layout; PNG is the pixel-exact export. |
+| **JSON** | `/save` and `/open`. The project's `design.json` is always current. |
+| **ADR** | `/export adr`: one Markdown (MADR) record per decision. |
+| **ArchUnit** | `/export archunit`: a JUnit 5 `ArchitectureTest.java` enforcing layering, custom rules, module boundaries and the absence of package cycles. Requires the test dependency `com.tngtech.archunit:archunit-junit5`. |
 
-  You get one file for each diagram × applicable detail × profile × format. The canvas's own detail level reuses the live canvas. Other levels use an off-screen canvas with the same layout pipeline, so the tab, slider and canvas stay untouched. Files go into a new `<design>-diagrams-<date>-<time>` folder inside the folder you pick. Names are like `class-3-design.png` or `sequence-borrow-a-book-dark.pdf`, with suffixes for duplicate names. Files are written atomically, one per frame, with progress and **Stop**. Finished files are kept. Empty diagrams are skipped and reported. A design change during the batch stops it, so everything comes from one revision. Optionally, it writes one PlantUML file per view; these use PlantUML's own layout and the full model, without detail levels or themes.
-- **PlantUML** is exported per tab, or for every non-empty diagram at once with `/export all`. The System tab exports C4-PlantUML (context and container diagrams). The export keeps every member with its visibility and type, plus stereotypes, multiplicities, layer-coloured packages, cycles and layer violations in colour, a health legend, and `down`/`right` direction hints taken from the canvas. PlantUML uses its own layout engine, so the PNG is the pixel-exact export.
-- **JSON** via `/save` and `/open`. The project's `design.json` is always up to date.
-- **ADRs** via `/export adr` (Markdown, MADR style, one per accepted or overruled decision).
-- **ArchUnit** via `/export archunit`: a JUnit 5 `ArchitectureTest.java` with the layering of the preset, custom forbidden dependencies and types, module boundaries and a no-package-cycles rule. It needs `com.tngtech.archunit:archunit-junit5` as a test dependency.
+**Batch export.** In Export (⌘E), choose **All diagrams**. Then pick the diagrams, the detail levels, the formats and one or more settings profiles. Stale agent-generated diagrams are regenerated first. Spide writes one file per diagram × detail level × profile × format. Files go into a new timestamped folder, are written atomically, and come with progress reporting and cancellation. If the design changes during the export, the batch stops, so every file comes from the same revision.
 
 ## Architecture
 
 ```
-crates/spide-core     pure Rust: model, ops, store (proposals, decisions, undo), metrics (health per principle),
-                      responsibility (roles, concerns), overlap (duplication, delegation), home (suggested homes),
-                      course (Demeter, Creator, …), assess (agent judgement), rules, impact, scenarios,
-                      project (manifest), sync (design ↔ code shapes, three-way status, briefs), derived views (incl. C4), diff, agent tool API,
-                      exporters (PlantUML, C4, PNG with dpi, ADR, ArchUnit)
-crates/spide-import   Java source index (tree-sitter) into a read-only design with body facts, for Spide Project sync
-crates/spide-diagram  GUI-independent scenes, orthogonal routing, compound Sugiyama layout, physics,
-                      diagnostics/focus, all diagram views, themes, shared-scene SVG and Obsidian Canvas export
-app                   eframe/egui desktop app: canvas, native panels, alacritty_terminal widget,
-                      commands, MCP server (axum), real pi PTY + private control socket,
-                      design.json watcher, history, branches, structured prompts for the agent
-agent/               appended skill, Spide Project skills (spide-readjust, spide-implement) and bundled native pi integration extension
+crates/spide-core     Model, operations, store (proposals, decisions, undo), metrics and health,
+                      responsibility and overlap analysis, rules, impact, scenarios, project
+                      manifest and design ↔ code sync, derived views (incl. C4), diff, agent tool API,
+                      exporters (PlantUML, C4, PNG, ADR, ArchUnit)
+crates/spide-import   Java source indexing with tree-sitter for Spide Project sync
+crates/spide-diagram  GUI-independent scenes, compound Sugiyama layout, orthogonal routing, physics,
+                      all diagram views, themes, SVG and Obsidian Canvas export
+app                   eframe/egui desktop app: canvas, panels, terminal (alacritty_terminal),
+                      MCP server (axum), pi PTY and private control socket, file watcher,
+                      history and branches
+agent                 Agent skill, Spide Project skills and the bundled pi integration extension
 ```
 
-- The Rust store is the single source of truth. The UI only sends intents (prompt, prune, approve, request revision, undo) and renders the snapshots it receives.
-- Agents change the design **only** through MCP tools: `get_design`, `get_metrics`, `get_view`, `propose_decision`, `propose_ops`, `set_domain_model`, `set_use_cases`, `set_sequence`, `set_change_impact`. Analysis tools: `get_responsibilities`, `get_overlap`, `suggest_home` and `assess_class` (record the agent's judgement); in a Spide Project also `get_project`, `get_sync` and `get_code`. Every change becomes a user-approved decision (`propose_ops` is the single-option compatibility path), and invalid ops are rejected atomically. Deprecated `evaluate_defense` cannot mutate anything. Forces, change scenarios, containers, external systems and links are ops too, so they go through the same proposals, undo and file watcher. Architecture rules are the user's: only the user changes them.
-- Every committed element records its origin (decision, proposal, `user` or `import`); accepted decisions keep the consequences they had.
-- Other agents can join the session. A pi you start in a terminal in the project folder picks up `.pi/mcp.json`, and any agent can also edit `design.json` directly. Spide turns such edits into ghost proposals instead of applying them silently.
-- The MCP server is a small streamable-HTTP JSON-RPC implementation (initialize, tools/list, tools/call) on `127.0.0.1` only. Every route requires a loopback `Host` header and, when a browser sends one, a local `Origin`, which blocks cross-site requests and DNS rebinding. It replaces the `rmcp` crate that was originally planned, to avoid tracking that crate's fast-changing API.
-- Environment variables: `SPIDE_PROJECT` (project folder), `SPIDE_PI` (path to the pi binary), native pi configuration and `/model` select the model. Legacy `SPIDE_PI_ARGS` is no longer used (it could override interactive transport/tool flags).
+- **Single source of truth.** The Rust store owns all state. The UI sends intents (prompt, prune, approve, request revision, undo) and renders the snapshots it receives.
+- **Agent access through MCP only.** Agents change the design through MCP tools, and every change becomes a user-approved decision. Invalid operations are rejected atomically. Forces, scenarios, containers and external systems are operations too, so they share the same review, undo and watcher pipeline. Architecture rules can only be changed by the user.
+  - Core tools: `get_design`, `get_metrics`, `get_view`, `propose_decision`, `propose_ops`, `set_domain_model`, `set_use_cases`, `set_sequence`, `set_change_impact`.
+  - Analysis tools: `get_responsibilities`, `get_overlap`, `suggest_home`, `assess_class`.
+- **Provenance.** Every committed element records its origin: decision, proposal, `user` or `import`.
+- **Collaboration.** Other agents can join. A pi session started in the project folder picks up `.pi/mcp.json`. Any agent may also edit `design.json` directly; Spide turns such edits into ghost proposals instead of applying them silently.
+- **Local-only MCP server.** A minimal streamable-HTTP JSON-RPC implementation (`initialize`, `tools/list`, `tools/call`) bound to `127.0.0.1`. Every route requires a loopback `Host` header and, when present, a local `Origin`, which blocks cross-site requests and DNS rebinding.
 
 ## Development
 
-The native migration is documented in [`plans/native-rust-gui.md`](plans/native-rust-gui.md); test results and remaining manual checks are in [`plans/native-rust-verification.md`](plans/native-rust-verification.md). Older verification notes in `plans/interactive-design-verification.md` describe the pre-egui app. Java indexing and aggregate-write warnings remain heuristic, and branch merging is not a three-way merge.
-
 ```sh
-cargo test --workspace                      # core, import, diagrams, headless egui UI, fake PTY, real file exports
-node --test tests/pi-extension.test.ts       # or npm test; no npm install needed
-python3 scripts/terminal_smoke.py            # real pi PTY: Ctrl+P, /reload; no model requests
-cargo test -p spide macos_view_snapshots -- --ignored   # macOS visual comparison (system fonts)
-UPDATE_SNAPSHOTS=1 cargo test -p spide macos_view_snapshots -- --ignored  # deliberately update baselines
-UPDATE_GOLDEN=1 cargo test -p spide-core      # accept changed exporter golden output
+cargo test --workspace                                      # core, import, diagrams, headless UI, fake PTY, file exports
+npm test                                                    # pi extension test (node --test; no npm install needed)
+python3 scripts/terminal_smoke.py                           # real pi PTY smoke test; makes no model requests
+cargo test -p spide macos_view_snapshots -- --ignored       # macOS visual snapshot comparison
+UPDATE_SNAPSHOTS=1 cargo test -p spide macos_view_snapshots -- --ignored   # update visual baselines
+UPDATE_GOLDEN=1 cargo test -p spide-core                    # accept changed exporter golden output
 SPIDE_SMOKE_DIR=/abs/path/to/java/project cargo test -p spide-import smoke -- --nocapture
 ```
 
-Headless UI tests render both examples in all tabs and cover canvas interaction, layout persistence, narrow drawers, panels, export and a fake PTY stream. Diagnostic PNGs are written to `target/ui-shots/`; reviewed macOS baselines live in `app/tests/snapshots/`. Visual comparisons are explicit because system fonts/rasterization differ by OS. Browser dev mode, the browser perf overlay, Playwright and the `/dev/*` routes are removed.
+- **Fixtures.** Test designs live in `tests/fixtures/`.
+- **Headless UI tests** render every view and cover canvas interaction, layout persistence, panels, export and a fake PTY stream.
+- **Snapshots.** Diagnostic screenshots are written to `target/ui-shots/`, and reviewed macOS baselines live in `app/tests/snapshots/`. Visual comparisons are opt-in because font rasterisation differs between operating systems.
+- **Manual checks.** Before a release, use a disposable project to walk through the workflows above and compare all views against reference images. Also check terminal input, resizing and restart, and measure idle CPU and large-diagram pan/zoom in a release build. Headless tests cannot establish native frame rates or interactive permission-dialog behaviour.
 
-For manual verification, use a disposable project, walk through the workflows above, compare all six tabs against reference images, and check terminal input, resize and restart. Check idle CPU and large-diagram pan/zoom in a native release build; automated headless tests do not establish native frame-rate or interactive permission-dialog behavior.
+## Known limitations
 
-`examples/library.json` is a small design with deliberate problems (a cycle, layer violations, an orphan). Copy it to a project's `design.json` while Spide is running to see it arrive as ghost proposals.
+- Windows is not supported.
+- macOS bundles are signed locally only; Developer ID signing and notarization are not provided.
+- Java indexing and aggregate-write warnings are heuristic.
+- Branch merging is not a three-way merge.
