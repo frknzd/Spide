@@ -89,7 +89,7 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
                 let sym = |c: &Class| c.source.as_ref().map(|s| s.symbol.clone()).filter(|s| !s.is_empty());
                 if sym(o) != sym(c) {
                     members.push(match sym(c) {
-                        Some(symbol) => Op::LinkCode { class: c.name.clone(), method: None, symbol },
+                        Some(symbol) => Op::LinkCode { class: c.name.clone(), method: None, symbol, language: None },
                         None => Op::UnlinkCode { class: c.name.clone(), method: None },
                     });
                 }

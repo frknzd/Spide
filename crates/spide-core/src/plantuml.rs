@@ -321,7 +321,12 @@ pub fn class_diagram(d: &Design, m: &Metrics, layout: &Layout) -> String {
     for c in classes.iter().filter(|c| c.status == Status::Overruled) {
         let _ = writeln!(out, "note bottom of {} : ⚠ applied by overruling the examiner", id(&c.name));
     }
-    let _ = writeln!(out, "\nlegend right\n  <b>health {}/100</b>", m.health);
+    let r = &m.health_report;
+    let label = match r.score {
+        Some(h) => format!("health {h}/100{}", if r.provisional { format!(" (provisional, {}% coverage)", r.coverage) } else { String::new() }),
+        None => "health unassessed".into(),
+    };
+    let _ = writeln!(out, "\nlegend right\n  <b>{label}</b> · {}", r.version);
     for i in m.issues.iter().take(5) {
         let _ = writeln!(out, "  {}", esc(&i.message));
     }
@@ -362,7 +367,7 @@ pub fn package_diagram(d: &Design, m: &Metrics) -> String {
         let _ = writeln!(out, "package {}{st}{color} {{", id(&p.name));
         for c in &p.classes {
             if let Some(cl) = d.live_class(c) {
-                let kw = if cl.stereotype.as_deref() == Some("interface") { "interface" } else if cl.is_abstract { "abstract class" } else { "class" };
+                let kw = if cl.is_interface() { "interface" } else if cl.is_abstract { "abstract class" } else { "class" };
                 let _ = writeln!(out, "  {kw} {}", id(c));
             }
         }

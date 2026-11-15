@@ -137,3 +137,12 @@ its confidence and its basis (structure, heuristic, agent, code).
 - **Provenance**: every element remembers the decision or proposal that introduced it; `decided` in `get_design` lists the
   choices made so far — stay consistent with them or raise a decision to revisit one.
 
+
+## Code in any language, health and the editor
+
+- **Languages.** Rust, TypeScript, Python, Java, C, C++ and Clojure are indexed into one graph. Model non-OO code honestly: a module/namespace of functions is a class with stereotype `module` (Clojure `namespace`), traits/protocols are `trait`/`protocol`, structs `struct`. Link with `link_code` (any language: `{"symbol":"shop.pricing","language":"rust"}`).
+- **Code tools.** `get_symbols`, `find_symbol` (design element → file:line), `element_at` (file:line → element), `get_source` (numbered lines + content hash). Edit code by staging `propose_patch` (line edits against the hash); the user applies it (Spide or Neovim). In autonomous projects you may `apply_patch` — never against a stale hash; a conflict means re-read. Unsaved Neovim buffers are the user's: conflicts there are expected, not errors to work around.
+- **Health v2** (`get_health`): extensibility, modularity, simplicity, implementation_quality, each measured with coverage; unknown dimensions make it provisional. When asked (or when `get_assessment_requests` lists missing/stale dimensions), read the code and `assess_health` per the rubric: a score, a specific rationale, the classes/modules you cite, goals from the brief, counterevidence. Your judgement weighs 40% and goes stale when what you cited changes — so cite precisely. Don't inflate scores to make findings disappear: if a rule doesn't apply here, `propose_exception` with the reason and evidence; only the user approves.
+- **Evidence.** `doctor` shows which language servers/linters exist; `analyze` runs them (autonomous + trusted only). Missing tools mean unknown, not clean.
+- **Permissions and trace.** `get_policy` tells you what you may do (read_only, propose_only, autonomous). Apply tools need `expected_rev` (from `workspace_info`) and accept an `idempotency_key`. Give every change a one-line `intent`: it is the first thing the user reads in the trace (`get_trace`).
+- **Neovim.** `open_source` shows code to the user in their editor; `reveal` selects an element on the diagram. Change requests from Neovim (`:SpideAsk`) arrive with the file and line.

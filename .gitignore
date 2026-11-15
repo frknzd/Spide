@@ -13,3 +13,7 @@ app/tests/snapshots/**/*.old.png
 /PLAN.md
 /plans/
 /examples/
+# Language-tool caches written by real-tool tests
+.clj-kondo/.cache/
+.cpcache/
+.lsp/.cache/

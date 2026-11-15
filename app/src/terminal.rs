@@ -109,6 +109,10 @@ impl Terminal {
         let bytes: Vec<u8> = s.bytes.iter().skip((start - s.start) as usize).take(BATCH).copied().collect();
         Ok(Frame { generation: self.generation, start, next: start + bytes.len() as u64, reset: after < s.start, bytes, exited: s.exited })
     }
+    pub fn exited(&self) -> bool {
+        let s = self.stream.state.lock().unwrap();
+        s.exited || s.stopped
+    }
     pub fn stop(&self) {
         {
             let mut s = self.stream.state.lock().unwrap();

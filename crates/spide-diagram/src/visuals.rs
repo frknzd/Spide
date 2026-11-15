@@ -348,7 +348,7 @@ impl<'a> From<&'a Class> for BoxInput<'a> {
 pub fn class_box(m: &dyn Measure, c: &BoxInput, methods: bool, level: u8, ctx: &BoxContext, purpose: Option<&str>) -> ClassBox {
     let level = level.clamp(1, 4);
     let stereo = stereotype_text(c.stereotype);
-    let name_font = if c.is_abstract || c.stereotype == Some("interface") { f::NAME_ITALIC } else { f::NAME };
+    let name_font = if c.is_abstract || matches!(c.stereotype, Some("interface" | "trait" | "protocol")) { f::NAME_ITALIC } else { f::NAME };
     let mut w = m.width(c.name, name_font) + 2.0 * PAD_X + 8.0;
     if let Some(s) = &stereo {
         w = w.max(m.width(s, f::STEREO) + 2.0 * PAD_X);

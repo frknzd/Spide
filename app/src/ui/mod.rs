@@ -16,6 +16,7 @@ pub mod state;
 pub mod terminal;
 pub mod theme;
 pub mod timeline;
+pub mod trace;
 pub mod viewport;
 pub mod views;
 pub mod widgets;

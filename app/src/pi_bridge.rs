@@ -89,6 +89,7 @@ impl PiBridge {
         cmd.env("SPIDE_CONTROL_SOCKET", &control.path);
         cmd.env("SPIDE_CONTROL_TOKEN", &control.token);
         cmd.env("SPIDE_CONTROL_GENERATION", generation.to_string());
+        cmd.env("SPIDE_MCP_TOKEN", &st.token);
         cmd.args(["--session-dir", &sessions.display().to_string(), "--continue", "--append-system-prompt", include_str!("../../agent/spide-skill.md"), "--tools", "*", "-e", &ext.display().to_string()]);
         // Spide Project: the readjust/implement skills (app-owned, refreshed at every launch)
         if st.lock().project.is_some() {
@@ -128,7 +129,9 @@ fn write_mcp_config(project: &Path, port: u16) -> std::io::Result<()> {
     let path = project.join(".pi/mcp.json");
     std::fs::create_dir_all(path.parent().unwrap())?;
     let mut cfg: serde_json::Value = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(json!({}));
-    cfg["mcpServers"]["spide"] = json!({"url":format!("http://127.0.0.1:{port}/mcp"),"transport":"streamable-http","lifecycle":"keep-alive","directTools":true});
+    cfg["mcpServers"]["spide"] = json!({"url":format!("http://127.0.0.1:{port}/mcp"),"transport":"streamable-http","lifecycle":"keep-alive","directTools":true,
+        // the token is only in pi's environment, never in this (project) file
+        "headers":{"Authorization":"Bearer ${SPIDE_MCP_TOKEN}"}});
     std::fs::write(path, serde_json::to_vec_pretty(&cfg)?)
 }
 fn pi_binary() -> PathBuf {

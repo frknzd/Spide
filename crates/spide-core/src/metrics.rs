@@ -188,10 +188,14 @@ pub struct Metrics {
     pub overlap: crate::overlap::Report,
     /// Sub-score (0–100) per principle: coupling, cohesion, responsibility, architecture, uml.
     pub principles: BTreeMap<String, PrincipleScore>,
-    /// 0..100
+    /// 0..100: the health score (`health_report.score`; the legacy formula while unassessed).
     pub health: u8,
     /// 0..1 — drives the canvas jitter.
     pub tension: f64,
+    /// Health v2: dimensions, coverage, signals, agent contribution (see `health`).
+    pub health_report: crate::health::HealthReport,
+    /// The previous single-formula score, labelled during the migration.
+    pub legacy_health: u8,
 }
 
 
@@ -213,6 +217,22 @@ fn type_refs<'a>(ty: &'a str, names: &'a BTreeSet<&str>) -> impl Iterator<Item =
 
 /// Compute metrics. `ghosts` = also count proposed elements (for previews).
 pub fn compute(d: &Design, ghosts: bool) -> Metrics {
+    compute_with(d, ghosts, crate::health::Context { now: crate::store::now_ms(), ..Default::default() })
+}
+
+/// `compute` with evidence (LSP/linter findings) and workspace languages for health.
+pub fn compute_with(d: &Design, ghosts: bool, ctx: crate::health::Context) -> Metrics {
+    let mut m = compute_legacy(d, ghosts);
+    m.legacy_health = m.health;
+    m.health_report = crate::health::report(d, &m, ctx);
+    if let Some(s) = m.health_report.score {
+        m.health = s;
+        m.tension = ((100.0 - s as f64) / 100.0).clamp(0.0, 1.0);
+    }
+    m
+}
+
+fn compute_legacy(d: &Design, ghosts: bool) -> Metrics {
     let th = d.rules.thresholds;
     let (god_members, god_responsibilities, high_fan_out) = (th.god_members, th.god_responsibilities, th.high_fan_out.max(1));
     let preset = d.rules.preset;

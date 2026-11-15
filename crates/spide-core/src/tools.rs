@@ -42,8 +42,10 @@ C4 levels (above classes):
 - {"op":"assign_container","package":"domain","container":"API"}   (which container a package runs in; null unassigns)
 - {"op":"add_link","from":"API","to":"PaymentProvider","interaction?":"sync|async|event","protocol?":"HTTPS/JSON"}  (container/system/actor ends)
 - {"op":"remove_link","from":"…","to":"…"}
-Spide Project (design and code together): trace links to Java symbols (exact, never guessed from simple names):
+Spide Project (design and code together): trace links to code symbols (exact, never guessed from simple names; any language):
 - {"op":"link_code","class":"Order","symbol":"org.shop.domain.Order"}   - {"op":"link_code","class":"Order","method":"total","symbol":"org.shop.domain.Order#total(int)"}
+- {"op":"link_code","class":"pricing","symbol":"shop.pricing","language":"rust"}  (a «module»/«namespace» node: free functions are its methods)
+Non-OO code: model a module/namespace of functions as a class with stereotype "module" (Clojure: "namespace"); traits/protocols as stereotype "trait"/"protocol"; structs "struct". Don't invent classes for procedural/functional code.
 - {"op":"unlink_code","class":"Order","method?":"total"}
 Container→container dependencies are DERIVED from class dependencies; only add links for external systems, actors or protocols.
 ATTR   = {"name":"total","type":"Money","visibility?":"public|private|protected|package","is_static?":false,"multiplicity?":"0..1"}
@@ -288,7 +290,9 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
                 "packages": m.packages,
                 "package_dependencies": m.package_deps,
                 "principles": m.principles,
-                "health_explained": "health = weighted geometric mean of the principle scores (coupling .25, cohesion .2, responsibility .3, architecture .15, uml .1); each issue carries principle, course source, confidence (0..1) and basis (structure|heuristic|agent|code)",
+                "health_report": m.health_report,
+                "legacy_health": m.legacy_health,
+                "health_explained": "health (health-2) = geometric mean of extensibility, modularity, simplicity and implementation_quality, each from evidence with explicit coverage; unknown dimensions make it provisional; the agent's current dimension assessments contribute 40% (assess_health). Issues keep their course principle, source, confidence and basis.",
             }))
             .unwrap(), false)
         }

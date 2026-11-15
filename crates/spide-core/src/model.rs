@@ -107,11 +107,37 @@ pub struct Method {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct SourceSymbol {
-    /// Fully qualified Java type or type#method(parameter types).
+    /// Qualified symbol: dotted container path + name (`org.shop.Order`, `crate.orders.Order`,
+    /// `shop.orders`), methods as `type#name(parameter types)`. Java links are fully qualified names.
     pub symbol: String,
+    /// Workspace-relative file.
     pub file: String,
     pub start_line: u32,
     pub end_line: u32,
+    /// rust | typescript | python | java | c | cpp | clojure (absent in schema-1 designs: java).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    /// module | namespace | class | struct | enum | trait | interface | protocol | record | union |
+    /// function | method | field | macro
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Stable persisted id (`symbols::stable_id`): positions are locations, never identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// 0-based UTF-8 byte column of the declaration's start (navigation).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub start_col: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+impl SourceSymbol {
+    /// Language of the symbol (schema-1 links are Java).
+    pub fn lang(&self) -> &str {
+        self.language.as_deref().unwrap_or("java")
+    }
 }
 
 /// Facts about a method body, from the imported source (never part of an intended design).
@@ -145,6 +171,15 @@ pub struct CodeFacts {
     pub fingerprint: Vec<u64>,
     /// Hash of the body text (assessment staleness).
     pub hash: String,
+    /// Decision points (if/loop/case/catch/&&/||/ternary): cyclomatic complexity = branches + 1.
+    pub branches: u32,
+    /// Deepest nesting of blocks inside the body.
+    pub max_nesting: u32,
+    /// Parameters the function takes (incl. receiver-less functions).
+    pub params: u32,
+    /// Constructs a profile treats specially (`unsafe`, `unwrap`, `goto`, `any`, `eval`, `atom`, …): name → count.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub idioms: std::collections::BTreeMap<String, u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -176,8 +211,13 @@ pub struct Class {
 }
 
 impl Class {
+    /// A contract: interface, Rust trait or Clojure/Python protocol.
     pub fn is_interface(&self) -> bool {
-        self.stereotype.as_deref() == Some("interface")
+        matches!(self.stereotype.as_deref(), Some("interface" | "trait" | "protocol"))
+    }
+    /// A module/namespace node (free functions), not an object type.
+    pub fn is_module(&self) -> bool {
+        matches!(self.stereotype.as_deref(), Some("module" | "namespace"))
     }
     pub fn is_enum(&self) -> bool {
         self.stereotype.as_deref() == Some("enum")
@@ -931,6 +971,16 @@ pub struct Design {
     pub counter: u64,
     /// The agent's judgement per class (purpose, role, per-method verdicts), layered on Spide's signals.
     pub assessments: BTreeMap<String, crate::assess::Assessment>,
+    /// The agent's judgement per health dimension (extensibility, modularity, simplicity,
+    /// implementation_quality): evidence-linked, stale when what it cites changes.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub health_assessments: BTreeMap<String, crate::health::DimensionAssessment>,
+    /// Contextual exceptions to health rules: proposed by agents, approved only by the owner.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub health_exceptions: Vec<crate::health::HealthException>,
+    /// Owner's quality priorities (dimension → weight); empty: equal weights.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub health_priorities: BTreeMap<String, f64>,
 }
 
 impl Default for Design {
@@ -961,6 +1011,9 @@ impl Default for Design {
             rules: crate::rules::Rules::default(),
             counter: 0,
             assessments: BTreeMap::new(),
+            health_assessments: BTreeMap::new(),
+            health_exceptions: vec![],
+            health_priorities: BTreeMap::new(),
         }
     }
 }

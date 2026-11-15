@@ -1,13 +1,14 @@
 mod backend;
-mod branches;
+use spide_service::{branches, history};
 mod commands;
 mod events;
-mod history;
 mod mcp;
 mod menu;
 mod pi_bridge;
 mod pi_control;
 mod project;
+mod service;
+mod editor;
 mod prompts;
 mod state;
 mod terminal;
@@ -39,6 +40,10 @@ fn main() -> eframe::Result {
         Ok(port) => st.lock().mcp_port = port,
         Err(e) => eprintln!("spide: MCP server: {e}"),
     }
+    service::install(&st);
+    if let Err(e) = editor::install_plugin() {
+        eprintln!("spide: neovim plugin: {e}");
+    }
     let design = st.lock().design_path();
     watcher::watch(&st, &design);
     project::watch(&st);
@@ -52,6 +57,7 @@ fn main() -> eframe::Result {
             }
         });
     }
+    let backend_state = st.clone();
     let backend = Backend::new(st, pi.clone(), Some(rt.handle().clone()));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -75,6 +81,8 @@ fn main() -> eframe::Result {
         }),
     );
     pi.shutdown();
+    editor::embedded().stop();
+    service::retract(&backend_state);
     drop(rt);
     result
 }

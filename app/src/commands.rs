@@ -330,7 +330,9 @@ fn switch_project(st: &AppState, pi: &PiBridge, dir: PathBuf, design: Option<Des
     // Stop old control requests and reap the old process before replacing project state.
     pi.shutdown();
     {
+        let new_lock = crate::state::acquire_lock(&dir);
         let mut s = st.lock();
+        s.lock = new_lock;
         s.project_dir = dir.clone();
         s.last_written = None;
         s.last_history = None;
@@ -348,6 +350,8 @@ fn switch_project(st: &AppState, pi: &PiBridge, dir: PathBuf, design: Option<Des
         };
         s.store.load(d);
     }
+    crate::service::retract(st);
+    crate::service::install(st);
     let design_path = st.lock().design_path();
     crate::watcher::watch(st, &design_path);
     crate::project::watch(st);
@@ -399,12 +403,12 @@ pub fn export_archunit(st: &AppState, path: String) -> R {
     std::fs::write(path, java).map_err(|e| e.to_string())
 }
 
-/// Java root package of the real code (`org.acme.library`).
+/// Root module path of the real code (`org.acme.library`, `shop`, `my_crate`).
 pub fn set_code_root(st: &AppState, root: Option<String>) -> R {
     if let Some(r) = root.as_deref().filter(|r| !r.trim().is_empty()) {
         let ok = r.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
         if !ok {
-            return Err(format!("not a Java package name: {r}"));
+            return Err(format!("not a dotted module path: {r}"));
         }
     }
     let manifest = st.lock().project.as_ref().map(|p| p.manifest.clone());

@@ -1,5 +1,5 @@
 //! Minimal MCP server (streamable HTTP, JSON responses) on 127.0.0.1.
-//! Implements initialize, ping, tools/list and tools/call.
+//! Every request needs `Authorization: Bearer <token>`; dispatch is `spide_service::mcp`.
 
 use crate::state::AppState;
 use axum::{
@@ -10,11 +10,9 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use serde_json::{json, Value};
-use spide_core::tools;
+use serde_json::Value;
 
 pub const PREFERRED_PORT: u16 = 47800;
-const PROTOCOL: &str = "2025-06-18";
 
 /// Bind and serve; returns the port.
 pub async fn serve(st: AppState) -> std::io::Result<u16> {
@@ -73,92 +71,23 @@ async fn local_only(req: Request, next: Next) -> Response {
 }
 
 async fn handle(State(st): State<AppState>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
-    let session = headers.get("mcp-session-id").cloned();
-    let responses: Vec<Value> = match &body {
-        Value::Array(batch) => batch.iter().filter_map(|m| dispatch(&st, m)).collect(),
-        m => dispatch(&st, m).into_iter().collect(),
-    };
-    if responses.is_empty() {
-        return StatusCode::ACCEPTED.into_response();
+    let auth = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
+    if !spide_service::discovery::bearer_ok(&st.token, auth) {
+        return (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, "Bearer")], "missing or invalid bearer token").into_response();
     }
-    let out = if body.is_array() { Value::Array(responses) } else { responses.into_iter().next().unwrap() };
+    let session = headers.get("mcp-session-id").cloned();
+    let Some(svc) = crate::service::get(&st) else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    // the service blocks (store lock, file IO): keep it off the async workers
+    let out = tokio::task::spawn_blocking(move || spide_service::mcp::handle(&svc, &body)).await.ok().flatten();
+    let Some(out) = out else {
+        return StatusCode::ACCEPTED.into_response();
+    };
     let mut resp = Json(out).into_response();
     let sid = session.unwrap_or_else(|| HeaderValue::from_static("spide"));
     resp.headers_mut().insert("mcp-session-id", sid);
     resp
-}
-
-fn dispatch(st: &AppState, msg: &Value) -> Option<Value> {
-    let id = msg.get("id").cloned();
-    let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
-    let id = id?; // notifications get no response
-    let result = match method {
-        "initialize" => {
-            let version = msg.pointer("/params/protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOL);
-            Ok(json!({
-                "protocolVersion": version,
-                "capabilities": {"tools": {"listChanged": false}},
-                "serverInfo": {"name": "spide", "version": env!("CARGO_PKG_VERSION")},
-                "instructions": tools::INSTRUCTIONS,
-            }))
-        }
-        "ping" => Ok(json!({})),
-        "tools/list" => {
-            let mut list = tools::tool_list();
-            if st.lock().project.is_some() {
-                list.as_array_mut().unwrap().extend(crate::project::tool_list());
-            }
-            Ok(json!({"tools":list}))
-        },
-        "tools/call" => {
-            let name = msg.pointer("/params/name").and_then(Value::as_str).unwrap_or("");
-            let args = msg.pointer("/params/arguments").cloned().unwrap_or(json!({}));
-            let outcome = if name == "get_metrics" {
-                Ok(tools::ToolOutcome { text: serde_json::to_string(&st.snapshot().metrics).unwrap(), changed: false })
-            } else if name == "get_project" {
-                let s = st.lock();
-                if s.project.is_none() {
-                    Err("This folder is not a Spide Project (design only).".to_string())
-                } else {
-                    Ok(tools::ToolOutcome { text: crate::project::summary(&s).to_string(), changed: false })
-                }
-            } else if name == "get_sync" {
-                crate::project::get_sync(&st.lock(), &args).map(|text| tools::ToolOutcome { text, changed: false })
-            } else if name == "get_code" {
-                crate::project::get_code(&st.lock(), &args).map(|text| tools::ToolOutcome { text, changed: false })
-            } else if name == "get_design" {
-                let mut s = st.lock();
-                tools::call(&mut s.store, name, &args).map(|mut outcome| {
-                    if s.project.is_some() {
-                        if let Ok(mut value) = serde_json::from_str::<Value>(&outcome.text) {
-                            value["project"] = crate::project::summary(&s);
-                            outcome.text = value.to_string();
-                        }
-                    }
-                    outcome
-                })
-            } else {
-                let mut s = st.lock();
-                tools::call(&mut s.store, name, &args)
-            };
-            match outcome {
-                Ok(o) => {
-                    if o.changed {
-                        st.changed();
-                    }
-                    Ok(json!({"content": [{"type": "text", "text": o.text}], "isError": false}))
-                }
-                Err(e) => Ok(json!({"content": [{"type": "text", "text": e}], "isError": true})),
-            }
-        }
-        "resources/list" => Ok(json!({"resources": []})),
-        "prompts/list" => Ok(json!({"prompts": []})),
-        _ => Err(json!({"code": -32601, "message": format!("method not found: {method}")})),
-    };
-    Some(match result {
-        Ok(r) => json!({"jsonrpc": "2.0", "id": id, "result": r}),
-        Err(e) => json!({"jsonrpc": "2.0", "id": id, "error": e}),
-    })
 }
 
 #[cfg(test)]

@@ -1,0 +1,16 @@
+[package]
+name = "spide-service"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+spide-core = { path = "../spide-core" }
+spide-import = { path = "../spide-import" }
+spide-lsp = { path = "../spide-lsp" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+rmpv = "1"
+
+[dev-dependencies]
+tempfile = "3"

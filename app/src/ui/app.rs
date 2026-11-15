@@ -88,6 +88,10 @@ pub struct SpideApp {
     drawer: bool,
     dragging_sep: Option<(bool, f32, f32)>,
     pub term: Option<TermSession>,
+    /// The embedded Neovim's terminal (created on first use) and whether the pane shows it.
+    pub nvim_term: Option<TermSession>,
+    pub trace_ui: super::trace::TraceUi,
+    pub editor_pane: bool,
     term_confirm: bool,
     restarting: bool,
     pane_palette: Option<Palette>,
@@ -272,7 +276,7 @@ impl SpideApp {
         super::theme::install_fonts(ctx);
         super::theme::install_style(ctx);
         let snap = Some(Arc::new(backend.st.snapshot()));
-        let term = terminal.then(|| TermSession::start(backend.pi.clone(), backend.events.clone()));
+        let term = terminal.then(|| TermSession::start(backend.pi.clone() as Arc<dyn terminal::PtySource>, backend.events.clone()));
         let drafts = match dirs::data_dir() {
             Some(d) if terminal => PlanDrafts::with_file(d.join("Spide").join("proposal-drafts.json")),
             _ => PlanDrafts::default(),
@@ -293,6 +297,9 @@ impl SpideApp {
             drawer: false,
             dragging_sep: None,
             term,
+            nvim_term: None,
+            trace_ui: Default::default(),
+            editor_pane: false,
             term_confirm: false,
             restarting: false,
             pane_palette: None,
@@ -478,6 +485,49 @@ impl SpideApp {
         self.set_preview(None, PreviewSource::Option);
     }
 
+    /// Select/focus `Class` or `Class.method` (Neovim's :SpideReveal).
+    fn reveal(&mut self, symbol: &str) {
+        let Some(snap) = self.snap.clone() else { return };
+        let (class, method) = match symbol.split_once('.') {
+            Some((c, m)) if snap.view.class(c).is_some() => (c.to_string(), Some(m.to_string())),
+            _ => (symbol.to_string(), None),
+        };
+        if snap.view.class(&class).is_none() {
+            self.toast("info", format!("{class} isn't in the design yet"));
+            return;
+        }
+        self.tab = Tab::Class;
+        self.focus_canvas(Some(&class));
+        match method.filter(|m| snap.view.class(&class).is_some_and(|c| c.methods.iter().any(|x| &x.name == m))) {
+            Some(m) => self.hover.pin(&format!("method:{class}.{m}")),
+            None => self.hover.clear(),
+        }
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    }
+
+    fn show_editor(&mut self) {
+        self.editor_pane = true;
+        self.workspace.left_open = true;
+        if self.nvim_term.is_none() {
+            self.nvim_term = Some(TermSession::start(crate::editor::embedded() as Arc<dyn terminal::PtySource>, self.backend.events.clone()));
+        }
+        if let Some(t) = self.nvim_term.as_mut() {
+            t.focus_requested = true;
+        }
+    }
+
+    /// ⌘-click: open a class/method in Neovim.
+    fn open_in_editor(&mut self, class: String, method: Option<String>) {
+        self.backend.call(move |st, _| crate::editor::open_element(st, &class, method.as_deref()), |app, r| match r {
+            Ok(v) => {
+                if v["kind"] == "embedded" {
+                    app.show_editor();
+                }
+            }
+            Err(e) => app.toast("error", e),
+        });
+    }
+
     fn focus_canvas(&mut self, name: Option<&str>) -> bool {
         let now = self.now();
         self.class_canvas.as_mut().is_some_and(|c| c.focus(name, now))
@@ -518,6 +568,25 @@ impl SpideApp {
                     self.command(&text);
                 }
                 UiEvent::TerminalOutput => ctx.request_repaint(),
+                UiEvent::Reveal { symbol } => self.reveal(&symbol),
+                UiEvent::ShowEditor => self.show_editor(),
+                UiEvent::Command(c) => self.command(&c),
+                UiEvent::AssessmentRequested { dimensions, reason } => {
+                    let msg = format!("Spide asks for your health assessment of: {} ({reason}). Call get_assessment_requests for the rubric and evidence, read the relevant design/code (get_design, get_symbols, get_source), then submit with assess_health. Be specific, cite classes/modules, include counterevidence.", dimensions.join(", "));
+                    let label = format!("⚖ assess {}", dimensions.join(", "));
+                    self.run(move |st, pi| if pi.ready() { pi.prompt(pi.ticket(), st, msg, Some(label)) } else { Err("pi isn't ready: the assessment request stays queued for any agent (get_assessment_requests)".into()) });
+                }
+                UiEvent::ChangeRequest { text, context } => {
+                    let place = match (context["file"].as_str(), context["line"].as_u64()) {
+                        (Some(f), Some(l)) => format!(" (at {f}:{l})"),
+                        (Some(f), None) => format!(" (in {f})"),
+                        _ => String::new(),
+                    };
+                    let msg = format!("Change request from Neovim{place}: {text}\nPropose the design change through Spide's tools; for code, read it with get_source and stage edits with propose_patch.");
+                    let label = format!("✎ {text}");
+                    self.run(move |st, pi| pi.prompt(pi.ticket(), st, msg, Some(label)));
+                    self.toast("info", "Change request sent to the agent");
+                }
             }
         }
     }
@@ -625,6 +694,13 @@ impl SpideApp {
 
     pub(super) fn on_click_target(&mut self, t: Target) {
         let Some(snap) = self.snap.clone() else { return };
+        if self.ctx.input(|i| i.modifiers.command) && !self.review_active {
+            match &t {
+                Target::Class { name } => return self.open_in_editor(name.clone(), None),
+                Target::Method { class, name } => return self.open_in_editor(class.clone(), Some(name.clone())),
+                _ => {}
+            }
+        }
         let view = &snap.view;
         if self.review_active {
             return self.review_pick(&t);
@@ -933,7 +1009,7 @@ impl SpideApp {
         if let (true, Some(l)) = (v.has_detail(), level) {
             title = format!("{title} · {}", spide_diagram::visuals::DETAIL_LABELS[l.min(4) as usize]);
         }
-        let meta = ExportMeta { title: snap.view.name.clone(), view: title, health: Some(snap.metrics.health), legend: self.legend_for(Self::export_tab(v)), date: super::format_date_today() };
+        let meta = ExportMeta { title: snap.view.name.clone(), view: title, health: snap.metrics.health_report.score, legend: self.legend_for(Self::export_tab(v)), date: super::format_date_today() };
         let scene = self.export_scene(v, level, o)?;
         build_export_svg(&scene, &self.measure, &meta, o)
     }
@@ -1197,6 +1273,25 @@ impl SpideApp {
         let view = &snap.view;
         let metrics = &snap.metrics;
         match cmd.as_str() {
+            "/trace" => self.trace_ui.open = !self.trace_ui.open,
+            "/nvim" => {
+                let root = std::path::PathBuf::from(&snap.project_dir);
+                match crate::editor::embedded().start(&root) {
+                    Ok(()) => self.show_editor(),
+                    Err(e) => self.toast("error", e),
+                }
+            }
+            "/goto" => {
+                let (class, method) = match arg.split_once('.') {
+                    Some((c, m)) => (c.to_string(), Some(m.to_string())),
+                    None => (arg.clone(), None),
+                };
+                if class.is_empty() {
+                    self.toast("info", "usage: /goto Class[.method]  (or ⌘-click it on the canvas)");
+                } else {
+                    self.open_in_editor(class, method);
+                }
+            }
             "/undo" => self.run(|s, _| crate::commands::undo(s)),
             "/redo" => self.run(|s, _| crate::commands::redo(s)),
             "/accept" | "/reject" => {
@@ -1595,7 +1690,7 @@ impl SpideApp {
     // ------------------------------------------------------------------ keyboard
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        let term_focus = self.term.as_ref().is_some_and(|t| t.has_focus);
+        let term_focus = self.term.as_ref().is_some_and(|t| t.has_focus) || self.nvim_term.as_ref().is_some_and(|t| t.has_focus && self.editor_pane);
         if term_focus {
             return;
         }
@@ -1707,6 +1802,15 @@ impl SpideApp {
     pub fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.drain(&ctx);
+        if let Some(op) = super::trace::show(&ctx, &mut self.trace_ui, &self.backend.st) {
+            self.backend.call(
+                move |st, _| crate::service::get(st).ok_or("service not ready".to_string())?.call_tool("revert_op", &json!({"op": op}), "user"),
+                |app, r| match r {
+                    Ok(_) => app.toast("info", "reverted"),
+                    Err(e) => app.toast("error", e),
+                },
+            );
+        }
         let now = ctx.input(|i| i.time);
         // deferred actions (old setTimeout)
         let due: Vec<Deferred> = {
@@ -1866,10 +1970,21 @@ impl SpideApp {
         ui.painter().hline(header.x_range(), header.bottom(), Stroke::new(1.0, css::LINE));
         let mut action = None;
         ui.scope_builder(egui::UiBuilder::new().max_rect(header), |ui| {
-            action = terminal::header(ui, snap.pi_status, self.restarting, &mut self.term_confirm, self.pane_palette.is_some());
+            action = terminal::header(ui, snap.pi_status, self.restarting, &mut self.term_confirm, self.pane_palette.is_some(), self.editor_pane);
         });
         match action {
             Some(PaneAction::Collapse) => self.workspace.left_open = false,
+            Some(PaneAction::ToggleEditor) => {
+                if self.editor_pane {
+                    self.editor_pane = false;
+                } else {
+                    let root = std::path::PathBuf::from(&snap.project_dir);
+                    match crate::editor::embedded().start(&root) {
+                        Ok(()) => self.show_editor(),
+                        Err(e) => self.toast("error", e),
+                    }
+                }
+            }
             Some(PaneAction::Commands) => self.pane_palette = if self.pane_palette.is_some() { None } else { Some(Palette::new("")) },
             _ => {}
         }
@@ -1896,7 +2011,7 @@ impl SpideApp {
                 None => {}
             }
         }
-        let error = self.term.as_ref().and_then(|t| t.error()).or_else(|| snap.pi_error.clone());
+        let error = if self.editor_pane { self.nvim_term.as_ref().and_then(|t| t.error()) } else { self.term.as_ref().and_then(|t| t.error()).or_else(|| snap.pi_error.clone()) };
         let mut term_r = body;
         if let Some(e) = &error {
             let g = ui.painter().layout(e.clone(), sans(12.0), Color32::WHITE, r.width() - 24.0);
@@ -1905,7 +2020,11 @@ impl SpideApp {
             term_r.max.y = er.top();
             ui.scope_builder(egui::UiBuilder::new().max_rect(er), |ui| terminal::error_banner(ui, e));
         }
-        if let Some(t) = self.term.as_mut() {
+        if self.editor_pane {
+            if let Some(t) = self.nvim_term.as_mut() {
+                ui.scope_builder(egui::UiBuilder::new().max_rect(term_r), |ui| t.show(ui, term_r));
+            }
+        } else if let Some(t) = self.term.as_mut() {
             t.tab = self.tab.key().into();
             ui.scope_builder(egui::UiBuilder::new().max_rect(term_r), |ui| t.show(ui, term_r));
         } else {
@@ -2329,7 +2448,7 @@ impl SpideApp {
         ui.scope_builder(egui::UiBuilder::new().max_rect(tb), |ui| {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                chrome::health_ring(ui, &mut self.health, metrics, snap.ghost_health, &mut health_actions);
+                chrome::health_ring(ui, &mut self.health, metrics, snap.ghost_health, &mut health_actions, Some(&snap.view.health_exceptions));
                 if matches!(self.tab, Tab::Class | Tab::Domain) {
                     let level = view.settings.detail_for(self.tab.key());
                     if let Some(l) = chrome::detail_slider(ui, level, self.preview.is_some()) {
@@ -2360,6 +2479,17 @@ impl SpideApp {
             match a {
                 HealthAction::Fix(i) => self.fix_issue(i),
                 HealthAction::Focus(i) => self.focus_issue(i),
+                HealthAction::Assess => self.backend.call(
+                    |st, _| crate::service::get(st).ok_or("service not ready".to_string())?.call_tool("request_assessment", &json!({"reason":"asked from the health popover"}), "user"),
+                    |app, r| if let Err(e) = r { app.toast("error", e) },
+                ),
+                HealthAction::Exception(id, approve) => {
+                    let tool = if approve { "approve_exception" } else { "reject_exception" };
+                    self.backend.call(
+                        move |st, _| crate::service::get(st).ok_or("service not ready".to_string())?.call_tool(tool, &json!({"id": id}), "user"),
+                        |app, r| if let Err(e) = r { app.toast("error", e) },
+                    );
+                }
             }
         }
         // concerns lens legend
@@ -2847,6 +2977,15 @@ mod export_tests {
 
 impl eframe::App for SpideApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // the embedded Neovim owns its unsaved buffers: never lose them by closing the window
+        if ui.ctx().input(|i| i.viewport().close_requested()) && crate::editor::embedded().running() {
+            let dirty = crate::editor::embedded_dirty(&self.backend.st);
+            if !dirty.is_empty() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.show_editor();
+                self.toast("error", format!("Neovim has unsaved buffers ({}). Save or discard them there (:wa / :qa!), then quit.", dirty.len()));
+            }
+        }
         self.frame(ui);
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

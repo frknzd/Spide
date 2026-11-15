@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/spide-core", "crates/spide-import", "crates/spide-diagram", "app"]
+members = ["crates/spide-core", "crates/spide-import", "crates/spide-diagram", "crates/spide-service", "crates/spide-lsp", "crates/spide-headless", "app"]
 
 [workspace.package]
 edition = "2021"

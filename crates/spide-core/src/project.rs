@@ -39,7 +39,14 @@ pub struct Command {
 pub struct Manifest {
     pub version: u32,
     pub name: String,
+    /// Primary language (schema 1: always `java`).
     pub language: String,
+    /// Mixed-language projects: every language indexed (empty: just `language`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
+    /// Per-language analysis tooling (LSP server, linters), see `LanguageTools`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub tools: BTreeMap<String, LanguageTools>,
     /// Production source roots, relative to the project root.
     pub roots: Vec<String>,
     pub exclude: Vec<String>,
@@ -60,6 +67,8 @@ impl Default for Manifest {
             version: 1,
             name: String::new(),
             language: "java".into(),
+            languages: vec![],
+            tools: BTreeMap::new(),
             roots: vec!["src/main/java".into()],
             exclude: vec![],
             code_root: None,
@@ -68,6 +77,30 @@ impl Default for Manifest {
             extra: BTreeMap::new(),
         }
     }
+}
+
+/// Analysis tooling for one language. Commands are argv lists (no shell). Absent fields use
+/// Spide's defaults (see `spide-lsp`'s language table); `enabled: false` turns a tool off.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct LanguageTools {
+    /// Language server command, e.g. `["rust-analyzer"]`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lsp: Option<Vec<String>>,
+    /// LSP `initializationOptions`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub init_options: Option<serde_json::Value>,
+    /// LSP `workspace/configuration` settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settings: Option<serde_json::Value>,
+    /// Linters by name → argv (e.g. `"clippy": ["cargo","clippy","--message-format=json"]`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub linters: BTreeMap<String, Vec<String>>,
+    /// Extra environment for the tools.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
 }
 
 /// A relative path without `..`, `.` only as a whole, nothing absolute.
@@ -104,11 +137,28 @@ impl Manifest {
         serde_json::to_string_pretty(self).expect("manifest serialises") + "\n"
     }
 
+    /// Every language this project indexes (primary first).
+    pub fn all_languages(&self) -> Vec<String> {
+        let mut out = vec![self.language.clone()];
+        for l in &self.languages {
+            if !out.contains(l) {
+                out.push(l.clone());
+            }
+        }
+        out
+    }
+
+    pub fn is_java_only(&self) -> bool {
+        self.all_languages() == ["java"]
+    }
+
     /// Problems with the manifest for a project at `root` (inside the git work tree `work_tree`, if any).
     pub fn validate(&self, root: &Path, work_tree: Option<&Path>) -> Vec<String> {
         let mut out = vec![];
-        if self.language != "java" {
-            out.push(format!("language {} is not supported (java only)", self.language));
+        for l in self.all_languages() {
+            if !crate::symbols::is_supported_language(&l) {
+                out.push(format!("language {l} is not supported ({})", crate::symbols::LANGUAGES.join(", ")));
+            }
         }
         if self.roots.is_empty() {
             out.push("at least one source root is needed".into());
@@ -131,8 +181,9 @@ impl Manifest {
             }
         }
         if let Some(c) = &self.code_root {
-            if !is_java_package(c) {
-                out.push(format!("code root {c} is not a Java package name"));
+            // a dotted module path for every language (Java package, Python package, Rust crate path …)
+            if !is_java_package(&c.replace('-', "_")) {
+                out.push(format!("code root {c} is not a dotted module path"));
             }
         }
         let bound = normalize(&work_tree.map(Path::to_path_buf).unwrap_or_else(|| canon_root.clone()));

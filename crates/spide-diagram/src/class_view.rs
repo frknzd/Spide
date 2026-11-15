@@ -517,7 +517,7 @@ pub fn class_node(ms: &dyn Measure, p: &NodeProps, parent: Xf, hits: &mut Vec<Hi
         c::BORDER
     };
     let target = if ghost && cls.proposal.is_some() && !p.concrete_targets { Target::Proposal { id: cls.proposal.clone().unwrap() } } else { Target::Class { name: cls.name.clone() } };
-    let italic = cls.is_abstract || cls.stereotype.as_deref() == Some("interface");
+    let italic = cls.is_abstract || cls.is_interface();
     let bs = if ghost || pruned { vec![] } else { badges(mm) };
     let opacity = (if p.spotlit { 1.0 } else { status_opacity(st) }) * if p.dim { 0.28 } else { 1.0 } * if p.phantom { 0.5 } else { 1.0 };
     let hb = heat_bucket(heat);

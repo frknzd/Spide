@@ -84,7 +84,7 @@ fn rotate_if_needed(project: &Path) -> std::io::Result<()> {
         return Ok(());
     }
     let keep: Vec<String> = BufReader::new(std::fs::File::open(&p)?).lines().map_while(Result::ok).skip(n - CAP * 4 / 5).collect();
-    crate::state::write_atomic(&p, &(keep.join("\n") + "\n"))
+    crate::workspace::write_atomic(&p, &(keep.join("\n") + "\n"))
 }
 
 fn read_all(project: &Path) -> Vec<Line> {

@@ -5,13 +5,14 @@
 set -eu
 cd "$(dirname "$0")/.."
 [ "$(uname -s)" = Darwin ] || { echo "macOS is required" >&2; exit 1; }
-cargo build --release -p spide
+cargo build --release -p spide -p spide-headless
 version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
 build=$(date +%Y%m%d%H%M%S)
 bundle=target/release/bundle/macos/Spide.app
 rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp target/release/spide "$bundle/Contents/MacOS/spide"
+cp target/release/spide-headless "$bundle/Contents/MacOS/spide-headless"
 cp app/icons/icon.icns "$bundle/Contents/Resources/icon.icns"
 cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

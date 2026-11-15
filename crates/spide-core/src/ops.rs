@@ -189,13 +189,16 @@ pub enum Op {
         description: Option<String>,
     },
     RemoveLink { from: String, to: String },
-    /// Spide Project: trace a class (or one of its methods) to a Java symbol
-    /// (`org.x.Foo`, or `org.x.Foo#bar(int)` for a method).
+    /// Spide Project: trace a class (or one of its methods) to a code symbol: the qualified name
+    /// (`org.x.Foo`, `shop.orders.Order`, `shop.orders` for a module), or `Owner#name(param types)`
+    /// for a method/function. `language` defaults to the project's (Java for schema-1 designs).
     LinkCode {
         class: String,
         #[serde(default)]
         method: Option<String>,
         symbol: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        language: Option<String>,
     },
     UnlinkCode {
         class: String,
@@ -295,7 +298,7 @@ impl Op {
             Op::AssignContainer { package, container } => format!("run {package} in {}", container.as_deref().unwrap_or("(no container)")),
             Op::AddLink { from, to, .. } => format!("link {from} → {to}"),
             Op::RemoveLink { from, to } => format!("remove link {from} → {to}"),
-            Op::LinkCode { class, method, symbol } => match method {
+            Op::LinkCode { class, method, symbol, .. } => match method {
                 Some(m) => format!("link {class}.{m}() → {symbol}"),
                 None => format!("link {class} → {symbol}"),
             },
@@ -888,17 +891,21 @@ impl Op {
                     proposal: prop,
                 });
             }
-            Op::LinkCode { class, method, symbol } => {
+            Op::LinkCode { class, method, symbol, language } => {
                 let sym = symbol.trim();
-                let ok = !sym.is_empty() && sym.split(['.', '#', '(', ')', ',', '$', '<', '>', '[', ']', ' ']).all(|p| p.chars().all(|c| c.is_alphanumeric() || c == '_'));
+                // language-neutral: Clojure `ns/fn-name!`, C++ `ns::T`, generics, operators
+                let ok = !sym.is_empty() && sym.len() <= 400 && !sym.chars().any(|c| c.is_control() || matches!(c, '"' | '\'' | '`' | '\\'));
                 if !ok {
-                    return err(format!("not a Java symbol: {symbol}"));
+                    return err(format!("not a code symbol: {symbol}"));
                 }
                 if method.is_some() != sym.contains('#') {
-                    return err("a method link needs Type#name(params); a class link a fully qualified type");
+                    return err("a method link needs Owner#name(params); a class/module link a qualified name");
+                }
+                if let Some(l) = language.as_deref().filter(|l| !crate::symbols::is_supported_language(l)) {
+                    return err(format!("unsupported language {l}"));
                 }
                 let c = live_class_mut(d, class)?;
-                let link = Some(SourceSymbol { symbol: sym.to_string(), ..Default::default() });
+                let link = Some(SourceSymbol { symbol: sym.to_string(), language: language.clone().filter(|l| l != "java"), ..Default::default() });
                 match method {
                     Some(m) => c.methods.iter_mut().find(|x| x.name == *m && x.status != Status::Pruned).ok_or_else(|| OpError(format!("unknown method {class}.{m}")))?.source = link,
                     None => c.source = link,

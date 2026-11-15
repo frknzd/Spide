@@ -216,7 +216,8 @@ fn linked_key(symbol: &str) -> Option<String> {
 
 fn kind_of(c: &Class) -> &'static str {
     match c.stereotype.as_deref() {
-        Some("interface") => "interface",
+        Some("interface" | "trait" | "protocol") => "interface",
+        Some("module" | "namespace") => "module",
         Some("enum") | Some("enumeration") => "enum",
         _ if c.is_abstract || c.stereotype.as_deref() == Some("abstract") => "abstract",
         _ => "class",
@@ -553,7 +554,7 @@ pub fn analyse(design: &Design, code: &Design, manifest: &Manifest, baseline: Op
             // a code-only class with a design class of the same name elsewhere: link them (or move the design class)
             if let (true, None, Some(dn)) = (it.kind == "class", &it.design, it.rename_of.as_ref().filter(|dn| simple(&it.class) == **dn)) {
                 if let Some(sym) = a.code_class.get(&it.class).and_then(|n| code.class(n)).and_then(|c| c.source.as_ref()).map(|s| s.symbol.clone()) {
-                    it.suggested_ops = vec![Op::LinkCode { class: dn.clone(), method: None, symbol: sym }];
+                    it.suggested_ops = vec![Op::LinkCode { class: dn.clone(), method: None, symbol: sym, language: None }];
                 }
             }
         }
@@ -604,7 +605,7 @@ fn suggest(it: &SyncItem, design: &Design, code: &Design, a: &Analysis, code_roo
             let symbol = cc.source.as_ref().map(|s| s.symbol.clone()).unwrap_or_default();
             let implicit = join_fqn(&[code_root, cc.package.as_deref(), Some(class)]);
             if !symbol.is_empty() && symbol != implicit {
-                ops.push(Op::LinkCode { class: class.to_string(), method: None, symbol });
+                ops.push(Op::LinkCode { class: class.to_string(), method: None, symbol, language: None });
             }
             ops
         }

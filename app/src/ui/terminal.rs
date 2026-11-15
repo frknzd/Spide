@@ -117,10 +117,37 @@ impl TermState {
     }
 }
 
+/// Where a terminal's bytes come from: the pi process, or the embedded Neovim.
+pub trait PtySource: Send + Sync {
+    fn read(&self, generation: Option<u64>, after: u64) -> Result<crate::terminal::Frame, String>;
+    fn terminal(&self, generation: Option<u64>) -> Result<Arc<crate::terminal::Terminal>, String>;
+    /// Which canvas tab the user looks at (pi uses it as prompt context).
+    fn context(&self, _tab: String) {}
+    /// Shown when the process exits.
+    fn exit_message(&self) -> String {
+        "The process exited.".into()
+    }
+}
+
+impl PtySource for PiBridge {
+    fn read(&self, generation: Option<u64>, after: u64) -> Result<crate::terminal::Frame, String> {
+        PiBridge::read(self, generation, after)
+    }
+    fn terminal(&self, generation: Option<u64>) -> Result<Arc<crate::terminal::Terminal>, String> {
+        PiBridge::terminal(self, generation)
+    }
+    fn context(&self, tab: String) {
+        PiBridge::context(self, tab)
+    }
+    fn exit_message(&self) -> String {
+        "pi exited. Use Restart to start a new interactive session.".into()
+    }
+}
+
 /// The terminal session: a reader thread feeding the parser, and the widget state.
 pub struct TermSession {
     pub state: Arc<Mutex<TermState>>,
-    pi: Arc<PiBridge>,
+    pi: Arc<dyn PtySource>,
     stop: Arc<AtomicBool>,
     pub tab: String,
     selecting: bool,
@@ -136,7 +163,7 @@ impl Drop for TermSession {
 }
 
 impl TermSession {
-    pub fn start(pi: Arc<PiBridge>, events: Events) -> Self {
+    pub fn start(pi: Arc<dyn PtySource>, events: Events) -> Self {
         let state = Arc::new(Mutex::new(TermState::new(Listener::default())));
         let stop = Arc::new(AtomicBool::new(false));
         {
@@ -168,7 +195,7 @@ impl TermSession {
                                     }
                                     // acknowledge only after parsing: backpressure stays end-to-end
                                     s.after = frame.next;
-                                    let err = exited.then(|| "pi exited. Use Restart to start a new interactive session.".to_string());
+                                    let err = exited.then(|| pi.exit_message());
                                     changed = fresh || !frame.bytes.is_empty() || s.error != err;
                                     s.error = err;
                                     replies = std::mem::take(&mut *s.listener.replies.lock().unwrap());
@@ -269,7 +296,7 @@ impl TermSession {
             self.fit(cols, rows);
         }
         self.context(&self.tab.clone());
-        let id = ui.scope_id().with("pi-terminal");
+        let id = ui.scope_id().with(("terminal", Arc::as_ptr(&self.state) as usize));
         let resp = ui.interact(rect, id, Sense::click_and_drag());
         if resp.clicked() || resp.drag_started() || std::mem::take(&mut self.focus_requested) {
             resp.request_focus();
@@ -669,10 +696,12 @@ pub enum PaneAction {
     Commands,
     Restart,
     Collapse,
+    /// Switch the pane between pi and the embedded Neovim.
+    ToggleEditor,
 }
 
 /// The pi pane header: title, status, Commands, Restart (with confirmation), collapse.
-pub fn header(ui: &mut egui::Ui, status: crate::state::PiStatus, restarting: bool, confirming: &mut bool, palette_open: bool) -> Option<PaneAction> {
+pub fn header(ui: &mut egui::Ui, status: crate::state::PiStatus, restarting: bool, confirming: &mut bool, palette_open: bool, editor_on: bool) -> Option<PaneAction> {
     use crate::state::PiStatus;
     let mut out = None;
     let (text, dot) = match status {
@@ -699,6 +728,10 @@ pub fn header(ui: &mut egui::Ui, status: crate::state::PiStatus, restarting: boo
             ui.add_space(4.0);
             if super::widgets::icon_button(ui, "‹").on_hover_text("Collapse pi pane").clicked() {
                 out = Some(PaneAction::Collapse);
+            }
+            let ed = egui::Button::new(egui::RichText::new(if editor_on { "◂ pi" } else { "Neovim ▸" }).font(sans(12.0)).color(if editor_on { css::ACCENT } else { css::DIM })).frame(false);
+            if ui.add(ed).on_hover_text(if editor_on { "Back to the pi terminal" } else { "Show the embedded Neovim (your config; edits stay in Neovim)" }).clicked() {
+                out = Some(PaneAction::ToggleEditor);
             }
             if ui.add_enabled(!restarting, egui::Button::new(egui::RichText::new(if restarting { "Restarting…" } else { "Restart" }).font(sans(12.0)).color(css::DIM)).frame(false)).clicked() {
                 *confirming = !*confirming;

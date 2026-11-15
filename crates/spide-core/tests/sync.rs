@@ -27,7 +27,7 @@ fn design() -> Design {
 }
 
 fn sym(s: &str, file: &str) -> Option<SourceSymbol> {
-    Some(SourceSymbol { symbol: s.into(), file: file.into(), start_line: 3, end_line: 30 })
+    Some(SourceSymbol { symbol: s.into(), file: file.into(), start_line: 3, end_line: 30, ..Default::default() })
 }
 
 /// The code as spide-import would give it.

@@ -170,7 +170,7 @@ pub fn package_view(d: &Design) -> PackageView {
     }
     for c in d.classes.iter().filter(|c| shown(c.status)) {
         let name = c.package.clone().unwrap_or_else(|| "(none)".into());
-        let abs = c.is_abstract || c.stereotype.as_deref() == Some("interface");
+        let abs = c.is_abstract || c.is_interface();
         let i = match out.packages.iter().position(|p| p.name == name) {
             Some(i) => i,
             None => {

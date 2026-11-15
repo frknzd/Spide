@@ -27,7 +27,7 @@ pub fn path(project: &Path, name: &str) -> Result<PathBuf, String> {
 
 pub fn write(project: &Path, name: &str, d: &Design) -> Result<(), String> {
     let p = path(project, name)?;
-    crate::state::write_atomic(&p, &d.to_json()).map_err(|e| e.to_string())
+    crate::workspace::write_atomic(&p, &d.to_json()).map_err(|e| e.to_string())
 }
 
 pub fn read(project: &Path, name: &str) -> Result<Design, String> {
@@ -50,7 +50,7 @@ pub fn active(project: &Path) -> String {
 }
 
 pub fn set_active(project: &Path, name: &str) -> std::io::Result<()> {
-    crate::state::write_atomic(&project.join(".spide").join("branch"), name)
+    crate::workspace::write_atomic(&project.join(".spide").join("branch"), name)
 }
 
 pub fn list(project: &Path) -> Vec<String> {

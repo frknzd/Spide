@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser};
 
 mod facts;
+pub mod languages;
 
 #[derive(Debug, Default)]
 pub struct ImportResult {
@@ -193,6 +194,7 @@ fn parse_method(n: Node, src: &[u8]) -> RawMethod {
         collect_body(b, src, &mut m);
     }
     m.facts = facts::facts(n, n.child_by_field_name("body"), src);
+    m.facts.params = m.params.len() as u32;
     m
 }
 
@@ -333,8 +335,13 @@ pub fn import_java(dir: &Path, code_root: Option<&str>) -> Result<ImportResult, 
 
 /// Safe explicit repository scope. Paths are relative and cannot escape via symlinks.
 pub fn scoped_files(repo: &Path, roots: &[String], exclusions: &[String]) -> Result<Vec<PathBuf>, String> {
+    scoped_files_of(repo, roots, exclusions, "java")
+}
+
+/// Like `scoped_files`, for any supported language.
+pub fn scoped_files_of(repo: &Path, roots: &[String], exclusions: &[String], lang: &str) -> Result<Vec<PathBuf>, String> {
     let repo = repo.canonicalize().map_err(|e| e.to_string())?;
-    if roots.is_empty() { return Err("Select at least one Java source root".into()); }
+    if roots.is_empty() { return Err("Select at least one source root".into()); }
     for exclusion in exclusions {
         let p = Path::new(exclusion);
         if p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) { return Err("Exclusions must be repository-relative".into()); }
@@ -345,7 +352,8 @@ pub fn scoped_files(repo: &Path, roots: &[String], exclusions: &[String]) -> Res
         if rel.is_absolute() || rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) { return Err("Source roots must be repository-relative".into()); }
         let path = repo.join(rel).canonicalize().map_err(|e| e.to_string())?;
         if !path.starts_with(&repo) { return Err("Source root escapes repository".into()); }
-        for file in java_files(&path) {
+        let found = if lang == "java" { java_files(&path) } else { languages::files_of(&path, lang, false) };
+        for file in found {
             let canonical = file.canonicalize().map_err(|e| e.to_string())?;
             if !canonical.starts_with(&repo) { continue; }
             let relative = canonical.strip_prefix(&repo).unwrap();
@@ -445,7 +453,7 @@ fn import_files(dir: &Path, code_root: Option<&str>, files: Vec<PathBuf>) -> Res
                 let uses: Vec<String> = t.fields.iter().filter(|f| m.identifiers.contains(&f.name)).map(|f| f.name.clone()).collect();
                 Method {
                     name: if t.methods.iter().filter(|other| other.name == m.name).count() > 1 { signature(m) } else { m.name.clone() },
-                    source: Some(SourceSymbol { symbol: format!("{}#{}", t.source.symbol, signature(m)), file: t.source.file.clone(), start_line: m.facts.start_line, end_line: m.facts.end_line }),
+                    source: Some(SourceSymbol { symbol: format!("{}#{}", t.source.symbol, signature(m)), file: t.source.file.clone(), start_line: m.facts.start_line, end_line: m.facts.end_line, ..Default::default() }),
                     params: m.params.iter().map(|(n, ty)| Param { name: n.clone(), ty: ty.clone() }).collect(),
                     returns: m.returns.clone(),
                     visibility: if t.kind == "interface" && m.visibility == Visibility::Package { Visibility::Public } else { m.visibility },
@@ -532,4 +540,85 @@ fn import_files(dir: &Path, code_root: Option<&str>, files: Vec<PathBuf>) -> Res
     design.name = format!("code: {}",  dir.file_name().and_then(|n| n.to_str()).unwrap_or("project"));
     design.settings.code_root = (!root.is_empty()).then_some(root);
     Ok(ImportResult { design, files: files.len(), skipped })
+}
+
+/// A whole (possibly mixed-language) project: Java through the Java importer, every other
+/// language through its tree-sitter adapter into the semantic graph, all projected into one design.
+#[derive(Debug, Default)]
+pub struct ProjectImport {
+    pub design: Design,
+    pub graph: spide_core::symbols::SemanticGraph,
+    pub files: usize,
+    pub skipped: Vec<String>,
+    /// language → files indexed
+    pub per_language: BTreeMap<String, usize>,
+}
+
+pub fn import_project(repo: &Path, languages: &[String], roots: &[String], exclusions: &[String], code_root: Option<&str>) -> Result<ProjectImport, String> {
+    let mut out = ProjectImport { graph: spide_core::symbols::SemanticGraph::new(), ..Default::default() };
+    let mut java: Option<Design> = None;
+    let canon = repo.canonicalize().map_err(|e| e.to_string())?;
+    for lang in languages {
+        if !spide_core::symbols::is_supported_language(lang) {
+            out.skipped.push(format!("language {lang} is not supported"));
+            continue;
+        }
+        let mut files = scoped_files_of(repo, roots, exclusions, lang)?;
+        if lang == "cpp" && languages.iter().any(|l| l == "c") {
+            files.retain(|f| f.extension().is_none_or(|e| e != "h")); // `.h` belongs to the C side
+        }
+        out.per_language.insert(lang.clone(), files.len());
+        if files.is_empty() {
+            continue;
+        }
+        out.files += files.len();
+        if lang == "java" {
+            let r = import_files(&canon, code_root, files)?;
+            out.skipped.extend(r.skipped);
+            java = Some(r.design);
+        } else {
+            let (g, skipped) = languages::index_files(&canon, lang, &files);
+            out.skipped.extend(skipped);
+            out.graph.merge(g);
+        }
+    }
+    if out.files == 0 {
+        return Err(format!("no {} source files under {}", languages.join("/"), roots.join(", ")));
+    }
+    out.graph.finish();
+    let root = code_root.map(String::from).unwrap_or_else(|| spide_core::symbols::common_root(&out.graph));
+    let projected = if out.graph.entities.is_empty() { None } else { Some(spide_core::symbols::project(&out.graph, &root)?) };
+    out.design = match (java, projected) {
+        (Some(j), None) => j,
+        (None, Some(p)) => p,
+        (Some(mut j), Some(p)) => {
+            // mixed: same-named nodes from another language keep their qualified name
+            let taken: BTreeSet<String> = j.classes.iter().map(|c| c.name.clone()).collect();
+            let rename: BTreeMap<String, String> = p.classes.iter().filter(|c| taken.contains(&c.name)).map(|c| (c.name.clone(), c.source.as_ref().map(|s| s.symbol.clone()).unwrap_or_else(|| format!("{}~", c.name)))).collect();
+            for mut c in p.classes {
+                if let Some(n) = rename.get(&c.name) {
+                    c.name = n.clone();
+                }
+                j.classes.push(c);
+            }
+            for mut r in p.relations {
+                r.from = rename.get(&r.from).cloned().unwrap_or(r.from);
+                r.to = rename.get(&r.to).cloned().unwrap_or(r.to);
+                r.id = format!("{}x", r.id);
+                j.relations.push(r);
+            }
+            for pk in p.packages {
+                if !j.packages.iter().any(|x| x.name == pk.name) {
+                    j.packages.push(pk);
+                }
+            }
+            j
+        }
+        (None, None) => Design::default(),
+    };
+    out.design.name = format!("code: {}", repo.file_name().and_then(|n| n.to_str()).unwrap_or("project"));
+    if out.design.settings.code_root.is_none() && !root.is_empty() {
+        out.design.settings.code_root = Some(root);
+    }
+    Ok(out)
 }

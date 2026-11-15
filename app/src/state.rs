@@ -1,7 +1,7 @@
 //! Shared application state and snapshot emission.
 
 use serde::Serialize;
-use spide_core::metrics::{compute, Metrics};
+use spide_core::metrics::Metrics;
 use spide_core::store::revalidate_sequences;
 use spide_core::impact::{impact_of_ops, Impact};
 use spide_core::{derive, Design, DecisionState, Store};
@@ -33,6 +33,10 @@ pub struct Shared {
     pub branch: String,
     /// Spide Project: the code folder this design lives in (None: design-only).
     pub project: Option<crate::project::ProjectState>,
+    /// Single-writer lock on the workspace (None: another process owns it; we stay read-only).
+    pub lock: Option<spide_service::workspace::WorkspaceLock>,
+    /// LSP/linter/editor evidence (the service's store) for health.
+    pub evidence: Option<Arc<spide_service::code::EvidenceStore>>,
 }
 
 impl Shared {
@@ -50,6 +54,11 @@ impl Shared {
 pub struct AppState {
     pub inner: Arc<Mutex<Shared>>,
     pub events: Events,
+    /// The application service all agent/editor commands go through (rebuilt on project switch).
+    pub service: Arc<Mutex<Option<Arc<spide_service::Service>>>>,
+    /// Bearer token for this process's MCP endpoint (given to pi via SPIDE_MCP_TOKEN, published for Neovim/agents).
+    pub token: String,
+    pub endpoint: Arc<Mutex<Option<spide_service::discovery::Endpoint>>>,
 }
 
 #[derive(Serialize)]
@@ -116,6 +125,10 @@ impl AppState {
             store.design.name = name.to_string();
         }
         let branch = crate::branches::active(&project_dir);
+        let lock = acquire_lock(&project_dir);
+        if lock.is_none() {
+            events.send(UiEvent::Toast { kind: "error".into(), text: "Another Spide process owns this workspace; changes will not be saved here.".into() });
+        }
         let mut last_history = None;
         if let Err(e) = crate::history::append(&project_dir, &store.design, &mut last_history) {
             eprintln!("spide: history: {e}");
@@ -132,8 +145,13 @@ impl AppState {
                 last_history,
                 branch,
                 project,
+                lock,
+                evidence: None,
             })),
             events,
+            service: Arc::new(Mutex::new(None)),
+            token: spide_service::workspace::token(),
+            endpoint: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -176,7 +194,25 @@ impl AppState {
     }
 }
 
+/// Take the workspace's writer lock; on conflict the desktop opens read-only (and says so).
+pub fn acquire_lock(dir: &Path) -> Option<spide_service::workspace::WorkspaceLock> {
+    match spide_service::workspace::WorkspaceLock::acquire(dir) {
+        Ok(l) => Some(l),
+        Err(e) => {
+            // a headless Spide serving agents hands over and forwards to us
+            if let Some(l) = spide_service::discovery::take_over_from_headless(dir) {
+                return Some(l);
+            }
+            eprintln!("spide: {e}");
+            None
+        }
+    }
+}
+
 pub fn save(s: &mut Shared) {
+    if s.lock.is_none() {
+        return; // another process (e.g. spide-headless) owns this workspace
+    }
     let json = s.store.design.to_json();
     if s.last_written.as_deref() == Some(json.as_str()) {
         return;
@@ -215,6 +251,10 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
         accepted = a;
     }
     revalidate_sequences(&mut view);
+    let ev_guard = s.evidence.as_ref().map(|e| e.set.lock().unwrap_or_else(|x| x.into_inner()));
+    let languages: Vec<String> = s.project.as_ref().map(|p| p.manifest.all_languages()).unwrap_or_default();
+    let hctx = spide_core::health::Context { evidence: ev_guard.as_deref(), languages: &languages, now: spide_core::store::now_ms() };
+    let compute = |d: &Design, ghosts: bool| spide_core::metrics::compute_with(d, ghosts, hctx);
     let metrics = compute(&accepted, false);
     let (ghost_health, ghost_metrics) = if store.design.proposals.is_empty() {
         (None, None)

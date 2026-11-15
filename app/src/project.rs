@@ -32,6 +32,8 @@ pub struct CodeIndex {
     pub files: usize,
     pub skipped: Vec<String>,
     pub parsed_at: u64,
+    /// The language-neutral semantic graph (non-Java languages; navigation, evidence mapping).
+    pub graph: Option<Arc<spide_core::symbols::SemanticGraph>>,
 }
 
 /// An implementation request in flight: which items should end up in sync.
@@ -267,7 +269,7 @@ pub fn refresh_async(st: &AppState) {
         let (generation, root, manifest) = job;
         // canonical root: file paths in the index come out relative to it
         let canon = root.canonicalize().unwrap_or_else(|_| root.clone());
-        let r = spide_import::import_java_scoped(&canon, &manifest.roots, &manifest.exclude, manifest.code_root.as_deref());
+        let r = spide_import::import_project(&canon, &manifest.all_languages(), &manifest.roots, &manifest.exclude, manifest.code_root.as_deref());
         let dirty = {
             let mut s = st.lock();
             let Some(p) = s.project.as_mut().filter(|p| p.root == root && p.index.generation == generation) else { return };
@@ -277,6 +279,7 @@ pub fn refresh_async(st: &AppState) {
                     p.index.files = r.files;
                     p.index.skipped = r.skipped;
                     p.index.code = Some(Arc::new(r.design));
+                    p.index.graph = Some(Arc::new(r.graph));
                 }
                 Err(e) => {
                     p.index.status = Some(IndexStatus::Error(e));
@@ -297,9 +300,9 @@ pub fn refresh_async(st: &AppState) {
 
 static WATCHER: Mutex<Option<RecommendedWatcher>> = Mutex::new(None);
 
-/// Watch the module: Java files under the roots re-index, `spide/sync.json` reloads the baseline.
+/// Watch the module: source files (any indexed language) under the roots re-index, `spide/sync.json` reloads the baseline.
 pub fn watch(st: &AppState) {
-    let Some((root, roots)) = st.lock().project.as_ref().map(|p| (p.root.clone(), p.manifest.roots.clone())) else {
+    let Some((root, roots, langs)) = st.lock().project.as_ref().map(|p| (p.root.clone(), p.manifest.roots.clone(), p.manifest.all_languages())) else {
         *WATCHER.lock().unwrap() = None;
         return;
     };
@@ -313,7 +316,7 @@ pub fn watch(st: &AppState) {
         for p in &ev.paths {
             if p == &baseline {
                 let _ = tx.send(false);
-            } else if p.extension().is_some_and(|e| e == "java") && roots2.iter().any(|r| p.starts_with(r2.join(r))) {
+            } else if p.to_str().and_then(spide_core::symbols::language_of).is_some_and(|l| langs.iter().any(|x| x == l)) && roots2.iter().any(|r| p.starts_with(r2.join(r))) {
                 let _ = tx.send(true);
             }
         }
@@ -459,7 +462,7 @@ pub fn preview(root: &Path, manifest: &Manifest) -> Preview {
         return out;
     }
     let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    match spide_import::import_java_scoped(&canon, &manifest.roots, &manifest.exclude, manifest.code_root.as_deref()) {
+    match spide_import::import_project(&canon, &manifest.all_languages(), &manifest.roots, &manifest.exclude, manifest.code_root.as_deref()) {
         Ok(r) => {
             out.files = r.files;
             out.classes = r.design.classes.iter().filter(|c| !c.external).count();
@@ -474,10 +477,24 @@ pub fn preview(root: &Path, manifest: &Manifest) -> Preview {
 /// A sensible starting manifest for a module folder.
 pub fn suggest_manifest(root: &Path, name: &str) -> Manifest {
     let mut m = Manifest { name: name.to_string(), ..Default::default() };
-    if !root.join("src/main/java").is_dir() {
-        m.roots = vec![".".into()];
+    if root.join("src/main/java").is_dir() {
+        return m;
+    }
+    m.roots = vec![".".into()];
+    let langs = detect_languages(root);
+    if let Some(first) = langs.first() {
+        m.language = first.clone();
+        m.languages = langs[1..].to_vec();
+    }
+    if m.language != "java" && root.join("src").is_dir() {
+        m.roots = vec!["src".into()];
     }
     m
+}
+
+/// Languages present in a folder, most files first.
+pub fn detect_languages(root: &Path) -> Vec<String> {
+    spide_import::languages::detect(root)
 }
 
 /// Make `root` a Spide Project carrying `design` (copied, with its local history). Never touches an

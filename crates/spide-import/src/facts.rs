@@ -74,6 +74,12 @@ impl Walk<'_> {
         if (k.ends_with("_statement") && k != "labeled_statement") || k == "local_variable_declaration" {
             self.f.statements += 1;
         }
+        if matches!(k, "if_statement" | "for_statement" | "enhanced_for_statement" | "while_statement" | "do_statement" | "catch_clause" | "switch_label" | "ternary_expression") {
+            self.f.branches += 1;
+        }
+        if k == "binary_expression" && matches!(n.child_by_field_name("operator").map(|o| text(o, self.src)), Some("&&" | "||")) {
+            self.f.branches += 1;
+        }
         match k {
             "object_creation_expression" => {
                 if let Some(t) = n.child_by_field_name("type") {
@@ -191,6 +197,20 @@ fn code_rows(n: Node, src: &[u8], rows: &mut BTreeSet<usize>) {
     }
 }
 
+/// Deepest block nesting inside a body (the body's own block is depth 0).
+fn nesting(n: Node, depth: u32) -> u32 {
+    if matches!(n.kind(), "class_body" | "lambda_expression") {
+        return depth;
+    }
+    let mut max = depth;
+    let mut c = n.walk();
+    for ch in n.children(&mut c) {
+        let d = if ch.kind() == "block" { depth + 1 } else { depth };
+        max = max.max(nesting(ch, d));
+    }
+    max
+}
+
 /// Facts for a method declaration node (`body` may be missing for abstract methods).
 pub fn facts(decl: Node, body: Option<Node>, src: &[u8]) -> CodeFacts {
     let mut w = Walk { src, f: CodeFacts::default(), creates: BTreeSet::new(), switch_on: BTreeSet::new(), ui: BTreeSet::new(), tokens: vec![] };
@@ -202,6 +222,7 @@ pub fn facts(decl: Node, body: Option<Node>, src: &[u8]) -> CodeFacts {
         code_rows(b, src, &mut rows);
         w.f.loc = rows.len() as u32;
         w.f.hash = format!("{:016x}", fnv64(t));
+        w.f.max_nesting = nesting(b, 0);
         w.visit(b);
     }
     let mut f = w.f;

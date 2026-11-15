@@ -16,6 +16,16 @@ pub enum UiEvent {
     Task(UiTask),
     /// New terminal output was parsed (repaint only).
     TerminalOutput,
+    /// Select/focus a design element (`Class` or `Class.method`), e.g. from Neovim.
+    Reveal { symbol: String },
+    /// A change request from Neovim (`:SpideAsk`) or an agent.
+    ChangeRequest { text: String, context: serde_json::Value },
+    /// Show the embedded Neovim pane.
+    ShowEditor,
+    /// A `/command` for the canvas (from an agent's ui_command).
+    Command(String),
+    /// The agent should (re)assess health dimensions.
+    AssessmentRequested { dimensions: Vec<String>, reason: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

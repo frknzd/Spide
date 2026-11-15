@@ -119,6 +119,10 @@ fn confidence_text(i: &Issue) -> Option<String> {
 pub enum HealthAction {
     Fix(usize),
     Focus(usize),
+    /// Ask the agent to (re)assess the dimensions that need it.
+    Assess,
+    /// Owner decision on a proposed health exception.
+    Exception(String, bool),
 }
 
 #[derive(Default)]
@@ -130,7 +134,7 @@ pub struct HealthState {
 }
 
 /// The health ring (30px), its label, and the breakdown popover on hover/click.
-pub fn health_ring(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option<u8>, actions: &mut Vec<HealthAction>) {
+pub fn health_ring(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option<u8>, actions: &mut Vec<HealthAction>, exceptions: Option<&[spide_core::health::HealthException]>) {
     let h = m.health as f64;
     let color = hc(h);
     let now = ui.input(|i| i.time);
@@ -156,7 +160,12 @@ pub fn health_ring(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option
                 arc(g as f64 / 100.0, hc(g as f64).gamma_multiply(0.35));
             }
             arc(h / 100.0, color);
-            p.text(c + Vec2::new(0.0, 0.5), Align2::CENTER_CENTER, format!("{}", m.health), bold(8.5), color);
+            let label = match m.health_report.score {
+                None => "—".to_string(),
+                Some(x) if m.health_report.provisional => format!("~{x}"),
+                Some(x) => x.to_string(),
+            };
+            p.text(c + Vec2::new(0.0, 0.5), Align2::CENTER_CENTER, label, bold(8.5), color);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 ui.label(RichText::new("Health").font(bold(11.5)).color(css::TEXT));
@@ -192,7 +201,7 @@ pub fn health_ring(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option
         widgets::panel_frame().inner_margin(Margin::symmetric(16, 14)).show(ui, |ui| {
             ui.set_width(max_w - 32.0);
             ui.set_max_height(ui.ctx().content_rect().height() * 0.7);
-            health_popover(ui, st, m, ghost, actions);
+            health_popover(ui, st, m, ghost, actions, exceptions);
         });
     });
     // close: click outside, Escape, or leaving (unless pinned)
@@ -215,17 +224,102 @@ pub fn health_ring(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option
     }
 }
 
-fn health_popover(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option<u8>, actions: &mut Vec<HealthAction>) {
+fn health_popover(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option<u8>, actions: &mut Vec<HealthAction>, exceptions: Option<&[spide_core::health::HealthException]>) {
     let h = m.health as f64;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.label(RichText::new("design health").font(sans(12.5)).color(css::DIM));
-        ui.label(RichText::new(format!("{}/100", m.health)).font(bold(12.5)).color(hc(h)));
+        let r = &m.health_report;
+        match r.score {
+            Some(x) => ui.label(RichText::new(format!("{x}/100")).font(bold(12.5)).color(hc(h))),
+            None => ui.label(RichText::new("unassessed").font(bold(12.5)).color(css::DIM)),
+        };
         if let Some(g) = ghost.filter(|g| *g as f64 != h) {
             ui.label(RichText::new(format!(" · {g} with proposals")).font(sans(12.5)).color(hc(g as f64)));
         }
     });
+    let r = &m.health_report;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let mut bits = vec![format!("coverage {}%", r.coverage)];
+        if let Some(ms) = r.measured {
+            bits.push(format!("measured {ms}"));
+        }
+        if let Some(a) = r.assisted {
+            bits.push(format!("with agent {a}"));
+        }
+        if r.provisional {
+            bits.push("provisional".into());
+        }
+        bits.push(format!("legacy {}", r.legacy));
+        ui.label(RichText::new(bits.join(" · ")).font(sans(11.0)).color(css::FAINT)).on_hover_text(&r.explain);
+    });
     ui.add_space(6.0);
+    for (id, label) in [("modularity", "Modularity"), ("extensibility", "Extensibility"), ("simplicity", "Simplicity"), ("implementation_quality", "Implementation")] {
+        let Some(d) = r.dimensions.get(id) else { continue };
+        let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
+        let p = ui.painter();
+        p.text(Pos2::new(row.left() + 4.0, row.center().y), Align2::LEFT_CENTER, label, sans(12.0), css::DIM);
+        let bar = Rect::from_min_size(Pos2::new(row.left() + 122.0, row.center().y - 3.0), Vec2::new(row.width() - 122.0 - 62.0, 6.0));
+        p.rect_filled(bar, 3.0, Color32::from_rgb(0x2c, 0x2f, 0x36));
+        match d.best() {
+            Some(v) => {
+                p.rect_filled(Rect::from_min_size(bar.min, Vec2::new(bar.width() * v as f32 / 100.0, 6.0)), 3.0, hc(v));
+                if let Some(mv) = d.measured.filter(|_| d.agent.is_some()) {
+                    // where the evidence alone puts it
+                    let x = bar.left() + bar.width() * mv as f32 / 100.0;
+                    p.vline(x, bar.y_range().expand(3.0), Stroke::new(1.5, css::TEXT));
+                }
+                let tag = if d.judgement_only { format!("{v:.0}*") } else { format!("{v:.0}") };
+                p.text(Pos2::new(row.right() - 4.0, row.center().y), Align2::RIGHT_CENTER, tag, bold(12.0), hc(v));
+            }
+            None => {
+                p.text(Pos2::new(row.right() - 4.0, row.center().y), Align2::RIGHT_CENTER, "unknown", sans(11.0), css::FAINT);
+            }
+        }
+        let mut tip = vec![format!("coverage {:.0}% · {} findings on {} elements", d.coverage * 100.0, d.signals, d.entities)];
+        if let (Some(a), Some(mv)) = (d.agent, d.measured) {
+            tip.push(format!("measured {mv:.0}, agent {a:.0} → {:.0} (agent weighs 40%)", d.best().unwrap_or(mv)));
+        }
+        if d.judgement_only {
+            tip.push("* only the agent's judgement: no measurement yet".into());
+        }
+        tip.extend(d.gaps.iter().cloned());
+        resp.on_hover_text(tip.join("\n"));
+    }
+    if !r.blocking.is_empty() {
+        ui.add_space(4.0);
+        widgets::section(ui, &format!("verified errors · {}", r.blocking.len()));
+        for b in r.blocking.iter().take(5) {
+            ui.label(RichText::new(format!("{} — {}", b.target, b.message)).font(sans(11.5)).color(css::BAD));
+        }
+    }
+    let needs: Vec<&str> = r.dimensions.iter().filter(|(_, d)| d.agent.is_none()).map(|(k, _)| k.as_str()).collect();
+    if !needs.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            let what = if r.stale_assessments.is_empty() { "No current agent judgement".to_string() } else { format!("Agent judgement out of date ({})", r.stale_assessments.join(", ")) };
+            widgets::faint(ui, &what);
+            if widgets::link_sized(ui, "ask the agent to assess", 11.0).on_hover_text("The agent reads the code against the rubric; its score counts 40% next to the measured one").clicked() {
+                actions.push(HealthAction::Assess);
+            }
+        });
+    }
+    if let Some(ex) = exceptions {
+        for x in ex.iter().filter(|x| !x.approved) {
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(format!("Exception proposed by {}: {} doesn't apply to {} — {}", x.proposed_by, x.rule, x.scope, x.reason)).font(sans(11.5)).color(css::TEXT));
+                if widgets::link_sized(ui, "approve", 11.0).clicked() {
+                    actions.push(HealthAction::Exception(x.id.clone(), true));
+                }
+                if widgets::link_sized(ui, "reject", 11.0).clicked() {
+                    actions.push(HealthAction::Exception(x.id.clone(), false));
+                }
+            });
+        }
+    }
+    ui.add_space(6.0);
+    widgets::section(ui, "findings by principle");
     for (id, label, help) in PRINCIPLES {
         let Some(sc) = m.principles.get(id) else { continue };
         let on = st.only == Some(id);
@@ -286,7 +380,7 @@ fn health_popover(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option<
                 ui.label(RichText::new(t).font(sans(11.0)).color(css::FAINT));
             });
         }
-        ui.label(RichText::new("size ∝ coupling · one number: weighted mean of the principles, scaled to the design's size").font(sans(11.0)).color(css::FAINT));
+        ui.label(RichText::new("size ∝ coupling · health: geometric mean of the four dimensions, from evidence (plus the agent's current judgement)").font(sans(11.0)).color(css::FAINT));
     });
 }
 
