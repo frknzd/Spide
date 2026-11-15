@@ -1041,6 +1041,15 @@ fn rename_everywhere(d: &mut Design, from: &str, to: &str) {
         }
     }
     for s in d.sequences.iter_mut() {
+        // named lifelines keep their name; only the class changes
+        for l in s.lifelines.iter_mut() {
+            if l.class == from {
+                l.class = to.to_string();
+            }
+            if l.name == from {
+                l.name = to.to_string();
+            }
+        }
         for p in s.participants.iter_mut() {
             if p == from {
                 *p = to.to_string();

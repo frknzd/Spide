@@ -53,23 +53,28 @@ pub fn score(s: &Sequence, d: &Design) -> ScenarioScore {
             }
             continue;
         }
+        if m.kind == MessageKind::Ref {
+            continue;
+        }
         out.hops += 1;
-        let (pf, pt) = (pkg(&m.from), pkg(&m.to));
+        // lifelines are instances: judge their classes
+        let (from, to) = (s.class_of(&m.from), s.class_of(&m.to));
+        let (pf, pt) = (pkg(from), pkg(to));
         if pf.is_some() && pt.is_some() && pf != pt {
             out.package_crossings += 1;
         }
-        let (lf, lt) = (layer(&m.from), layer(&m.to));
+        let (lf, lt) = (layer(from), layer(to));
         if lf.is_some() && lt.is_some() && lf != lt {
             out.layer_crossings += 1;
         }
-        let (cf, ct) = (container_of(d, &m.from), container_of(d, &m.to));
+        let (cf, ct) = (container_of(d, from), container_of(d, to));
         if cf.is_some() && ct.is_some() && cf != ct {
             out.container_crossings += 1;
             if m.kind == MessageKind::Sync {
                 out.sync_container_calls += 1;
             }
         }
-        if let Some(c) = d.live_class(&m.to) {
+        if let Some(c) = d.live_class(to).filter(|_| m.kind != MessageKind::Destroy) {
             if (any_aggregate_roots && is_aggregate(c)) || (!any_aggregate_roots && is_entity(c)) {
                 aggs.insert(c.name.clone());
             }

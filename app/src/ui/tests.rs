@@ -542,3 +542,61 @@ fn project_rail_sync_and_lens() {
     assert!(phantoms > 0);
     shot(&mut h, "project-sync-lens");
 }
+
+#[test]
+fn uml_sequence_with_fragments_creation_destruction_and_refs() {
+    use spide_core::model::*;
+    let dir = project("library");
+    let path = dir.path().join("design.json");
+    let mut d: Design = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    d.use_cases = UseCaseModel { actors: vec![Actor { name: "Member".into(), ..Default::default() }], ..Default::default() };
+    let s = spide_core::sequence::from_input(&serde_json::json!({
+        "name": "Borrow a book",
+        "lifelines": [{"name": "Member"}, {"name": "ctl", "class": "LoanController"}, {"name": "svc", "class": "LendingService"},
+                      {"name": "cat", "class": "Catalog"}, {"name": "loan", "class": "Loan"}, {"name": "repo", "class": "LoanRepository"}],
+        "steps": [
+            {"from": "Member", "to": "ctl", "method": "borrow", "args": "id, isbn", "returns": "loan"},
+            {"from": "ctl", "to": "svc", "method": "lend", "args": "m, copy", "returns": "loan"},
+            {"from": "svc", "to": "cat", "method": "find", "args": "isbn", "returns": "book"},
+            {"fragment": "loop", "guard": "for each open loan of m", "steps": [
+                {"fragment": "alt", "operands": [
+                    {"guard": "overdue", "steps": [{"from": "svc", "to": "repo", "method": "findByMember", "args": "m", "returns": "loans"}]},
+                    {"guard": "else", "steps": [{"from": "svc", "to": "repo", "method": "save", "args": "l", "kind": "async"}]}]}]},
+            {"fragment": "opt", "guard": "copy available", "steps": [
+                {"from": "svc", "to": "loan", "method": "Loan", "args": "m, copy", "kind": "create"},
+                {"from": "svc", "to": "repo", "method": "save", "args": "loan"}]},
+            {"fragment": "par", "operands": [
+                {"guard": "notify", "steps": [{"from": "svc", "to": "repo", "method": "save", "args": "loan", "kind": "async"}]},
+                {"guard": "audit", "steps": [{"from": "svc", "to": "svc", "method": "giveBack", "args": "loan"}]}]},
+            {"ref": "Pay a fine", "over": ["Member", "ctl"]},
+            {"from": "svc", "to": "loan", "kind": "destroy"}]
+    }))
+    .unwrap();
+    d.sequences.push(s);
+    d.sequences.push(Sequence { name: "Pay a fine".into(), participants: vec!["Member".into()], ..Default::default() });
+    std::fs::write(path, serde_json::to_vec_pretty(&d).unwrap()).unwrap();
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    h.state_mut().tab = Tab::Sequence;
+    h.state_mut().scenario = Some("Borrow a book".into());
+    steps(&mut h, 150);
+    let snap = h.state().snap.clone().unwrap();
+    let s = &snap.view.sequences[0];
+    assert!(s.messages.iter().all(|m| m.problem.is_none()), "{:?}", s.messages.iter().filter_map(|m| m.problem.clone()).collect::<Vec<_>>());
+    // frames, the created header, the ✗ and implied replies are in the scene
+    let scene = spide_diagram::views::sequence_scene(&h.state().measure, s, &|n| n == "Member").scene;
+    let texts = format!("{:?}", scene.root);
+    for t in ["\"loop\"", "\"alt\"", "\"opt\"", "\"par\"", "\"ref\"", "[for each open loan of m]", "[else]", "loan : Loan", ": Catalog", "Pay a fine", "«create»"] {
+        assert!(texts.contains(t), "{t} drawn");
+    }
+    shot(&mut h, "sequence-uml");
+    // the ref frame opens the referenced sequence
+    let ref_index = s.messages.iter().position(|m| m.kind == MessageKind::Ref).unwrap();
+    h.state_mut().on_click_target(spide_core::Target::Message { sequence: s.name.clone(), index: ref_index });
+    assert_eq!(h.state().scenario.as_deref(), Some("Pay a fine"));
+    // the same scene as an export image (readable size) for visual review
+    let meta = spide_diagram::svg::ExportMeta { title: "Library".into(), view: "Sequence".into(), health: None, legend: vec![], date: String::new() };
+    let o = spide_diagram::svg::ExportOptions { theme: "dark".into(), ..Default::default() };
+    let (svg, _, _) = spide_diagram::svg::build_export_svg(&scene, &h.state().measure, &meta, &o).unwrap();
+    let png = spide_core::png::render(&svg, 1.5).unwrap();
+    std::fs::write(format!("{}/../target/ui-shots/sequence-uml-export.png", env!("CARGO_MANIFEST_DIR")), png).unwrap();
+}

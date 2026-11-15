@@ -48,19 +48,168 @@ skinparam sequence {
   ActorFontColor #E6E8EE
   LifeLineBackgroundColor #30343D
   ArrowColor #E6E8EE
+  GroupBorderColor #8A93A6
+  ReferenceBorderColor #8A93A6
 }
-autoactivate on
+<style>
+sequenceDiagram {
+  group {
+    FontColor #9AA1B1
+    LineColor #8A93A6
+  }
+  groupHeader {
+    FontColor #E6E8EE
+    BackGroundColor #2B2E35
+    LineColor #8A93A6
+  }
+  reference {
+    FontColor #E6E8EE
+    BackGroundColor #25272D
+    LineColor #8A93A6
+  }
+  referenceHeader {
+    FontColor #E6E8EE
+    BackGroundColor #2B2E35
+  }
+}
+</style>
 
-actor Member
-participant LoanController
-participant LendingService
-participant LoanRepository
+actor "Member" as Member
+participant ": LoanController" as LoanController
+participant ": LendingService" as LendingService
+participant ": LoanRepository" as LoanRepository
 
 Member -> LoanController : 1: borrow(id, isbn)
+activate LoanController
 LoanController -> LendingService : 2: lend()
+activate LendingService
 LendingService -> LoanRepository : 3: save()
+activate LoanRepository
 LoanRepository --> LendingService : ok
+deactivate LoanRepository
 LendingService -[#FF5C6C]> LoanRepository : 4: explode() <color:#FF5C6C>✗ LoanRepository.explode() does not exist</color>
+activate LoanRepository
+LoanRepository --> LendingService
+deactivate LoanRepository
 LendingService --> LoanController : loan
+deactivate LendingService
+LoanController --> Member
+deactivate LoanController
+@enduml
+
+@startuml
+' sequence diagram — exported from Spide
+title Library system — Return a book
+skinparam backgroundColor #1D1E22
+skinparam defaultFontName "Helvetica Neue"
+skinparam defaultFontColor #E6E8EE
+skinparam titleFontColor #9AA1B1
+skinparam shadowing false
+skinparam roundCorner 12
+skinparam classAttributeIconSize 0
+hide circle
+skinparam legend {
+  BackgroundColor #25272D
+  BorderColor #4B5263
+  FontColor #9AA1B1
+}
+skinparam ArrowColor #8A93A6
+skinparam ArrowFontColor #9AA1B1
+skinparam ArrowFontSize 11
+skinparam class {
+  BackgroundColor #25272D
+  HeaderBackgroundColor #2B2E35
+  BorderColor #4B5263
+  FontColor #E6E8EE
+  FontStyle bold
+  AttributeFontColor #E6E8EE
+  AttributeFontName Menlo
+  AttributeFontSize 12
+  StereotypeFontColor #9AA1B1
+}
+skinparam package {
+  BackgroundColor transparent
+  FontColor #9AA1B1
+  BorderColor #4B5263
+}
+skinparam note {
+  BackgroundColor #2B2E35
+  BorderColor #FFB454
+  FontColor #E6E8EE
+}
+skinparam sequence {
+  LifeLineBorderColor #5D6474
+  ParticipantBackgroundColor #25272D
+  ParticipantBorderColor #4B5263
+  ParticipantFontColor #E6E8EE
+  ActorBorderColor #E6E8EE
+  ActorBackgroundColor #1D1E22
+  ActorFontColor #E6E8EE
+  LifeLineBackgroundColor #30343D
+  ArrowColor #E6E8EE
+  GroupBorderColor #8A93A6
+  ReferenceBorderColor #8A93A6
+}
+<style>
+sequenceDiagram {
+  group {
+    FontColor #9AA1B1
+    LineColor #8A93A6
+  }
+  groupHeader {
+    FontColor #E6E8EE
+    BackGroundColor #2B2E35
+    LineColor #8A93A6
+  }
+  reference {
+    FontColor #E6E8EE
+    BackGroundColor #25272D
+    LineColor #8A93A6
+  }
+  referenceHeader {
+    FontColor #E6E8EE
+    BackGroundColor #2B2E35
+  }
+}
+</style>
+
+actor "Member" as Member
+participant "ctl : LoanController" as ctl
+participant "svc : LendingService" as svc
+participant "loans : Loan[*]" as loans
+
+Member -> ctl : 1: borrow(id, isbn)
+activate ctl
+ctl -> svc : 2: lend()
+activate svc
+loop for each open loan
+alt overdue
+svc -> loans : 3: isOverdue(today)
+activate loans
+loans --> svc : true
+deactivate loans
+else else
+svc ->> loans : 4: isOverdue()
+activate loans
+deactivate loans
+end
+end
+opt member wants a receipt
+create participant "repo : LoanRepository" as repo
+svc --> repo : 5: <<create>> LoanRepository()
+activate repo
+deactivate repo
+svc -> repo : 6: findByMember(m)
+activate repo
+repo --> svc : loans
+deactivate repo
+svc -> repo : <<destroy>>
+destroy repo
+end
+ref over Member, ctl : Pay fine
+svc --> ctl : loan
+deactivate svc
+ctl --> Member
+deactivate ctl
 @enduml
 

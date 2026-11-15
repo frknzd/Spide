@@ -105,6 +105,10 @@ its confidence and its basis (structure, heuristic, agent, code).
 - Relation direction: composition/aggregation `from` = whole; inheritance/realization `from` = child;
   association/dependency `from` = client. Prefer directed associations; bidirectional ones create cycles.
 - Use stereotypes: `entity`, `value`, `enum`, `interface`, `abstract`, `service`, `controller`, `repository`.
+- **Sequence diagrams** are UML: lifelines `name : Class` (`set_sequence` lifelines), messages that call existing
+  methods, combined fragments with guards (`loop`, `alt` … `else`, `opt`, `par`, `break`, `critical`), `ref` to
+  another interaction, `create` before an object is used and `destroy` (✗) when it ends. Activations and replies are
+  drawn from the calls; put return values in `returns`.
 - The **domain model** is a separate conceptual model (Larman): concepts of the problem domain with attributes
   (simple types, no visibility, no methods), associations with verb-phrase labels and multiplicities, generalization
   only for a real is-a. No software artefacts (UI, controllers, services, repositories, listeners, adapters,

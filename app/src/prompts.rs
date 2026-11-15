@@ -153,9 +153,12 @@ pub fn gen_sequence(scenario: Option<&str>) -> String {
         None => "for the most important use case that has no sequence diagram yet".into(),
     };
     format!(
-        "[spide · generate sequence diagram]\nCreate a sequence diagram {what}. Lifelines must be existing classes \
-         (or actors from the use case diagram); every sync/async message must call an EXISTING method of the receiving class. \
-         If a needed method is missing, do not invent it in the sequence: raise a propose_decision to add it first. \
+        "[spide · generate sequence diagram]\nCreate a UML sequence diagram {what}. Lifelines are objects `name : Class` of existing \
+         classes (or actors from the use case diagram); every sync/async message must call an EXISTING method of the receiver's class. \
+         If a needed method is missing, do not invent it in the sequence: raise a propose_decision to add it first. Use combined \
+         fragments where the behaviour has them (loop for repetition, alt with guards and else for choices, opt for optional parts, \
+         par, break, critical, ref for an interaction drawn elsewhere), create objects with kind=create before using them and end \
+         them with kind=destroy when they die. Give returned values in `returns`; reply arrows are drawn automatically. \
          Call set_sequence once, then reply with one sentence."
     )
 }

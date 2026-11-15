@@ -8,6 +8,7 @@ use crate::scene::{paint, solid, stroke, tag, Anchor, Anim, Group, Hit, HitShape
 use crate::visuals::{c, f, layer_color, layer_name, wrap_all, FontSpec, Measure, Rect, Rgb};
 use spide_core::metrics::Metrics;
 use spide_core::model::{Actor, Interaction, MessageKind, RelationKind, Sequence, Status, UseCase};
+use spide_core::sequence::{self, Event, Timeline};
 use spide_core::Target;
 use std::collections::{HashMap, HashSet};
 
@@ -650,58 +651,133 @@ pub fn usecase_scene(m: &dyn Measure, design: &spide_core::Design, st: &mut UseC
 
 const ROW: f64 = 46.0;
 const TOP: f64 = 70.0;
+const HEAD: f64 = 36.0;
 
-/// Calls are numbered 1, 2, 3 … (returns are not), like the PlantUML export.
+/// Calls are numbered 1, 2, 3 … (replies, refs and destruction are not), like the PlantUML export.
+/// The returned value goes on the reply, not on the call.
 pub fn msg_label(s: &Sequence, i: usize) -> String {
     let m = &s.messages[i];
-    if m.kind == MessageKind::Return {
-        return if !m.method.is_empty() { m.method.clone() } else { m.returns.clone().unwrap_or_default() };
+    match m.kind {
+        MessageKind::Return => return if !m.method.is_empty() { m.method.clone() } else { m.returns.clone().unwrap_or_default() },
+        MessageKind::Destroy => return "«destroy»".into(),
+        MessageKind::Ref => return m.method.clone(),
+        _ => {}
     }
-    let n = s.messages[..=i].iter().filter(|x| x.kind != MessageKind::Return).count();
+    let n = s.messages[..=i].iter().filter(|x| x.kind.is_call()).count();
     let call = if m.method.contains('(') { m.method.clone() } else { format!("{}({})", m.method, m.args.clone().unwrap_or_default()) };
-    format!("{n}: {call}{}", m.returns.as_ref().map(|r| format!(" : {r}")).unwrap_or_default())
+    format!("{n}: {}{call}", if m.kind == MessageKind::Create { "«create» " } else { "" })
 }
 
+/// Where everything of a sequence goes: lifeline columns and a y for every timeline event.
 pub struct SeqLayout {
     pub xs: HashMap<String, f64>,
     pub widths: HashMap<String, f64>,
+    pub labels: HashMap<String, String>,
     pub height: f64,
+    pub timeline: Timeline,
+    /// y of each event (arrows, separators, frame edges)
+    pub ys: Vec<f64>,
 }
 
-pub fn sequence_layout(m: &dyn Measure, s: &Sequence) -> SeqLayout {
+pub fn sequence_layout(m: &dyn Measure, s: &Sequence, is_actor: &dyn Fn(&str) -> bool) -> SeqLayout {
+    let actor = |p: &str| is_actor(s.class_of(p)) || is_actor(p);
+    let t = sequence::timeline(s, &actor);
+    let mut labels = HashMap::new();
     let mut xs = HashMap::new();
     let mut widths = HashMap::new();
+    let lab = FontSpec::mono(11.5);
     let mut x = 0.0;
     for (i, p) in s.participants.iter().enumerate() {
-        let w = (m.width(p, f::NAME) + 30.0).max(110.0);
+        let a = actor(p);
+        let label = s.lifeline(p).label(a);
+        let w = (m.width(&label, FontSpec::sans(13.5).bold()) + 30.0).max(110.0);
         widths.insert(p.clone(), w);
+        labels.insert(p.clone(), label);
         if i > 0 {
-            // make room for the longest label between neighbours
+            // room for the longest label between neighbours (calls, replies) and self-calls
             let prev = &s.participants[i - 1];
             let mut need: f64 = 190.0;
             for (k, msg) in s.messages.iter().enumerate() {
-                if (&msg.from == prev && &msg.to == p) || (&msg.from == p && &msg.to == prev) {
-                    need = need.max(m.width(&format!("✗ «create» {}", msg_label(s, k)), FontSpec::mono(11.5)) + 40.0);
+                let between = (&msg.from == prev && &msg.to == p) || (&msg.from == p && &msg.to == prev);
+                if between && msg.kind != MessageKind::Ref {
+                    need = need.max(m.width(&format!("✗ {}", msg_label(s, k)), lab) + 40.0);
+                    if let Some(r) = &msg.returns {
+                        need = need.max(m.width(r, lab) + 40.0);
+                    }
                     if let Some(n) = &msg.note {
                         need = need.max(m.width(n, FontSpec::sans(10.5).italic()) + 40.0);
                     }
                 }
-                // a self-call's label runs to the right of its loop: keep it clear of the next lifeline
                 if &msg.from == prev && &msg.to == prev {
-                    need = need.max(m.width(&format!("✗ {}", msg_label(s, k)), FontSpec::mono(11.5)) + 80.0);
+                    need = need.max(m.width(&format!("✗ {}", msg_label(s, k)), lab) + 80.0);
                 }
             }
             x += need.max((widths[prev] + w) / 2.0 + 40.0);
         }
         xs.insert(p.clone(), x);
     }
-    SeqLayout { xs, widths, height: TOP + s.messages.len() as f64 * ROW + 40.0 }
+    // one y per event
+    let mut ys = vec![0.0; t.events.len()];
+    let mut y = TOP;
+    let mut last = TOP;
+    for (k, e) in t.events.iter().enumerate() {
+        ys[k] = match e {
+            Event::FragmentStart(_) => {
+                let top = y;
+                y += 42.0;
+                top
+            }
+            Event::OperandStart { .. } => {
+                let sep = y + 6.0;
+                y += 32.0;
+                sep
+            }
+            Event::FragmentEnd(_) => {
+                let bottom = y + 2.0;
+                y += 14.0;
+                bottom
+            }
+            Event::Create(_) => y + 24.0,
+            Event::Message(i) => {
+                let created = k > 0 && matches!(t.events[k - 1], Event::Create(_));
+                let my = if created { y + 24.0 } else { y + 20.0 };
+                y += if s.messages[*i].kind == MessageKind::Ref { 52.0 } else if created { 56.0 } else { ROW };
+                last = my;
+                my
+            }
+            Event::Return { .. } => {
+                last = y + 16.0;
+                y += 32.0;
+                last
+            }
+            Event::Activate { .. } => {
+                if k > 0 && matches!(t.events[k - 1], Event::Message(_)) { last } else { y + 12.0 }
+            }
+            Event::Deactivate { .. } | Event::Destroy(_) => {
+                if k > 0 && matches!(t.events[k - 1], Event::Message(_) | Event::Return { .. } | Event::Deactivate { .. } | Event::Destroy(_)) { last } else { y - 4.0 }
+            }
+        };
+    }
+    SeqLayout { xs, widths, labels, height: y + 40.0, timeline: t, ys }
+}
+
+/// A pentagon tag (`loop`, `alt`, `ref` …) at a frame's top left; returns its width.
+fn frame_tag(m: &dyn Measure, g: &mut Group, x: f64, y: f64, text: &str) -> f64 {
+    let w = m.width(text, FontSpec::sans(11.5).bold()) + 18.0;
+    g.poly(vec![[x, y], [x + w, y], [x + w, y + 12.0], [x + w - 7.0, y + 19.0], [x, y + 19.0]], true, Some(solid(Rgb::hex(0x2b2e35))), Some(stroke(c::EDGE, 1.0)));
+    g.text(x + 7.0, y + 14.0, text.to_string(), FontSpec::sans(11.5).bold(), c::TEXT, Anchor::Start);
+    w
 }
 
 pub fn sequence_scene(m: &dyn Measure, s: &Sequence, is_actor: &dyn Fn(&str) -> bool) -> ViewScene {
-    let l = sequence_layout(m, s);
+    let l = sequence_layout(m, s, is_actor);
+    let t = &l.timeline;
     let bottom = l.height;
-    // activations: from a call to the matching return (or a short bar)
+    let actor = |p: &str| is_actor(s.class_of(p)) || is_actor(p);
+    let lab = FontSpec::mono(11.5);
+    // created / destroyed lifelines and activation bars
+    let mut created_at: HashMap<&str, f64> = HashMap::new();
+    let mut destroyed_at: HashMap<&str, f64> = HashMap::new();
     struct Act {
         p: String,
         y1: f64,
@@ -709,97 +785,238 @@ pub fn sequence_scene(m: &dyn Measure, s: &Sequence, is_actor: &dyn Fn(&str) -> 
         depth: usize,
     }
     let mut acts: Vec<Act> = vec![];
-    let mut open: Vec<(String, usize, String)> = vec![];
-    for (i, msg) in s.messages.iter().enumerate() {
-        let y = TOP + i as f64 * ROW + 20.0;
-        if msg.kind == MessageKind::Return {
-            if let Some(k) = open.iter().rposition(|o| o.0 == msg.from && o.2 == msg.to) {
-                let o = open.remove(k);
-                let depth = open.iter().filter(|x| x.0 == o.0).count();
-                acts.push(Act { p: o.0, y1: TOP + o.1 as f64 * ROW + 20.0, y2: y, depth });
+    let mut open: Vec<(String, f64, usize)> = vec![];
+    // the right edge of each message's label (frames must include them)
+    let mut label_right: HashMap<usize, f64> = HashMap::new();
+    for (k, e) in t.events.iter().enumerate() {
+        let y = l.ys[k];
+        match e {
+            Event::Create(p) => {
+                created_at.insert(p.as_str(), y);
             }
-        } else if msg.kind == MessageKind::Sync && msg.from != msg.to {
-            open.push((msg.to.clone(), i, msg.from.clone()));
-        } else if msg.from == msg.to {
-            acts.push(Act { p: msg.to.clone(), y1: y + 6.0, y2: y + 30.0, depth: 1 });
+            Event::Destroy(p) => {
+                destroyed_at.insert(p.as_str(), y);
+            }
+            Event::Activate { lifeline, depth } => open.push((lifeline.clone(), y, *depth)),
+            Event::Deactivate { lifeline } => {
+                if let Some(i) = open.iter().rposition(|o| &o.0 == lifeline) {
+                    let o = open.remove(i);
+                    acts.push(Act { p: o.0, y1: o.1, y2: y.max(o.1 + 16.0), depth: o.2 });
+                }
+            }
+            _ => {}
         }
     }
     for o in open {
-        acts.push(Act { p: o.0, y1: TOP + o.1 as f64 * ROW + 20.0, y2: TOP + o.1 as f64 * ROW + 46.0, depth: 0 });
+        acts.push(Act { p: o.0, y1: o.1, y2: o.1 + 26.0, depth: o.2 });
     }
+    let xl = |p: &str| l.xs.get(p).copied();
+    for (i, msg) in s.messages.iter().enumerate() {
+        let (Some(x1), Some(x2)) = (xl(&msg.from), xl(&msg.to)) else { continue };
+        let w = m.width(&format!("✗ {}", msg_label(s, i)), lab);
+        label_right.insert(i, if x1 == x2 { x1 + 60.0 + w } else { (x1 + x2) / 2.0 + w / 2.0 });
+    }
+
     let mut scene = Scene::default();
     let mut hits = vec![];
     let mut points = vec![];
+
+    // ---- frames (under everything)
+    let mut frames = Group::new();
+    // guards sit above lifelines and bars (readable over an activation)
+    let mut guards = Group::new();
+    let guard = |g: &mut Group, x: f64, y: f64, text: &str| {
+        let t = format!("[{}]", text.trim_matches(['[', ']']));
+        let w = m.width(&t, FontSpec::sans(11.0).italic());
+        g.rect(x - 3.0, y - 12.0, w + 6.0, 16.0, 3.0, Some(solid(c::BG)), None);
+        g.text(x, y, t, FontSpec::sans(11.0).italic(), c::DIM, Anchor::Start);
+    };
+    let depths = sequence::fragment_depths(t);
+    for (fk, f) in t.fragments.iter().enumerate() {
+        let start = t.events.iter().position(|e| *e == Event::FragmentStart(fk));
+        let end = t.events.iter().position(|e| *e == Event::FragmentEnd(fk));
+        let (Some(start), Some(end)) = (start, end) else { continue };
+        let (top, bot) = (l.ys[start], l.ys[end]);
+        let range = sequence::fragment_messages(f);
+        let mut xs: Vec<f64> = vec![];
+        let mut right: f64 = f64::MIN;
+        for i in range.clone() {
+            let msg = &s.messages[i];
+            for p in [&msg.from, &msg.to] {
+                if let Some(x) = xl(p) {
+                    xs.push(x);
+                }
+            }
+            if let Some(r) = label_right.get(&i) {
+                right = right.max(*r);
+            }
+        }
+        if xs.is_empty() {
+            continue;
+        }
+        let d = depths.get(fk).copied().unwrap_or(0) as f64;
+        let x1 = xs.iter().cloned().fold(f64::MAX, f64::min) - 46.0 + d * 9.0;
+        let x2 = (xs.iter().cloned().fold(f64::MIN, f64::max) + 46.0 - d * 9.0).max(right + 14.0 - d * 9.0).max(x1 + 180.0);
+        let mut g = Group::new().anim(Anim::Enter(format!("frag:{fk}")));
+        g.rect(x1, top, x2 - x1, bot - top, 3.0, Some(paint(c::NODE, 0.35)), Some(stroke(c::EDGE, 1.1)));
+        let tw = frame_tag(m, &mut g, x1, top, f.kind.as_str());
+        if let Some(gd) = &f.operands[0].guard {
+            guard(&mut guards, x1 + 10.0, top + 34.0, gd);
+        }
+        let _ = tw;
+        for (k, e) in t.events.iter().enumerate() {
+            if let Event::OperandStart { fragment, operand } = e {
+                if *fragment == fk {
+                    let sy = l.ys[k];
+                    g.line([x1, sy], [x2, sy], stroke(c::EDGE, 1.0).dash(6.0, 4.0));
+                    if let Some(gd) = &f.operands[*operand].guard {
+                        guard(&mut guards, x1 + 10.0, sy + 18.0, gd);
+                    }
+                }
+            }
+        }
+        frames.add(g);
+    }
+    scene.root.add(frames);
+
+    // ---- lifelines: header where the object comes to life, dashed line until its ✗ (or the end)
     let mut g = Group::new();
     for p in &s.participants {
-        let x = l.xs[p];
-        let w = l.widths[p];
-        let actor = is_actor(p);
+        let (Some(x), Some(w)) = (xl(p), l.widths.get(p).copied()) else { continue };
+        let a = actor(p);
+        let label = l.labels.get(p).cloned().unwrap_or_else(|| p.clone());
         let mut pg = Group::new().anim(Anim::Enter(format!("part:{p}")));
-        pg.line([x, if actor { 52.0 } else { 36.0 }], [x, bottom], stroke(c::FAINT, 1.0).dash(5.0, 5.0));
-        if actor {
+        let head_mid = created_at.get(p.as_str()).copied();
+        let line_top = match head_mid {
+            Some(cy) => cy + HEAD / 2.0,
+            None if a => 52.0,
+            None => HEAD,
+        };
+        let line_end = destroyed_at.get(p.as_str()).copied().unwrap_or(bottom);
+        pg.line([x, line_top], [x, line_end], stroke(c::FAINT, 1.0).dash(5.0, 5.0));
+        if a {
             let mut ag = Group::at(x, 0.0);
             let st = stroke(c::TEXT, 1.5);
             ag.push(Prim::Circle { cx: 0.0, cy: -14.0, r: 8.0, fill: None, stroke: Some(st) });
             ag.line([0.0, -6.0], [0.0, 10.0], st);
             ag.line([-11.0, 0.0], [11.0, 0.0], st);
             ag.poly(vec![[-9.0, 23.0], [0.0, 10.0], [9.0, 23.0]], false, None, Some(st));
-            ag.text(0.0, 40.0, p.clone(), FontSpec::sans(12.5), c::TEXT, Anchor::Middle);
+            ag.text(0.0, 40.0, label, FontSpec::sans(12.5), c::TEXT, Anchor::Middle);
             pg.add(ag);
         } else {
-            pg.rect(x - w / 2.0, 0.0, w, 36.0, 6.0, Some(solid(c::NODE)), Some(stroke(c::BORDER, 1.2)));
-            pg.text(x, 23.0, p.clone(), FontSpec::sans(13.5).bold(), c::TEXT, Anchor::Middle);
-            hits.push(Hit { shape: HitShape::Rect { x1: x - w / 2.0, y1: 0.0, x2: x + w / 2.0, y2: 36.0 }, target: HitTarget::None, hover: Some(format!("class:{p}")), node: None, title: None });
+            let top = head_mid.map(|cy| cy - HEAD / 2.0).unwrap_or(0.0);
+            pg.rect(x - w / 2.0, top, w, HEAD, 6.0, Some(solid(c::NODE)), Some(stroke(c::BORDER, 1.2)));
+            pg.text(x, top + 23.0, label, FontSpec::sans(13.5).bold(), c::TEXT, Anchor::Middle);
+            hits.push(Hit { shape: HitShape::Rect { x1: x - w / 2.0, y1: top, x2: x + w / 2.0, y2: top + HEAD }, target: HitTarget::None, hover: Some(format!("class:{}", s.class_of(p))), node: None, title: None });
+        }
+        if let Some(dy) = destroyed_at.get(p.as_str()) {
+            let st = stroke(c::TEXT, 2.0);
+            pg.line([x - 9.0, dy - 9.0], [x + 9.0, dy + 9.0], st);
+            pg.line([x - 9.0, dy + 9.0], [x + 9.0, dy - 9.0], st);
         }
         g.add(pg);
     }
     for a in &acts {
-        let x = l.xs.get(&a.p).copied().unwrap_or(0.0);
-        g.rect(x - 6.0 + a.depth as f64 * 5.0, a.y1, 12.0, (a.y2 - a.y1).max(14.0), 0.0, Some(solid(Rgb::hex(0x30343d))), Some(stroke(c::BORDER, 1.0)));
-    }
-    for (i, msg) in s.messages.iter().enumerate() {
-        let y = TOP + i as f64 * ROW + 20.0;
-        let (Some(&x1), Some(&x2)) = (l.xs.get(&msg.from), l.xs.get(&msg.to)) else { continue };
-        let bad = msg.problem.is_some();
-        let color = if bad {
-            c::CYCLE
-        } else if msg.status == Status::Pruned {
-            c::FAINT
-        } else if msg.kind == MessageKind::Return {
-            c::DIM
-        } else {
-            c::TEXT
+        let Some(x) = xl(&a.p) else { continue };
+        // a created object is active from below its header
+        let y1 = match created_at.get(a.p.as_str()) {
+            Some(cy) if (a.y1 - cy).abs() < 1.0 => cy + HEAD / 2.0,
+            _ => a.y1,
         };
-        let label = msg_label(s, i);
-        let tgt = Target::Message { sequence: s.name.clone(), index: i };
-        let hover = format!("message:{}#{i}", s.name);
-        let mut mg = Group::new().opacity(if msg.status == Status::Pruned { 0.35 } else { 1.0 });
-        if x1 == x2 {
-            let pts = vec![[x1 + 6.0, y + 4.0], [x1 + 52.0, y + 4.0], [x1 + 52.0, y + 26.0], [x1 + 12.0, y + 26.0]];
-            mg.poly(pts.clone(), false, None, Some(stroke(color, 1.3)));
-            mg.poly(vec![[x1 + 12.0, y + 26.0], [x1 + 22.0, y + 21.0], [x1 + 22.0, y + 31.0]], true, Some(solid(color)), None);
-            mg.text(x1 + 60.0, y + 8.0, format!("{}{label}", if bad { "✗ " } else { "" }), FontSpec::mono(11.5), color, Anchor::Start);
-            hits.push(Hit { shape: HitShape::Line { pts, width: 14.0 }, target: HitTarget::Target(tgt.clone()), hover: Some(hover), node: None, title: None });
+        g.rect(x - 6.0 + a.depth as f64 * 5.0, y1, 12.0, (a.y2 - y1).max(14.0), 0.0, Some(solid(Rgb::hex(0x30343d))), Some(stroke(c::BORDER, 1.0)));
+    }
+    g.add(std::mem::take(&mut guards));
+
+    // ---- arrows
+    let arrow = |mg: &mut Group, x1: f64, x2: f64, y: f64, color: Rgb, dashed: bool, filled: bool, end_inset: f64| -> (f64, f64) {
+        let dir = if x2 > x1 { 1.0 } else { -1.0 };
+        let ex = x2 - dir * end_inset;
+        let sx = x1 + dir * 7.0;
+        let st = stroke(color, 1.3);
+        mg.push(Prim::Path { cmds: vec![PathCmd::Move([sx, y]), PathCmd::Line([ex, y])], stroke: if dashed { st.dash(6.0, 4.0) } else { st } });
+        if filled {
+            mg.poly(vec![[ex, y], [ex - dir * 11.0, y - 5.0], [ex - dir * 11.0, y + 5.0]], true, Some(solid(color)), None);
         } else {
-            let dir = if x2 > x1 { 1.0 } else { -1.0 };
-            let ex = x2 - dir * 7.0;
-            let sx = x1 + dir * 7.0;
-            let dashed = matches!(msg.kind, MessageKind::Return | MessageKind::Create);
-            let s = stroke(color, if bad { 1.8 } else { 1.3 });
-            mg.push(Prim::Path { cmds: vec![PathCmd::Move([sx, y]), PathCmd::Line([ex, y])], stroke: if dashed { s.dash(6.0, 4.0) } else { s } });
-            if matches!(msg.kind, MessageKind::Sync | MessageKind::Create) {
-                mg.poly(vec![[ex, y], [ex - dir * 11.0, y - 5.0], [ex - dir * 11.0, y + 5.0]], true, Some(solid(color)), None);
-            } else {
-                mg.poly(vec![[ex - dir * 11.0, y - 5.0], [ex, y], [ex - dir * 11.0, y + 5.0]], false, None, Some(stroke(color, 1.3)));
-            }
-            mg.text((x1 + x2) / 2.0, y - 7.0, format!("{}{}{label}", if bad { "✗ " } else { "" }, if msg.kind == MessageKind::Create { "«create» " } else { "" }), FontSpec::mono(11.5), color, Anchor::Middle);
-            if let Some(n) = &msg.note {
-                mg.text((x1 + x2) / 2.0, y + 15.0, n.clone(), FontSpec::sans(10.5).italic(), c::FAINT, Anchor::Middle);
-            }
-            hits.push(Hit { shape: HitShape::Line { pts: vec![[sx, y], [ex, y]], width: 14.0 }, target: HitTarget::Target(tgt.clone()), hover: Some(hover), node: None, title: None });
+            mg.poly(vec![[ex - dir * 11.0, y - 5.0], [ex, y], [ex - dir * 11.0, y + 5.0]], false, None, Some(stroke(color, 1.3)));
         }
-        g.add(mg);
-        points.push((tgt, [(x1 + x2) / 2.0, y]));
+        (sx, ex)
+    };
+    for (k, e) in t.events.iter().enumerate() {
+        let y = l.ys[k];
+        match e {
+            Event::Return { from, to, label, call } => {
+                let (Some(x1), Some(x2)) = (xl(from), xl(to)) else { continue };
+                let faded = s.messages.get(*call).is_some_and(|m| m.status == Status::Pruned);
+                let mut mg = Group::new().opacity(if faded { 0.35 } else { 1.0 });
+                arrow(&mut mg, x1, x2, y, c::DIM, true, false, 7.0);
+                if let Some(lb) = label {
+                    mg.text((x1 + x2) / 2.0, y - 6.0, lb.clone(), lab, c::DIM, Anchor::Middle);
+                }
+                g.add(mg);
+            }
+            Event::Message(i) => {
+                let msg = &s.messages[*i];
+                let tgt = Target::Message { sequence: s.name.clone(), index: *i };
+                let hover = format!("message:{}#{i}", s.name);
+                let bad = msg.problem.is_some();
+                let color = if bad {
+                    c::CYCLE
+                } else if msg.status == Status::Pruned {
+                    c::FAINT
+                } else if msg.kind == MessageKind::Return {
+                    c::DIM
+                } else {
+                    c::TEXT
+                };
+                let label = format!("{}{}", if bad { "✗ " } else { "" }, msg_label(s, *i));
+                let mut mg = Group::new().opacity(if msg.status == Status::Pruned { 0.35 } else { 1.0 });
+                if msg.kind == MessageKind::Ref {
+                    // interaction use: a frame over the covered lifelines
+                    let cover: Vec<f64> = [&msg.from, &msg.to].iter().filter_map(|p| xl(p)).collect();
+                    let cover = if cover.is_empty() { l.xs.values().copied().collect() } else { cover };
+                    let x1 = cover.iter().cloned().fold(f64::MAX, f64::min) - 50.0;
+                    let x2 = (cover.iter().cloned().fold(f64::MIN, f64::max) + 50.0).max(x1 + m.width(&msg.method, FontSpec::sans(12.5)) + 90.0);
+                    let (top, h) = (y - 14.0, 38.0);
+                    mg.rect(x1, top, x2 - x1, h, 3.0, Some(solid(c::NODE)), Some(stroke(color, 1.2)));
+                    frame_tag(m, &mut mg, x1, top, "ref");
+                    mg.text((x1 + x2) / 2.0 + 12.0, top + 25.0, msg.method.clone(), FontSpec::sans(12.5), color, Anchor::Middle);
+                    hits.push(Hit { shape: HitShape::Rect { x1, y1: top, x2, y2: top + h }, target: HitTarget::Target(tgt.clone()), hover: Some(hover), node: None, title: Some(format!("ref {} — click to open it", msg.method)) });
+                    points.push((tgt, [(x1 + x2) / 2.0, y]));
+                    g.add(mg);
+                    continue;
+                }
+                let (Some(x1), Some(x2)) = (xl(&msg.from), xl(&msg.to)) else { continue };
+                if x1 == x2 {
+                    if msg.kind == MessageKind::Destroy {
+                        // the object ends itself: only the ✗
+                        points.push((tgt, [x1, y]));
+                        continue;
+                    }
+                    let pts = vec![[x1 + 6.0, y + 4.0], [x1 + 52.0, y + 4.0], [x1 + 52.0, y + 26.0], [x1 + 12.0, y + 26.0]];
+                    mg.poly(pts.clone(), false, None, Some(stroke(color, 1.3)));
+                    mg.poly(vec![[x1 + 12.0, y + 26.0], [x1 + 22.0, y + 21.0], [x1 + 22.0, y + 31.0]], true, Some(solid(color)), None);
+                    mg.text(x1 + 60.0, y + 8.0, label, lab, color, Anchor::Start);
+                    hits.push(Hit { shape: HitShape::Line { pts, width: 14.0 }, target: HitTarget::Target(tgt.clone()), hover: Some(hover), node: None, title: None });
+                } else {
+                    // a create arrow ends on the new object's header box
+                    let inset = if msg.kind == MessageKind::Create { l.widths.get(&msg.to).map(|w| w / 2.0 + 1.0).unwrap_or(7.0) } else { 7.0 };
+                    let (dashed, filled) = match msg.kind {
+                        MessageKind::Return | MessageKind::Create => (true, false),
+                        MessageKind::Async => (false, false),
+                        _ => (false, true),
+                    };
+                    let (sx, ex) = arrow(&mut mg, x1, x2, y, color, dashed, filled, inset);
+                    mg.text((sx + ex) / 2.0, y - 7.0, label, lab, color, Anchor::Middle);
+                    if let Some(n) = &msg.note {
+                        mg.text((x1 + x2) / 2.0, y + 15.0, n.clone(), FontSpec::sans(10.5).italic(), c::FAINT, Anchor::Middle);
+                    }
+                    hits.push(Hit { shape: HitShape::Line { pts: vec![[sx, y], [ex, y]], width: 14.0 }, target: HitTarget::Target(tgt.clone()), hover: Some(hover), node: None, title: None });
+                }
+                g.add(mg);
+                points.push((tgt, [(x1 + x2) / 2.0, y]));
+            }
+            _ => {}
+        }
     }
     scene.root.add(g);
     scene.hits = hits;

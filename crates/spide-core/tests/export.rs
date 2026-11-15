@@ -25,6 +25,27 @@ fn fixture() -> Design {
                         {"from":"LendingService","to":"LoanController","method":"loan","kind":"return"}]}"#,
     )
     .unwrap()];
+    // UML: named lifelines, fragments, create/destroy, a ref and implicit replies
+    d.sequences.push(
+        spide_core::sequence::from_input(&serde_json::json!({
+            "name": "Return a book",
+            "lifelines": [{"name": "Member"}, {"name": "ctl", "class": "LoanController"}, {"name": "svc", "class": "LendingService"},
+                          {"name": "repo", "class": "LoanRepository"}, {"name": "loans", "class": "Loan", "multi": true}],
+            "steps": [
+                {"from": "Member", "to": "ctl", "method": "borrow", "args": "id, isbn"},
+                {"from": "ctl", "to": "svc", "method": "lend", "returns": "loan"},
+                {"fragment": "loop", "guard": "for each open loan", "steps": [
+                    {"fragment": "alt", "operands": [
+                        {"guard": "overdue", "steps": [{"from": "svc", "to": "loans", "method": "isOverdue", "args": "today", "returns": "true"}]},
+                        {"guard": "else", "steps": [{"from": "svc", "to": "loans", "method": "isOverdue", "kind": "async"}]}]}]},
+                {"fragment": "opt", "guard": "member wants a receipt", "steps": [
+                    {"from": "svc", "to": "repo", "method": "LoanRepository", "kind": "create"},
+                    {"from": "svc", "to": "repo", "method": "findByMember", "args": "m", "returns": "loans"},
+                    {"from": "svc", "to": "repo", "kind": "destroy"}]},
+                {"ref": "Pay fine", "over": ["Member", "ctl"]}]
+        }))
+        .unwrap(),
+    );
     // a layout so direction hints are emitted
     let mut lay = std::collections::BTreeMap::new();
     for (i, c) in d.classes.iter().enumerate() {
@@ -111,9 +132,18 @@ fn sequence_export_flags_invalid_messages() {
     let d = fixture();
     let m = compute(&d, false);
     let t = plantuml::export("sequence", &d, &m, &d.layout).unwrap();
-    assert!(t.contains("actor Member"));
+    assert!(t.contains("actor \"Member\" as Member"));
     assert!(t.contains("LoanRepository.explode() does not exist"));
     assert!(t.contains("1: borrow(id, isbn)"));
+    // UML: named lifelines, fragments, creation at its message, destruction, refs, implied replies
+    assert!(t.contains("participant \"ctl : LoanController\" as ctl"));
+    assert!(t.contains("participant \"loans : Loan[*]\" as loans"));
+    assert!(!t.contains("participant \"repo : LoanRepository\" as repo\n\nMember"), "created objects aren't declared up front");
+    assert!(t.contains("create participant \"repo : LoanRepository\" as repo\nsvc --> repo : 5: <<create>> LoanRepository()"));
+    assert!(t.contains("loop for each open loan\nalt overdue"));
+    assert!(t.contains("destroy repo"));
+    assert!(t.contains("ref over Member, ctl : Pay fine"));
+    assert!(t.contains("svc --> ctl : loan"), "implied reply with the returned value");
 }
 
 #[test]

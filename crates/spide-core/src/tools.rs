@@ -168,17 +168,28 @@ pub fn tool_list() -> Value {
            change, the receiver's LCOM4, role fit, a score, a why, and ready-to-use OPS. Turn the top 2–3 into propose_decision \
            options (copy their ops) — the user chooses and approves.",
          "inputSchema":{"type":"object","properties":{"method":{"type":"string"},"group":{"type":"array","items":{"type":"string"}}}}},
-        {"name":"set_sequence","description":"Create/replace one sequence diagram. Participants: classes or actors. Each sync/async/create message's \
-           `method` must be an existing method name on the `to` class (validated; problems are reported back and highlighted). \
-           Use kind=return for replies.",
+        {"name":"set_sequence","description":"Create/replace one UML sequence diagram. LIFELINES are objects `name : Class` \
+           (e.g. {\"name\":\"l\",\"class\":\"Loan\"}; omit class for actors and when the object is just `: Class`, then name = class; \
+           multi=true for a multi-object `loans : Loan[*]`), left → right. STEPS run top to bottom: a message {from, to, method, args, \
+           returns, kind: sync|async|create|destroy|return, note}, a combined fragment {fragment: loop|opt|break|critical, guard, steps} \
+           or {fragment: alt|par, operands:[{guard, steps}…]} (alt: one guard per operand, the last may be \"else\"), or an interaction \
+           use {ref: \"<other sequence>\", over: [first lifeline, last lifeline]}. Every sync/async message's `method` must be an existing \
+           method of the receiver's CLASS (validated). Create an object with kind=create before any message to it (its box is drawn \
+           there); end it with kind=destroy (✗; from = to: it ends itself). Activations and reply arrows are drawn automatically: put \
+           the returned value in the call's `returns`; explicit kind=return messages are optional.",
          "inputSchema":{"type":"object","properties":{
             "name":{"type":"string"},"use_case":{"type":"string"},
-            "participants":{"type":"array","items":{"type":"string"},"description":"Ordered lifelines (left→right)"},
-            "messages":{"type":"array","items":{"type":"object","properties":{
-                "from":{"type":"string"},"to":{"type":"string"},"method":{"type":"string"},"args":{"type":"string"},
-                "returns":{"type":"string"},"kind":{"type":"string","enum":["sync","async","return","create"]},"note":{"type":"string"}},
-                "required":["from","to","method"]}}},
-          "required":["name","messages"]}}
+            "lifelines":{"type":"array","items":{"type":"object","properties":{
+                "name":{"type":"string"},"class":{"type":"string"},"multi":{"type":"boolean"}},"required":["name"]}},
+            "steps":{"type":"array","description":"messages, fragments and refs, top to bottom (fragments nest)",
+                "items":{"type":"object","properties":{
+                    "from":{"type":"string"},"to":{"type":"string"},"method":{"type":"string"},"args":{"type":"string"},
+                    "returns":{"type":"string"},"kind":{"type":"string","enum":["sync","async","create","destroy","return"]},"note":{"type":"string"},
+                    "fragment":{"type":"string","enum":["loop","alt","opt","par","break","critical"]},"guard":{"type":"string"},
+                    "steps":{"type":"array","items":{"type":"object"}},
+                    "operands":{"type":"array","items":{"type":"object","properties":{"guard":{"type":"string"},"steps":{"type":"array","items":{"type":"object"}}}}},
+                    "ref":{"type":"string"},"over":{"type":"array","items":{"type":"string"}}}}}},
+          "required":["name","lifelines","steps"]}}
     ])
 }
 
@@ -291,7 +302,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
                     json!({"packages": derive::package_view(&v).packages, "dependencies": m.package_deps})
                 }
                 "use_case" => serde_json::to_value(&v.use_cases).unwrap(),
-                "sequence" => serde_json::to_value(&v.sequences).unwrap(),
+                "sequence" => json!(v.sequences.iter().filter(|s| s.status != Status::Pruned).map(crate::sequence::to_steps).collect::<Vec<_>>()),
                 _ => return Err("kind must be domain|package|use_case|sequence".into()),
             };
             ok(out.to_string(), false)
@@ -447,7 +458,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             ok(text, true)
         }
         "set_sequence" => {
-            let s: Sequence = parse(args)?;
+            let s = crate::sequence::from_input(args)?;
             let problems = store.set_sequence(s).map_err(|e| e.0)?;
             ok(
                 if problems.is_empty() {

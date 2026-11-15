@@ -635,6 +635,85 @@ pub enum MessageKind {
     Async,
     Return,
     Create,
+    /// «destroy»: ends the target's lifeline with ✗ (`from == to`: the object ends itself).
+    Destroy,
+    /// Interaction use: `ref <method>` (another sequence) over the lifelines `from`..`to`.
+    Ref,
+}
+
+impl MessageKind {
+    /// A call that makes the receiver do something (and is numbered).
+    pub fn is_call(self) -> bool {
+        matches!(self, MessageKind::Sync | MessageKind::Async | MessageKind::Create)
+    }
+}
+
+/// A lifeline: an object (`name : Class`) or an actor (`class == name`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Lifeline {
+    /// Instance name and the id messages use in `from`/`to`.
+    pub name: String,
+    /// The class (or the actor's name). Empty: same as `name`.
+    pub class: String,
+    /// A multi-object (`loans : Loan[*]`).
+    pub multi: bool,
+}
+
+impl Lifeline {
+    pub fn class(&self) -> &str {
+        if self.class.is_empty() { &self.name } else { &self.class }
+    }
+    /// `l : Loan`, `: Loan` when the name is the class, `loans : Loan[*]`.
+    pub fn label(&self, actor: bool) -> String {
+        if actor {
+            return self.name.clone();
+        }
+        let multi = if self.multi { "[*]" } else { "" };
+        if self.name == self.class() { format!(": {}{multi}", self.class()) } else { format!("{} : {}{multi}", self.name, self.class()) }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FragmentKind {
+    #[default]
+    Loop,
+    Alt,
+    Opt,
+    Par,
+    Break,
+    Critical,
+}
+
+impl FragmentKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FragmentKind::Loop => "loop",
+            FragmentKind::Alt => "alt",
+            FragmentKind::Opt => "opt",
+            FragmentKind::Par => "par",
+            FragmentKind::Break => "break",
+            FragmentKind::Critical => "critical",
+        }
+    }
+}
+
+/// One operand of a combined fragment: messages `first..=last` (indices into `Sequence.messages`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Operand {
+    pub guard: Option<String>,
+    pub first: usize,
+    pub last: usize,
+}
+
+/// A combined fragment (`loop`, `alt`, …); fragments nest by containment.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Fragment {
+    pub kind: FragmentKind,
+    pub operands: Vec<Operand>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -659,11 +738,28 @@ pub struct Message {
 pub struct Sequence {
     pub name: String,
     pub use_case: Option<String>,
+    /// Lifeline ids, left → right.
     pub participants: Vec<String>,
+    /// Instance names and classes of the lifelines (missing: the participant is the class).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub lifelines: Vec<Lifeline>,
     pub messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fragments: Vec<Fragment>,
     pub generated_rev: Option<u64>,
     pub status: Status,
     pub feedback: Option<String>,
+}
+
+impl Sequence {
+    /// The lifeline with this id (a plain participant is its own class).
+    pub fn lifeline(&self, id: &str) -> Lifeline {
+        self.lifelines.iter().find(|l| l.name == id).cloned().unwrap_or_else(|| Lifeline { name: id.to_string(), class: id.to_string(), multi: false })
+    }
+    /// The class a lifeline id stands for.
+    pub fn class_of<'a>(&'a self, id: &'a str) -> &'a str {
+        self.lifelines.iter().find(|l| l.name == id).map(Lifeline::class).unwrap_or(id)
+    }
 }
 
 /// A class an expected change would touch, and why.

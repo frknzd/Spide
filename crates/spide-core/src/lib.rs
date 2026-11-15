@@ -22,6 +22,7 @@ pub mod pdf;
 pub mod png;
 pub mod rules;
 pub mod scenarios;
+pub mod sequence;
 pub mod store;
 pub mod sync;
 pub mod proposal_review;

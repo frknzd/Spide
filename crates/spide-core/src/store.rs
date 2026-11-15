@@ -759,30 +759,38 @@ pub fn has_method(d: &Design, class: &str, method: &str) -> bool {
 pub fn validate_sequence(d: &Design, s: &mut Sequence) -> Vec<String> {
     let mut problems = vec![];
     let is_actor = |n: &str| d.use_cases.actors.iter().any(|a| a.name == n);
-    for m in s.messages.iter() {
+    for l in &s.lifelines {
+        if !s.participants.contains(&l.name) {
+            s.participants.push(l.name.clone());
+        }
+    }
+    for m in s.messages.iter().filter(|m| m.kind != MessageKind::Ref || !m.from.is_empty()) {
         for p in [&m.from, &m.to] {
-            if !s.participants.contains(p) {
+            if !p.is_empty() && !s.participants.contains(p) {
                 s.participants.push(p.clone());
             }
         }
     }
     for p in &s.participants {
-        if d.live_class(p).is_none() && !is_actor(p) {
+        let class = s.class_of(p);
+        if d.live_class(class).is_none() && !is_actor(class) {
             problems.push(format!("participant {p} is neither a class nor an actor"));
         }
     }
+    let classes: Vec<String> = s.messages.iter().map(|m| s.class_of(&m.to).to_string()).collect();
     for (i, m) in s.messages.iter_mut().enumerate() {
         m.problem = None;
-        if m.kind == MessageKind::Return || is_actor(&m.to) {
+        let to = &classes[i];
+        if matches!(m.kind, MessageKind::Return | MessageKind::Destroy | MessageKind::Ref) || is_actor(to) {
             continue;
         }
         let name = m.method.split('(').next().unwrap_or("").trim().to_string();
-        let problem = if d.live_class(&m.to).is_none() {
-            Some(format!("{} is not a class", m.to))
+        let problem = if d.live_class(to).is_none() {
+            Some(format!("{to} is not a class"))
         } else if m.kind == MessageKind::Create {
             None
-        } else if !has_method(d, &m.to, &name) {
-            Some(format!("{}.{}() does not exist", m.to, name))
+        } else if !has_method(d, to, &name) {
+            Some(format!("{to}.{name}() does not exist"))
         } else {
             None
         };

@@ -715,12 +715,25 @@ pub fn body(ui: &mut Ui, key: &str, cx: &CardCtx, pinned: bool, selected: &Optio
             let Some((seq, idx)) = rest.split_once('#') else { return false };
             let s = design.sequences.iter().find(|x| x.name == seq);
             let Some(m) = s.and_then(|s| idx.parse::<usize>().ok().and_then(|i| s.messages.get(i))) else { return false };
+            let s = s.unwrap();
+            use spide_core::model::MessageKind;
+            // lifelines are objects `name : Class`
+            let who = |p: &str| s.lifeline(p).label(design.use_cases.actors.iter().any(|a| a.name == s.class_of(p)));
             let args = match (&m.args, m.kind) {
                 (Some(a), _) => format!("({a})"),
-                (None, spide_core::model::MessageKind::Return) => String::new(),
+                (None, MessageKind::Return | MessageKind::Destroy | MessageKind::Ref) => String::new(),
                 _ => "()".into(),
             };
-            ui.label(RichText::new(format!("{} → {}: {}{args}", m.from, m.to, m.method)).font(mono(14.0)).strong().color(css::TEXT));
+            let head = match m.kind {
+                MessageKind::Ref => format!("ref {}", m.method),
+                MessageKind::Destroy if m.from == m.to => format!("{} ends itself ✗", who(&m.to)),
+                MessageKind::Destroy => format!("{} → {}: «destroy»", who(&m.from), who(&m.to)),
+                _ => format!("{} → {}: {}{args}", who(&m.from), who(&m.to), m.method),
+            };
+            ui.label(RichText::new(head).font(mono(14.0)).strong().color(css::TEXT));
+            if m.kind == MessageKind::Ref {
+                widgets::small_faint(ui, "interaction use · click to open that sequence");
+            }
             let k = format!("{:?}", m.kind).to_lowercase();
             widgets::faint(ui, format!("{} message{}", kind_text(&k), m.returns.as_ref().map(|r| format!(" · returns {r}")).unwrap_or_default()));
             if let Some(n) = &m.note {

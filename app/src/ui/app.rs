@@ -623,7 +623,7 @@ impl SpideApp {
         );
     }
 
-    fn on_click_target(&mut self, t: Target) {
+    pub(super) fn on_click_target(&mut self, t: Target) {
         let Some(snap) = self.snap.clone() else { return };
         let view = &snap.view;
         if self.review_active {
@@ -662,6 +662,16 @@ impl SpideApp {
         if let Target::UseCase { name } = &t {
             self.scenario = Some(name.clone());
             self.tab = Tab::Sequence;
+        }
+        // a `ref` frame opens the sequence it refers to
+        if let Target::Message { sequence, index } = &t {
+            if let Some(m) = view.sequences.iter().find(|s| &s.name == sequence).and_then(|s| s.messages.get(*index)).filter(|m| m.kind == spide_core::model::MessageKind::Ref) {
+                if view.sequences.iter().any(|s| s.name == m.method && s.status != Status::Pruned) {
+                    self.scenario = Some(m.method.clone());
+                } else {
+                    self.toast("info", format!("No sequence “{}” yet — ask pi for it", m.method));
+                }
+            }
         }
     }
 

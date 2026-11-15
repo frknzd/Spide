@@ -194,7 +194,7 @@ pub fn impact(before: &Design, after: &Design) -> Impact {
     }
 
     for s in after.sequences.iter().filter(|s| s.status.is_live()) {
-        if s.participants.iter().any(|p| touched.contains(p)) {
+        if s.participants.iter().any(|p| touched.contains(s.class_of(p))) {
             out.affected_scenarios.push(format!("sequence \"{}\"", s.name));
         }
     }

@@ -415,6 +415,7 @@ pub fn use_case_diagram(d: &Design) -> String {
 }
 
 pub fn sequence_diagrams(d: &Design) -> String {
+    use crate::sequence::{self, Event};
     let mut all = String::new();
     let actors: Vec<&str> = d.use_cases.actors.iter().map(|a| a.name.as_str()).collect();
     for s in d.sequences.iter().filter(|s| shown(s.status)) {
@@ -423,36 +424,74 @@ pub fn sequence_diagrams(d: &Design) -> String {
         let mut out = header(&format!("{} — {}", d.name, s.name), "sequence diagram");
         let _ = writeln!(
             out,
-            "skinparam sequence {{\n  LifeLineBorderColor #5D6474\n  ParticipantBackgroundColor {NODE}\n  ParticipantBorderColor {BORDER}\n  ParticipantFontColor {TEXT}\n  ActorBorderColor {TEXT}\n  ActorBackgroundColor {BG}\n  ActorFontColor {TEXT}\n  LifeLineBackgroundColor #30343D\n  ArrowColor {TEXT}\n}}\nautoactivate on\n"
+            "skinparam sequence {{\n  LifeLineBorderColor #5D6474\n  ParticipantBackgroundColor {NODE}\n  ParticipantBorderColor {BORDER}\n  ParticipantFontColor {TEXT}\n  ActorBorderColor {TEXT}\n  ActorBackgroundColor {BG}\n  ActorFontColor {TEXT}\n  LifeLineBackgroundColor #30343D\n  ArrowColor {TEXT}\n  GroupBorderColor #8A93A6\n  ReferenceBorderColor #8A93A6\n}}\n<style>\nsequenceDiagram {{\n  group {{\n    FontColor {DIM}\n    LineColor #8A93A6\n  }}\n  groupHeader {{\n    FontColor {TEXT}\n    BackGroundColor #2B2E35\n    LineColor #8A93A6\n  }}\n  reference {{\n    FontColor {TEXT}\n    BackGroundColor #25272D\n    LineColor #8A93A6\n  }}\n  referenceHeader {{\n    FontColor {TEXT}\n    BackGroundColor #2B2E35\n  }}\n}}\n</style>\n"
         );
-        for p in &s.participants {
-            let kw = if actors.contains(&p.as_str()) { "actor" } else { "participant" };
-            let _ = writeln!(out, "{kw} {}", id(p));
+        let is_actor = |n: &str| actors.contains(&n);
+        let t = sequence::timeline(&s, &is_actor);
+        let created = sequence::created(&t);
+        let decl = |p: &str| {
+            let actor = is_actor(s.class_of(p)) || is_actor(p);
+            format!("{} \"{}\" as {}", if actor { "actor" } else { "participant" }, esc(&s.lifeline(p).label(actor)), id(p))
+        };
+        for p in s.participants.iter().filter(|p| !created.contains(p)) {
+            let _ = writeln!(out, "{}", decl(p));
         }
         out.push('\n');
         let mut numbered = 0;
-        for m in s.messages.iter().filter(|m| m.status != Status::Pruned) {
-            let color = if m.problem.is_some() { format!("[{RED}]") } else { String::new() };
-            let (arrow, text) = match m.kind {
-                MessageKind::Return => (format!("-{color}->"), m.method.clone()),
-                MessageKind::Async => (format!("-{color}>>"), call_text(m)),
-                MessageKind::Create => {
-                    let _ = writeln!(out, "create {}", id(&m.to));
-                    (format!("-{color}>"), format!("<<create>> {}", call_text(m)))
+        for e in &t.events {
+            match e {
+                Event::FragmentStart(k) => {
+                    let f = &t.fragments[*k];
+                    let _ = writeln!(out, "{} {}", f.kind.as_str(), f.operands[0].guard.as_deref().map(|g| esc(g.trim_matches(['[', ']']))).unwrap_or_default());
                 }
-                MessageKind::Sync => (format!("-{color}>"), call_text(m)),
-            };
-            if m.kind != MessageKind::Return {
-                numbered += 1;
-            }
-            let problem = m.problem.as_ref().map(|p| format!(" <color:{RED}>✗ {}</color>", esc(p))).unwrap_or_default();
-            let num = if m.kind == MessageKind::Return { String::new() } else { format!("{numbered}: ") };
-            let _ = writeln!(out, "{} {arrow} {} : {num}{}{problem}", id(&m.from), id(&m.to), esc(&text));
-            if m.from == m.to && m.kind == MessageKind::Sync {
-                let _ = writeln!(out, "return");
-            }
-            if let Some(n) = &m.note {
-                let _ = writeln!(out, "note right : {}", esc(n));
+                Event::OperandStart { fragment, operand } => {
+                    let g = t.fragments[*fragment].operands[*operand].guard.as_deref().map(|g| esc(g.trim_matches(['[', ']']))).unwrap_or_default();
+                    let _ = writeln!(out, "else {g}");
+                }
+                Event::FragmentEnd(_) => out.push_str("end\n"),
+                Event::Create(p) => {
+                    let _ = writeln!(out, "create {}", decl(p));
+                }
+                Event::Destroy(p) => {
+                    let _ = writeln!(out, "destroy {}", id(p));
+                }
+                Event::Activate { lifeline, .. } => {
+                    let _ = writeln!(out, "activate {}", id(lifeline));
+                }
+                Event::Deactivate { lifeline } => {
+                    let _ = writeln!(out, "deactivate {}", id(lifeline));
+                }
+                Event::Return { from, to, label, .. } => {
+                    let _ = writeln!(out, "{} --> {}{}", id(from), id(to), label.as_ref().map(|l| format!(" : {}", esc(l))).unwrap_or_default());
+                }
+                Event::Message(i) => {
+                    let m = &s.messages[*i];
+                    if m.status == Status::Pruned {
+                        continue;
+                    }
+                    let color = if m.problem.is_some() { format!("[{RED}]") } else { String::new() };
+                    let problem = m.problem.as_ref().map(|p| format!(" <color:{RED}>✗ {}</color>", esc(p))).unwrap_or_default();
+                    if m.kind.is_call() {
+                        numbered += 1;
+                    }
+                    let line = match m.kind {
+                        MessageKind::Ref => {
+                            let over: Vec<String> = [&m.from, &m.to].iter().filter(|p| !p.is_empty()).map(|p| id(p)).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+                            let over = if over.is_empty() { s.participants.iter().map(|p| id(p)).collect::<Vec<_>>() } else { over };
+                            format!("ref over {} : {}", over.join(", "), esc(&m.method))
+                        }
+                        MessageKind::Destroy if m.from == m.to => continue,
+                        MessageKind::Destroy => format!("{} -{color}> {} : <<destroy>>{problem}", id(&m.from), id(&m.to)),
+                        MessageKind::Return => format!("{} -{color}-> {} : {}", id(&m.from), id(&m.to), esc(if m.method.is_empty() { m.returns.as_deref().unwrap_or("") } else { &m.method })),
+                        MessageKind::Async => format!("{} -{color}>> {} : {numbered}: {}{problem}", id(&m.from), id(&m.to), esc(&call_text(m))),
+                        MessageKind::Create => format!("{} -{color}-> {} : {numbered}: <<create>> {}{problem}", id(&m.from), id(&m.to), esc(&call_text(m))),
+                        MessageKind::Sync => format!("{} -{color}> {} : {numbered}: {}{problem}", id(&m.from), id(&m.to), esc(&call_text(m))),
+                    };
+                    let _ = writeln!(out, "{line}");
+                    if let Some(n) = &m.note {
+                        let _ = writeln!(out, "note right : {}", esc(n));
+                    }
+                }
             }
         }
         out.push_str("@enduml\n\n");
@@ -464,12 +503,9 @@ pub fn sequence_diagrams(d: &Design) -> String {
     all
 }
 
+/// The call as written on the arrow (the returned value goes on the reply).
 fn call_text(m: &Message) -> String {
-    let base = if m.method.contains('(') { m.method.clone() } else { format!("{}({})", m.method, m.args.as_deref().unwrap_or("")) };
-    match &m.returns {
-        Some(r) => format!("{base} : {r}"),
-        None => base,
-    }
+    if m.method.contains('(') { m.method.clone() } else { format!("{}({})", m.method, m.args.as_deref().unwrap_or("")) }
 }
 
 /// Export the given view (`class`, `domain`, `package`, `usecase`, `sequence`).
