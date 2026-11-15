@@ -1,11 +1,11 @@
 //! The derived views as scenes: package diagram, C4 system context/containers, use cases and
 //! sequence diagrams.
 
-use crate::class_view::{chip, edge, EdgeKind, EdgeSpec, EdgeStyle};
+use crate::class_view::{chip, edge_parts, EdgeKind, EdgeSpec, EdgeStyle};
 use crate::layout::{self, Direction, LayoutEdge, LayoutNode, Positions};
 use crate::route::{Deco, PathCmd, RBox, REdge, RouteCache};
 use crate::scene::{paint, solid, stroke, tag, Anchor, Anim, Group, Hit, HitShape, HitTarget, Prim, Scene};
-use crate::visuals::{c, f, health_color, layer_color, layer_name, FontSpec, Measure, Rect, Rgb};
+use crate::visuals::{c, f, health_color, layer_color, layer_name, wrap_all, FontSpec, Measure, Rect, Rgb};
 use spide_core::metrics::Metrics;
 use spide_core::model::{Actor, Interaction, MessageKind, RelationKind, Sequence, Status, UseCase};
 use spide_core::Target;
@@ -76,7 +76,7 @@ pub fn package_scene(m: &dyn Measure, d: &spide_core::derive::Derived, metrics: 
     let pos = st
         .layout
         .get(key, || {
-            let nodes: Vec<LayoutNode> = pkgs.iter().map(|p| LayoutNode { id: p.name.clone(), w: boxes[p.name.as_str()].0, h: boxes[p.name.as_str()].1 + 22.0, group: None }).collect();
+            let nodes: Vec<LayoutNode> = pkgs.iter().map(|p| LayoutNode { id: p.name.clone(), w: boxes[p.name.as_str()].0, h: boxes[p.name.as_str()].1 + 22.0, group: None, external: false }).collect();
             let edges: Vec<LayoutEdge> = deps.iter().map(|d| LayoutEdge { from: d.from.clone(), to: d.to.clone(), kind: "dependency".into() }).collect();
             layout::layered(&nodes, &edges, Direction::Down)
         })
@@ -94,6 +94,7 @@ pub fn package_scene(m: &dyn Measure, d: &spide_core::derive::Derived, metrics: 
     let mut hits = vec![];
     let mut points = vec![];
     let mut edges = Group::new();
+    let mut labels = Group::new();
     for dep in deps {
         let (Some(a), Some(b)) = (rect(&dep.from), rect(&dep.to)) else { continue };
         let color = if dep.in_cycle {
@@ -126,8 +127,13 @@ pub fn package_scene(m: &dyn Measure, d: &spide_core::derive::Derived, metrics: 
             route: routes.get(&id),
             status: None,
             key: id.clone(),
+            label_at: None,
         };
-        edges.add(edge(m, &spec, &mut hits));
+        {
+            let (l, t) = edge_parts(m, &spec, &mut hits);
+            edges.add(l);
+            labels.add(t);
+        }
     }
     scene.root.add(edges);
     let mut nodes = Group::new();
@@ -176,6 +182,7 @@ pub fn package_scene(m: &dyn Measure, d: &spide_core::derive::Derived, metrics: 
         points.push((t, [r.x, r.y]));
     }
     scene.root.add(nodes);
+    scene.root.add(labels);
     scene.hits = hits;
     ViewScene { scene, points }
 }
@@ -297,19 +304,22 @@ pub fn system_scene(m: &dyn Measure, d: &spide_core::derive::Derived, metrics: &
         }
     }
     let mut boxes: HashMap<String, (f64, f64)> = HashMap::new();
-    for n in &nodes {
+    for n in &mut nodes {
         let mut w = m.width(&n.title, f::NAME).max(m.width(n.sub.as_deref().unwrap_or(""), f::SMALL)) + 40.0;
         for l in &n.lines {
             w = w.max(m.width(l, f::SMALL) + 30.0);
         }
-        let w2 = w.ceil().max(if n.kind == Kind::System { 240.0 } else { 170.0 }).min(320.0);
+        let title_w = m.width(&n.title, f::NAME).max(m.width(&format!("[{}]", n.sub.as_deref().unwrap_or("")), FontSpec::sans(11.0))) + 40.0;
+        let w2 = w.ceil().max(if n.kind == Kind::System { 240.0 } else { 170.0 }).min(320.0).max(title_w.ceil());
+        // long description lines wrap inside the box instead of running out of it
+        n.lines = n.lines.iter().flat_map(|l| wrap_all(m, l, w2 - 30.0, FontSpec::sans(11.0))).map(|l| l.trim().to_string()).collect();
         boxes.insert(n.id.clone(), (w2, if n.kind == Kind::Person { 92.0 } else { 62.0 } + n.lines.len() as f64 * 16.0));
     }
     let key = format!("{level:?}{:?}{:?}", nodes.iter().map(|n| (&n.id, boxes[&n.id].0 as i64, boxes[&n.id].1 as i64)).collect::<Vec<_>>(), edges.iter().map(|e| format!("{}>{}", e.from, e.to)).collect::<Vec<_>>());
     let pos = st
         .layout
         .get(key, || {
-            let ln: Vec<LayoutNode> = nodes.iter().map(|n| LayoutNode { id: n.id.clone(), w: boxes[&n.id].0, h: boxes[&n.id].1 + 20.0, group: None }).collect();
+            let ln: Vec<LayoutNode> = nodes.iter().map(|n| LayoutNode { id: n.id.clone(), w: boxes[&n.id].0, h: boxes[&n.id].1 + 20.0, group: None, external: false }).collect();
             let le: Vec<LayoutEdge> = edges.iter().map(|e| LayoutEdge { from: e.from.clone(), to: e.to.clone(), kind: "dependency".into() }).collect();
             layout::layered(&ln, &le, Direction::Down)
         })
@@ -326,6 +336,7 @@ pub fn system_scene(m: &dyn Measure, d: &spide_core::derive::Derived, metrics: &
     let mut hits = vec![];
     let mut points = vec![];
     let mut eg = Group::new();
+    let mut labels = Group::new();
     for (i, e) in edges.iter().enumerate() {
         let (Some(a), Some(b)) = (rect(&e.from), rect(&e.to)) else { continue };
         let is_link = e.from != sv.system && e.to != sv.system && sv.links.iter().any(|l| l.from == e.from && l.to == e.to);
@@ -345,8 +356,13 @@ pub fn system_scene(m: &dyn Measure, d: &spide_core::derive::Derived, metrics: &
             route: routes.get(&i.to_string()),
             status: None,
             key: format!("c4e{i}"),
+            label_at: None,
         };
-        eg.add(edge(m, &spec, &mut hits));
+        {
+            let (l, t) = edge_parts(m, &spec, &mut hits);
+            eg.add(l);
+            labels.add(t);
+        }
     }
     scene.root.add(eg);
     let mut ng = Group::new();
@@ -418,6 +434,7 @@ pub fn system_scene(m: &dyn Measure, d: &spide_core::derive::Derived, metrics: &
         }
     }
     scene.root.add(ng);
+    scene.root.add(labels);
     scene.hits = hits;
     ViewScene { scene, points }
 }
@@ -532,6 +549,7 @@ pub fn usecase_scene(m: &dyn Measure, design: &spide_core::Design, st: &mut UseC
         scene.root.add(g);
     }
     let mut eg = Group::new();
+    let mut labels = Group::new();
     for u in &ucs {
         for a in &u.actors {
             let (Some((ar, _)), Some(ur)) = (l.actors.get(a), l.ucs.get(&u.name)) else { continue };
@@ -552,8 +570,13 @@ pub fn usecase_scene(m: &dyn Measure, design: &spide_core::Design, st: &mut UseC
                 route: routes.get(&id),
                 status: None,
                 key: id.clone(),
+                label_at: None,
             };
-            eg.add(edge(m, &spec, &mut hits));
+            {
+            let (l, t) = edge_parts(m, &spec, &mut hits);
+            eg.add(l);
+            labels.add(t);
+        }
         }
     }
     for u in &ucs {
@@ -577,8 +600,13 @@ pub fn usecase_scene(m: &dyn Measure, design: &spide_core::Design, st: &mut UseC
                 route: routes.get(&id),
                 status: None,
                 key: id.clone(),
+                label_at: None,
             };
-            eg.add(edge(m, &spec, &mut hits));
+            {
+            let (l, t) = edge_parts(m, &spec, &mut hits);
+            eg.add(l);
+            labels.add(t);
+        }
         }
     }
     scene.root.add(eg);
@@ -616,6 +644,7 @@ pub fn usecase_scene(m: &dyn Measure, design: &spide_core::Design, st: &mut UseC
         points.push((t, [r.x, r.y]));
     }
     scene.root.add(ng);
+    scene.root.add(labels);
     scene.hits = hits;
     ViewScene { scene, points }
 }
@@ -655,7 +684,14 @@ pub fn sequence_layout(m: &dyn Measure, s: &Sequence) -> SeqLayout {
             let mut need: f64 = 190.0;
             for (k, msg) in s.messages.iter().enumerate() {
                 if (&msg.from == prev && &msg.to == p) || (&msg.from == p && &msg.to == prev) {
-                    need = need.max(m.width(&msg_label(s, k), f::MEMBER) + 40.0);
+                    need = need.max(m.width(&format!("✗ «create» {}", msg_label(s, k)), FontSpec::mono(11.5)) + 40.0);
+                    if let Some(n) = &msg.note {
+                        need = need.max(m.width(n, FontSpec::sans(10.5).italic()) + 40.0);
+                    }
+                }
+                // a self-call's label runs to the right of its loop: keep it clear of the next lifeline
+                if &msg.from == prev && &msg.to == prev {
+                    need = need.max(m.width(&format!("✗ {}", msg_label(s, k)), FontSpec::mono(11.5)) + 80.0);
                 }
             }
             x += need.max((widths[prev] + w) / 2.0 + 40.0);

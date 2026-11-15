@@ -2,7 +2,7 @@
 
 use spide_core::metrics::ClassMetrics;
 use spide_core::model::{Attribute, Class, Layer, Method, Status, Visibility};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// An sRGB colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -197,6 +197,8 @@ pub struct Row {
     pub is_static: bool,
     pub is_abstract: bool,
     pub y: f64,
+    /// continuation line of a wrapped member/note (same element as the row above)
+    pub cont: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -215,6 +217,26 @@ pub fn stereotype_text(stereotype: Option<&str>) -> Option<String> {
         None | Some("") | Some("abstract") => None,
         Some(s) => Some(format!("«{s}»")),
     }
+}
+
+/// Greedy word wrap without losing text: every word is kept, a word longer than `width` stays on its
+/// own line. Continuation lines are indented.
+pub fn wrap_all(m: &dyn Measure, text: &str, width: f64, font: FontSpec) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    let mut cur = String::new();
+    for word in text.split_whitespace() {
+        let next = if cur.is_empty() { word.to_string() } else { format!("{cur} {word}") };
+        if m.width(&next, font) <= width || cur.trim().is_empty() {
+            cur = next;
+        } else {
+            out.push(cur);
+            cur = format!("\u{a0}\u{a0}\u{a0}\u{a0}{word}");
+        }
+    }
+    if !cur.is_empty() || out.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 /// Greedy word wrap to at most `max` lines of `width` px (the last one truncated).
@@ -276,6 +298,8 @@ pub struct BoxContext<'a> {
     pub keep_attrs: Option<HashSet<String>>,
     /// `attribute:name` / `method:name` rows that carry a diagnostic marker (reserve room for it)
     pub flagged: Option<HashSet<String>>,
+    /// method → misplacement mark (`↗ Home`) drawn inside the row's right end (reserve room for it)
+    pub mark_texts: Option<HashMap<String, String>>,
 }
 
 fn accessor_prefix(name: &str) -> bool {
@@ -336,11 +360,17 @@ pub fn class_box(m: &dyn Measure, c: &BoxInput, methods: bool, level: u8, ctx: &
     let is_enum = matches!(c.stereotype, Some("enum") | Some("enumeration"));
     let push = |rows: &mut Vec<Row>, y: &mut f64, w: &mut f64, r: Row, font: FontSpec| {
         let marker = if r.kind != RowKind::Note && ctx.flagged.as_ref().is_some_and(|f| f.contains(&format!("{}:{}", r.kind.key(), r.name))) { MARKER_W } else { 0.0 };
-        *w = w.max(m.width(&r.text, font) + 2.0 * PAD_X + marker);
-        rows.push(Row { y: *y + 12.0, ..r });
-        *y += LINE;
+        let mark = if r.kind == RowKind::Method { ctx.mark_texts.as_ref().and_then(|t| t.get(&r.name)).map(|t| m.width(t, FontSpec::sans(11.0)) + 12.0).unwrap_or(0.0) } else { 0.0 };
+        // long text wraps onto continuation lines instead of being cut off
+        let lines = wrap_all(m, &r.text, MAX_TEXT, font);
+        for (i, line) in lines.into_iter().enumerate() {
+            let extra = if i == 0 { marker + mark } else { 0.0 };
+            *w = w.max(m.width(&line, font) + 2.0 * PAD_X + extra);
+            rows.push(Row { y: *y + 12.0, text: line, cont: i > 0, ..r.clone() });
+            *y += LINE;
+        }
     };
-    let note = |text: &str| Row { text: truncate_default(m, text, f::MEMBER), kind: RowKind::Note, name: text.to_string(), status: Status::Accepted, is_static: false, is_abstract: false, y: 0.0 };
+    let note = |text: &str| Row { text: text.to_string(), kind: RowKind::Note, name: text.to_string(), status: Status::Accepted, is_static: false, is_abstract: false, y: 0.0, cont: false };
 
     if level == 1 {
         return ClassBox { w: w.max(120.0).ceil(), h: header_h + 4.0, header_h, attr_y, meth_y: header_h + 4.0, rows, stereo };
@@ -351,16 +381,11 @@ pub fn class_box(m: &dyn Measure, c: &BoxInput, methods: bool, level: u8, ctx: &
             lines.push(p);
         }
         lines.extend(c.responsibilities.iter().map(|s| s.as_str()));
-        for r in lines.iter().take(5) {
-            for l in wrap(m, &format!("• {r}"), 320.0, 3, f::MEMBER) {
-                push(&mut rows, &mut y, &mut w, note(&l), f::MEMBER);
-            }
+        for r in &lines {
+            push(&mut rows, &mut y, &mut w, note(&format!("• {r}")), f::MEMBER);
         }
         if lines.is_empty() {
             push(&mut rows, &mut y, &mut w, note("(no responsibilities yet)"), f::MEMBER);
-        }
-        if lines.len() > 5 {
-            push(&mut rows, &mut y, &mut w, note(&format!("… {} more", lines.len() - 5)), f::MEMBER);
         }
         y += 6.0;
         return ClassBox { w: w.max(140.0).ceil(), h: y.ceil(), header_h, attr_y, meth_y: y, rows, stereo };
@@ -372,8 +397,8 @@ pub fn class_box(m: &dyn Measure, c: &BoxInput, methods: bool, level: u8, ctx: &
         if design && !is_enum && !kept && (ctx.inherited.is_some_and(|s| s.contains(&a.name)) || ctx.associations.is_some_and(|s| s.contains(&a.name))) {
             continue;
         }
-        let text = truncate_default(m, &if is_enum { a.name.clone() } else { attr_text(a) }, f::MEMBER);
-        push(&mut rows, &mut y, &mut w, Row { text, kind: RowKind::Attribute, name: a.name.clone(), status: a.status, is_static: a.is_static && !is_enum, is_abstract: false, y: 0.0 }, f::MEMBER);
+        let text = if is_enum { a.name.clone() } else { attr_text(a) };
+        push(&mut rows, &mut y, &mut w, Row { text, kind: RowKind::Attribute, name: a.name.clone(), status: a.status, is_static: a.is_static && !is_enum, is_abstract: false, y: 0.0, cont: false }, f::MEMBER);
     }
     if rows.is_empty() {
         y += 6.0;
@@ -395,8 +420,8 @@ pub fn class_box(m: &dyn Measure, c: &BoxInput, methods: bool, level: u8, ctx: &
                 }
             }
             shown += 1;
-            let text = truncate_default(m, &method_text(me), f::MEMBER);
-            push(&mut rows, &mut y, &mut w, Row { text, kind: RowKind::Method, name: me.name.clone(), status: me.status, is_static: me.is_static, is_abstract: me.is_abstract, y: 0.0 }, f::MEMBER);
+            let text = method_text(me);
+            push(&mut rows, &mut y, &mut w, Row { text, kind: RowKind::Method, name: me.name.clone(), status: me.status, is_static: me.is_static, is_abstract: me.is_abstract, y: 0.0, cont: false }, f::MEMBER);
         }
         if accessors > 0 || helpers > 0 {
             let mut parts = vec![];

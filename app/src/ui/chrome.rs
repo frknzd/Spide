@@ -1,7 +1,7 @@
 //! Canvas chrome: identity row, workspace actions, view tabs, toolbar (health ring and popover,
 //! detail slider, zoom group), proposal dock, toasts, welcome and startup cards.
 
-use super::theme::{bold, col, css, mono, sans};
+use super::theme::{bold, col, css, hex, mono, sans};
 use super::widgets::{self, button, toggle_button};
 use egui::{Align2, Color32, CornerRadius, Margin, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
 use spide_core::metrics::{Issue, Metrics};
@@ -389,7 +389,7 @@ pub fn zoom_group(ui: &mut Ui) -> Option<Zoom> {
 
 /// "Review proposals (N)" dock button (bottom centre of the canvas).
 pub fn proposal_bar(ui: &mut Ui, count: usize) -> bool {
-    let b = egui::Button::new(RichText::new(format!("Review decisions ({count})")).font(sans(12.0)).color(css::TEXT)).fill(css::PANEL_SOLID).stroke(Stroke::NONE).corner_radius(18).min_size(Vec2::new(0.0, 36.0));
+    let b = egui::Button::new(RichText::new(format!("Review {count} change{} on the diagram", if count == 1 { "" } else { "s" })).font(sans(12.0)).color(css::TEXT)).fill(css::PANEL_SOLID).stroke(Stroke::NONE).corner_radius(18).min_size(Vec2::new(0.0, 36.0));
     let r = ui.add(b);
     // dashed ghost border
     let pts = super::paint::rounded_rect_points(r.rect, 18.0);
@@ -397,6 +397,42 @@ pub fn proposal_bar(ui: &mut Ui, count: usize) -> bool {
     closed.push(pts[0]);
     ui.painter().extend(egui::Shape::dashed_line(&closed, Stroke::new(1.0, Color32::from_rgba_unmultiplied(94, 234, 212, 140)), 4.0, 3.0));
     r.clicked()
+}
+
+pub enum ReviewBar {
+    /// show the design before this plan (true) or with it (false)
+    Before(bool),
+    Fit,
+}
+
+/// Floating review controls on the canvas: before/proposed, fit to the changes and a legend.
+pub fn review_bar(ui: &mut Ui, before: bool, ready: bool, max_w: f32) -> Option<ReviewBar> {
+    let mut out = None;
+    widgets::panel_frame().corner_radius(18).inner_margin(Margin::symmetric(8, 5)).show(ui, |ui| {
+        ui.set_max_width(max_w.max(200.0));
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if let Some(b) = widgets::segmented(ui, &before, &[(true, "Before"), (false, "Proposed")]) {
+                if b != before {
+                    out = Some(ReviewBar::Before(b));
+                }
+            }
+            if ui.add_enabled(ready, egui::Button::new(RichText::new("Fit changes").font(sans(12.0)).color(css::TEXT)).fill(css::RAISED).stroke(Stroke::new(1.0, css::LINE)).corner_radius(6).min_size(Vec2::new(0.0, 26.0))).on_hover_text("Zoom to the classes this plan touches").clicked() {
+                out = Some(ReviewBar::Fit);
+            }
+            if max_w > 560.0 {
+                let key = |ui: &mut Ui, c: Color32, t: &str| {
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(9.0), Sense::hover());
+                    ui.painter().rect_stroke(r, 2.0, Stroke::new(1.5, c), egui::StrokeKind::Inside);
+                    ui.label(RichText::new(t).font(sans(11.0)).color(css::DIM));
+                };
+                key(ui, css::GHOST, "new / changed");
+                key(ui, hex(0xff7a85), "removed");
+                ui.label(RichText::new("· click elements to inspect or point pi at them").font(sans(11.0)).color(css::FAINT));
+            }
+        });
+    });
+    out
 }
 
 #[derive(Debug, Clone)]
@@ -448,12 +484,13 @@ pub fn toasts(ctx: &egui::Context, area: Rect, toasts: &mut Vec<Toast>) {
 
 pub enum WelcomeAction {
     Brief,
+    Skip,
     Open,
     FocusPi,
 }
 
 /// The empty-canvas welcome card.
-pub fn welcome(ui: &mut Ui, at: Rect) -> Option<WelcomeAction> {
+pub fn welcome(ui: &mut Ui, at: Rect, brief_open: bool) -> Option<WelcomeAction> {
     let mut out = None;
     let w = (at.width() - 40.0).min(460.0);
     egui::Area::new(ui.scope_id().with("welcome")).order(egui::Order::Middle).pivot(Align2::CENTER_CENTER).fixed_pos(Pos2::new(at.center().x, at.top() + at.height() * 0.46)).show(ui.ctx(), |ui| {
@@ -462,9 +499,9 @@ pub fn welcome(ui: &mut Ui, at: Rect) -> Option<WelcomeAction> {
             ui.spacing_mut().item_spacing.y = 10.0;
             widgets::kicker(ui, "Your next design starts here");
             ui.label(RichText::new("Make the architecture clear.").font(bold(21.0)).color(css::TEXT));
-            widgets::para(ui, "Describe your goals to pi. Review the alternatives and approve the design that fits. Notes are optional.", 13.0, css::DIM);
+            widgets::para(ui, "Tell pi what you're building. Proposed changes appear right on the diagram — review them there and approve what fits.", 13.0, css::DIM);
             ui.horizontal_wrapped(|ui| {
-                for (n, t) in [("01", "Set the brief"), ("02", "Explore options"), ("03", "Approve your design")] {
+                for (n, t) in [("01", "Set the brief"), ("02", "Review on the diagram"), ("03", "Approve")] {
                     egui::Frame::new().fill(css::RAISED).stroke(Stroke::new(1.0, css::LINE)).corner_radius(12).inner_margin(Margin::symmetric(9, 3)).show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
@@ -477,6 +514,9 @@ pub fn welcome(ui: &mut Ui, at: Rect) -> Option<WelcomeAction> {
             ui.horizontal(|ui| {
                 if widgets::primary(ui, "Edit brief").clicked() {
                     out = Some(WelcomeAction::Brief);
+                }
+                if brief_open && button(ui, "Skip brief").on_hover_text("Start designing right away (/skip)").clicked() {
+                    out = Some(WelcomeAction::Skip);
                 }
                 if button(ui, "Open design…").clicked() {
                     out = Some(WelcomeAction::Open);
@@ -502,10 +542,10 @@ pub fn workspace_actions(ui: &mut Ui, brief: bool, timeline: bool, commands: boo
     let mut out = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        if ui.add_enabled_ui(!review, |ui| toggle_button(ui, "Brief", brief)).inner.clicked() {
+        if toggle_button(ui, "Brief", brief).clicked() {
             out = Some(Action::Brief);
         }
-        if ui.add_enabled_ui(!review, |ui| toggle_button(ui, "Timeline", timeline)).inner.clicked() {
+        if ui.add_enabled_ui(!review, |ui| toggle_button(ui, "Timeline", timeline)).inner.on_disabled_hover_text("The timeline opens after the review (⌘T leaves review)").clicked() {
             out = Some(Action::Timeline);
         }
         if button(ui, "Find").clicked() {

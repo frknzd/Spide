@@ -5,6 +5,7 @@ pub mod canvas;
 pub mod chrome;
 pub mod decisions;
 pub mod export;
+pub mod export_jobs;
 pub mod hover_card;
 pub mod overlays;
 pub mod paint;

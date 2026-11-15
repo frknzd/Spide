@@ -80,7 +80,7 @@ pub fn tool_list() -> Value {
                 "ops": ops_schema},"required":["label","ops"]}}},
           "required":["question","options"]}},
         {"name":"propose_ops","description":"Propose small, unambiguous changes (e.g. adding obvious attributes, fixing a multiplicity). They appear as \
-           single-option decisions the user reviews and can amend in the Decisions inspector before approving. Optional decision/option fields revise an existing pending plan, not approve it. Use propose_decision instead for anything the user should think about.",
+           single-option decisions the user reviews on the diagram before approving. Group related small changes into one call with a short title-like rationale; keep unrelated changes in separate calls. Optional decision/option fields revise an existing pending plan, not approve it. Use propose_decision instead for anything the user should think about.",
          "inputSchema":{"type":"object","properties":{"ops": ops_schema,"rationale":{"type":"string"},"decision":{"type":"string"},"option":{"type":"string"}},"required":["ops"]}},
         {"name":"evaluate_defense","description":"Deprecated compatibility endpoint. Always refuses mutations; only the user may approve a design decision.",
          "inputSchema":{"type":"object","properties":{

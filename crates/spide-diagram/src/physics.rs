@@ -325,6 +325,11 @@ impl LivingLayout {
                 n.tx = None;
                 n.ty = None;
             }
+            // the computed layout is final: no collision forces drift it afterwards
+            self.alpha = 0.0;
+            self.alpha_target = 0.0;
+            self.running = false;
+            self.settle_due = Some(self.clock);
         }
     }
 

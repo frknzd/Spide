@@ -64,14 +64,25 @@ pub fn select_decision_option(st: &AppState, id: String, option: String, rev: u6
     done(st)
 }
 
-pub fn revise_decision(st: &AppState, pi: &PiBridge, id: String, rev: u64, notes: String) -> R {
+/// The structured revision request for one pending decision (stale revisions are rejected).
+pub fn revision_message(s: &crate::state::Shared, id: &str, rev: u64, notes: &str, option: Option<&str>, targets: &[String]) -> R<String> {
+    if s.store.design.rev != rev { return Err("Workspace changed; review again.".into()); }
+    let dec = s.store.design.decisions.iter().find(|d| d.id == id && d.is_pending()).ok_or("Decision is closed")?;
+    let notes = notes.trim();
+    if notes.is_empty() { return Err("Describe what should change.".into()); }
+    let plan = dec.plan.as_deref().unwrap_or("none");
+    let option = option.or(dec.chosen.as_deref()).unwrap_or("none");
+    let targets = if targets.is_empty() { "none (the whole plan)".to_string() } else { targets.iter().map(|t| format!("\n- {t}")).collect::<String>() };
+    Ok(format!(
+        "[spide · request revision · decision {id}]\nRevise this decision's concrete plan using propose_ops with decision/option IDs (or propose a replacement decision). Keep related small changes together in one coherent plan. Do NOT apply anything. No defence is required.\nDecision: {}\nPlan: {plan} · option shown to the user: {option} · design revision: {rev}\nDiagram elements the user selected:{targets}\nUser guidance: {notes}\nSource context: {}",
+        serde_json::to_string(dec).unwrap(),
+        crate::source_tracking::context(s)
+    ))
+}
+
+pub fn revise_decision(st: &AppState, pi: &PiBridge, id: String, rev: u64, notes: String, option: Option<String>, targets: Vec<String>) -> R {
     let generation = pi.ticket();
-    let msg = {
-        let s = st.lock();
-        if s.store.design.rev != rev { return Err("Workspace changed; review again.".into()); }
-        let dec = s.store.design.decisions.iter().find(|d| d.id == id && d.is_pending()).ok_or("Decision is closed")?;
-        format!("[spide · request revision · decision {id}]\nRevise this decision's concrete plan using propose_ops with decision/option IDs, or propose a replacement decision. Do NOT apply anything. No defence is required.\nDecision: {}\nUser guidance: {notes}\nSource context: {}", serde_json::to_string(dec).unwrap(), crate::source_tracking::context(&s))
-    };
+    let msg = revision_message(&st.lock(), &id, rev, &notes, option.as_deref(), &targets)?;
     pi.prompt(generation, st, msg, Some(format!("Revise {id}")))
 }
 

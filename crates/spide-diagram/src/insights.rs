@@ -15,6 +15,14 @@ pub struct MethodMark {
 
 const PLACEMENT: [&str; 6] = ["misplaced_responsibility", "duplication", "concept_elsewhere", "feature_envy", "ui_bypasses_controller", "demeter"];
 
+/// The label drawn after a flagged method (`↗ Home` or `⚠ kind`).
+pub fn mark_text(mk: &MethodMark) -> String {
+    match &mk.home {
+        Some(h) => format!("↗ {h}"),
+        None => format!("⚠ {}", mk.kind.replace('_', " ")),
+    }
+}
+
 pub type Marks = HashMap<String, HashMap<String, MethodMark>>;
 
 /// class → method → why it's flagged and its suggested home (best guess; suggest_home ranks properly).

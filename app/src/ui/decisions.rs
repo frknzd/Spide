@@ -42,7 +42,7 @@ pub fn static_scene(m: &EguiMeasure, classes: &[Class], design: &Design, highlig
     let pos = match pos {
         Some(p) => p.clone(),
         None => {
-            let nodes: Vec<LayoutNode> = classes.iter().map(|c| LayoutNode { id: c.name.clone(), w: boxes[&c.name].w, h: boxes[&c.name].h, group: None }).collect();
+            let nodes: Vec<LayoutNode> = classes.iter().map(|c| LayoutNode { id: c.name.clone(), w: boxes[&c.name].w, h: boxes[&c.name].h, group: None, external: false }).collect();
             let edges: Vec<LayoutEdge> = relations.iter().map(|r| LayoutEdge { from: r.from.clone(), to: r.to.clone(), kind: r.kind.as_str().into() }).collect();
             layout::layered(&nodes, &edges, direction)
         }
@@ -146,7 +146,7 @@ pub fn impact_details(ui: &mut Ui, impact: &Impact) {
     }
 }
 
-fn tradeoff_chips(ui: &mut Ui, o: &spide_core::model::DecisionOption, symbol_only: bool) {
+pub fn tradeoff_chips(ui: &mut Ui, o: &spide_core::model::DecisionOption, symbol_only: bool) {
     if o.tradeoffs.is_empty() {
         return;
     }
@@ -609,7 +609,7 @@ pub fn compare(ctx: &egui::Context, area: Rect, st: &mut CompareUi, kicker: &str
             }
         }
         let boxes = class_view::boxes_for(m, &union, true, 3, &rels, None, &HashSet::new(), None, None, &HashSet::new());
-        let nodes: Vec<LayoutNode> = union.iter().map(|c| LayoutNode { id: c.name.clone(), w: boxes[&c.name].w, h: boxes[&c.name].h, group: None }).collect();
+        let nodes: Vec<LayoutNode> = union.iter().map(|c| LayoutNode { id: c.name.clone(), w: boxes[&c.name].w, h: boxes[&c.name].h, group: None, external: false }).collect();
         let edges: Vec<LayoutEdge> = rels.iter().map(|r| LayoutEdge { from: r.from.clone(), to: r.to.clone(), kind: r.kind.as_str().into() }).collect();
         let pos = layout::layered(&nodes, &edges, Direction::Down);
         st.scenes = cols

@@ -122,10 +122,56 @@ pub fn boxes_for(
             keep: (!keep_m.is_empty()).then_some(keep_m),
             keep_attrs: open.then(|| of("attribute")),
             flagged: (!found.is_empty()).then(|| found.iter().map(|s| s.to_string()).collect()),
+            mark_texts: (lvl >= 3).then(|| keep.and_then(|k| k.get(&cl.name)).map(|k| k.iter().map(|(n, mk)| (n.clone(), crate::insights::mark_text(mk))).collect())).flatten(),
         };
         out.insert(cl.name.clone(), class_box(m, &BoxInput::from(cl), show_methods, lvl, &ctx, purposes.and_then(|p| p.get(&cl.name)).map(|s| s.as_str())));
     }
     out
+}
+
+/// Room above (status chips) and below (metric badges) every class box. Part of its layout and
+/// routing footprint, so chips never overlap a neighbour or a line.
+pub const CHIP_BAND: f64 = 24.0;
+
+/// Layout footprint (width, height) of a class: the scaled box plus its chip bands, at least as wide
+/// as its badge row and top chips.
+pub fn node_extent(m: &dyn Measure, cl: &Class, bx: &ClassBox, metrics: Option<&Metrics>) -> (f64, f64) {
+    let cm = metrics.and_then(|x| x.classes.get(&cl.name));
+    let s = node_scale(cm);
+    let chip_w = |t: &str| m.width(t, f::SMALL) + 16.0;
+    let bottom: f64 = badges(cm).iter().map(|b| chip_w(&b.text)).sum();
+    let mut top = 0.0;
+    if cl.aggregate_root {
+        top += chip_w("◆ aggregate");
+    }
+    if cl.external {
+        top += chip_w("«external»");
+    }
+    match cl.status {
+        Status::Proposed => top += chip_w("+ proposed"),
+        Status::Removing => top += chip_w("− proposed removal"),
+        Status::Overruled => top += chip_w("⚠ overruled"),
+        Status::Pruned => top += chip_w("pruned · click to restore"),
+        _ => {}
+    }
+    (bx.w.max(bottom).max(top) * s, (bx.h + 2.0 * CHIP_BAND) * s)
+}
+
+/// The class diagram's layout: compound (package) layered placement of every class footprint
+/// (`extents`, see [`node_extent`]). One function for the live canvas, exports and tests.
+pub fn layout_classes(m: &dyn Measure, classes: &[Class], extents: &HashMap<String, (f64, f64)>, relations: &[Relation], packages: &[Package]) -> HashMap<String, [f64; 2]> {
+    use crate::layout::{compound, GroupSpec, LayoutEdge, LayoutNode};
+    let ext_pkgs: HashSet<&str> = packages.iter().filter(|p| p.external).map(|p| p.name.as_str()).collect();
+    let nodes: Vec<LayoutNode> = classes
+        .iter()
+        .filter_map(|c| {
+            let (w, h) = *extents.get(&c.name)?;
+            Some(LayoutNode { id: c.name.clone(), w, h, group: c.package.clone(), external: c.external || c.package.as_deref().is_some_and(|p| ext_pkgs.contains(p)) })
+        })
+        .collect();
+    let edges: Vec<LayoutEdge> = relations.iter().filter(|r| r.status != Status::Pruned).map(|r| LayoutEdge { from: r.from.clone(), to: r.to.clone(), kind: r.kind.as_str().into() }).collect();
+    let groups: Vec<GroupSpec> = packages.iter().map(|p| GroupSpec { id: p.name.clone(), rank: p.layer.map(|l| l.rank()).unwrap_or(1), external: p.external, min_w: package_min_width(m, &p.name, Some(p)) }).collect();
+    compound(&nodes, &edges, &groups)
 }
 
 pub fn rect_of(name: &str, pos: &HashMap<String, [f64; 2]>, boxes: &HashMap<String, ClassBox>, metrics: Option<&Metrics>) -> Option<Rect> {
@@ -222,6 +268,8 @@ pub struct EdgeSpec<'a> {
     pub status: Option<Status>,
     /// animation key (stable per edge)
     pub key: String,
+    /// where the label goes (default: the middle of the route's longest segment)
+    pub label_at: Option<Pt>,
 }
 
 fn add(a: Pt, b: Pt) -> Pt {
@@ -269,9 +317,17 @@ fn edge_geometry(from: Rect, to: Rect, bend: f64) -> Geo {
 
 /// One relation line with its UML decoration, multiplicities and label.
 pub fn edge(m: &dyn Measure, p: &EdgeSpec, hits: &mut Vec<Hit>) -> Group {
+    let (mut g, labels) = edge_parts(m, p, hits);
+    g.add(labels);
+    g
+}
+
+/// The line (with its decorations) and, separately, its text (label, multiplicities, warnings), so
+/// callers can draw all text above every box and line.
+pub fn edge_parts(m: &dyn Measure, p: &EdgeSpec, hits: &mut Vec<Hit>) -> (Group, Group) {
     let pts = p.route.map(|r| &r.points).filter(|p| p.len() >= 2);
     let geo = match pts {
-        Some(pts) => Geo { s: pts[0], e: pts[pts.len() - 1], ctrl: [0.0, 0.0], dir_s: unit(pts[0], pts[1]), dir_e: unit(pts[pts.len() - 2], pts[pts.len() - 1]), lp: label_point(pts), bent: false },
+        Some(pts) => Geo { s: pts[0], e: pts[pts.len() - 1], ctrl: [0.0, 0.0], dir_s: unit(pts[0], pts[1]), dir_e: unit(pts[pts.len() - 2], pts[pts.len() - 1]), lp: p.label_at.unwrap_or_else(|| label_point(pts)), bent: false },
         None => edge_geometry(p.from, p.to, p.bend),
     };
     let st = &p.style;
@@ -347,6 +403,12 @@ pub fn edge(m: &dyn Measure, p: &EdgeSpec, hits: &mut Vec<Hit>) -> Group {
     line.push(Prim::Path { cmds, stroke: stroke(color, st.width as f32).dash_opt(dash) });
     g.add(line);
     g.add(head);
+    let mut lab = Group::new().opacity(st.opacity as f32);
+    if p.status == Some(Status::Proposed) {
+        lab = lab.tags(tag::PROPOSED);
+    }
+    let g_line = g;
+    let mut g = lab;
     let mult = |g: &mut Group, q: Pt, dir: Pt, text: &str, side: f64| {
         let at = add(add(q, mul(dir, 16.0)), mul(perp(dir), 11.0 * side));
         g.text(at[0], at[1] + 4.0, text, FontSpec::sans(11.0), c::DIM, Anchor::Middle);
@@ -374,7 +436,7 @@ pub fn edge(m: &dyn Measure, p: &EdgeSpec, hits: &mut Vec<Hit>) -> Group {
     if st.removing {
         g.text(geo.lp[0], geo.lp[1] + 4.0, "×", FontSpec::sans(13.0), c::REMOVING, Anchor::Middle);
     }
-    g
+    (g_line, g)
 }
 
 /// A small rounded label (status, badges).
@@ -428,6 +490,8 @@ pub struct NodeProps<'a> {
     pub revealed: bool,
     /// hovered member row (`attribute:x` / `method:x`): its visibility tag shows
     pub hovered_row: Option<&'a str>,
+    /// review: ghost elements report their concrete class/member target instead of their proposal
+    pub concrete_targets: bool,
 }
 
 pub fn class_node(ms: &dyn Measure, p: &NodeProps, parent: Xf, hits: &mut Vec<Hit>) -> Group {
@@ -450,7 +514,7 @@ pub fn class_node(ms: &dyn Measure, p: &NodeProps, parent: Xf, hits: &mut Vec<Hi
     } else {
         c::BORDER
     };
-    let target = if ghost && cls.proposal.is_some() { Target::Proposal { id: cls.proposal.clone().unwrap() } } else { Target::Class { name: cls.name.clone() } };
+    let target = if ghost && cls.proposal.is_some() && !p.concrete_targets { Target::Proposal { id: cls.proposal.clone().unwrap() } } else { Target::Class { name: cls.name.clone() } };
     let italic = cls.is_abstract || cls.stereotype.as_deref() == Some("interface");
     let bs = if ghost || pruned { vec![] } else { badges(mm) };
     let opacity = (if p.spotlit { 1.0 } else { status_opacity(st) }) * if p.dim { 0.28 } else { 1.0 } * if p.phantom { 0.5 } else { 1.0 };
@@ -540,7 +604,18 @@ pub fn class_node(ms: &dyn Measure, p: &NodeProps, parent: Xf, hits: &mut Vec<Hi
         }
         for r in &bx.rows {
             if r.kind == RowKind::Note {
-                g.push(Prim::Text { x: PAD_X, y: r.y, text: r.text.clone(), font: FontSpec::sans(12.0).italic(), color: c::DIM, opacity: 1.0, anchor: Anchor::Start, underline: false });
+                g.push(Prim::Text { x: PAD_X, y: r.y, text: r.text.clone(), font: f::MEMBER.italic(), color: c::DIM, opacity: 1.0, anchor: Anchor::Start, underline: false });
+                continue;
+            }
+            if r.cont {
+                // continuation of a wrapped member: same colour and decoration, no markers or hits
+                let color = row_color(r.status);
+                let font = if r.is_abstract { f::MEMBER.italic() } else { f::MEMBER };
+                g.push(Prim::Text { x: PAD_X, y: r.y, text: r.text.clone(), font, color, opacity: 1.0, anchor: Anchor::Start, underline: r.is_static });
+                if matches!(r.status, Status::Removing | Status::Pruned) {
+                    let tw = ms.width(&r.text, f::MEMBER);
+                    g.line([PAD_X, r.y - 4.0], [PAD_X + tw, r.y - 4.0], stroke(row_color(r.status), 1.2));
+                }
                 continue;
             }
             let (proposal, visibility) = if r.kind == RowKind::Attribute {
@@ -549,7 +624,7 @@ pub fn class_node(ms: &dyn Measure, p: &NodeProps, parent: Xf, hits: &mut Vec<Hi
                 cls.methods.iter().find(|x| x.name == r.name).map(|a| (a.proposal.clone(), Some(a.visibility))).unwrap_or((None, None))
             };
             let tgt = match (&proposal, r.status) {
-                (Some(id), Status::Proposed) => Target::Proposal { id: id.clone() },
+                (Some(id), Status::Proposed) if !p.concrete_targets => Target::Proposal { id: id.clone() },
                 _ if r.kind == RowKind::Attribute => Target::Attribute { class: cls.name.clone(), name: r.name.clone() },
                 _ => Target::Method { class: cls.name.clone(), name: r.name.clone() },
             };
@@ -578,11 +653,9 @@ pub fn class_node(ms: &dyn Measure, p: &NodeProps, parent: Xf, hits: &mut Vec<Hi
             }
             if let Some(mk) = mark {
                 let mut mg = Group::new().tags(tag::DIAG);
-                let text = match &mk.home {
-                    Some(h) => format!("↗ {h}"),
-                    None => format!("⚠ {}", mk.kind.replace('_', " ")),
-                };
-                mg.text(w + 6.0, r.y, text, FontSpec::sans(11.0), c::WARN, Anchor::Start);
+                // inside the row's reserved right end: never drawn over a neighbour or an edge
+                let right = w - 6.0 - if diag.is_some() { MARKER_W } else { 0.0 };
+                mg.text(right, r.y, crate::insights::mark_text(mk), FontSpec::sans(11.0), c::WARN, Anchor::End);
                 rg.add(mg);
                 if title.is_none() {
                     title = Some(mk.message.clone());
@@ -730,6 +803,8 @@ pub struct Opts<'a> {
     pub members: Option<&'a Members>,
     pub revealed: Option<&'a HashSet<String>>,
     pub hovered_row: Option<(&'a str, &'a str)>,
+    /// review: ghost elements report concrete class/member/relation targets instead of their proposal
+    pub concrete_targets: bool,
 }
 
 /// Route caches per edge family (relations, transient edges, package deps).
@@ -740,12 +815,88 @@ pub struct Routes {
     pub pkg: RouteCache,
 }
 
-pub fn hull_of(rs: &[Rect]) -> [f64; 4] {
-    let x1 = rs.iter().map(|r| r.x - r.w / 2.0).fold(f64::INFINITY, f64::min) - 28.0;
-    let y1 = rs.iter().map(|r| r.y - r.h / 2.0).fold(f64::INFINITY, f64::min) - 40.0;
-    let x2 = rs.iter().map(|r| r.x + r.w / 2.0).fold(f64::NEG_INFINITY, f64::max) + 28.0;
-    let y2 = rs.iter().map(|r| r.y + r.h / 2.0).fold(f64::NEG_INFINITY, f64::max) + 34.0;
+/// A package frame's title (name · layer · «external» · system).
+pub fn package_label(name: &str, pk: Option<&Package>) -> String {
+    let mut label_parts = vec![name.to_string()];
+    if let Some(l) = pk.and_then(|p| p.layer) {
+        if layer_name(l) != name {
+            label_parts.push(layer_name(l).into());
+        }
+    }
+    if pk.is_some_and(|p| p.external) {
+        label_parts.push("«external»".into());
+    }
+    if let Some(s) = pk.and_then(|p| p.system.clone()) {
+        label_parts.push(s);
+    }
+    label_parts.join("  ·  ")
+}
+
+/// Minimum frame width so the package title fits inside it.
+pub fn package_min_width(m: &dyn Measure, name: &str, pk: Option<&Package>) -> f64 {
+    m.width(&package_label(name, pk), FontSpec::sans(12.0).bold()) + 40.0
+}
+
+/// The drawn package frame around its classes, widened (symmetrically) to fit its title.
+pub fn package_hull(rs: &[Rect], min_w: f64) -> [f64; 4] {
+    let [mut x1, y1, mut x2, y2] = hull_of(rs);
+    if x2 - x1 < min_w {
+        let d = (min_w - (x2 - x1)) / 2.0;
+        x1 -= d;
+        x2 += d;
+    }
     [x1, y1, x2, y2]
+}
+
+/// Package frame around class footprints (boxes with their chip bands), as the layout reserves it.
+pub fn hull_of(rs: &[Rect]) -> [f64; 4] {
+    use crate::layout::HULL;
+    let x1 = rs.iter().map(|r| r.x - r.w / 2.0).fold(f64::INFINITY, f64::min) - HULL.left;
+    let y1 = rs.iter().map(|r| r.y - r.h / 2.0).fold(f64::INFINITY, f64::min) - HULL.top;
+    let x2 = rs.iter().map(|r| r.x + r.w / 2.0).fold(f64::NEG_INFINITY, f64::max) + HULL.right;
+    let y2 = rs.iter().map(|r| r.y + r.h / 2.0).fold(f64::NEG_INFINITY, f64::max) + HULL.bottom;
+    [x1, y1, x2, y2]
+}
+
+/// A label position along a route whose box (`w` wide, `up` above and `down` below the point) is
+/// clear of every class footprint in `avoid` and of the labels already `taken`. Tries the longest
+/// segments first, their middle first. None: no free spot (the caller keeps the default).
+pub fn place_label(pts: &[Pt], w: f64, up: f64, down: f64, avoid: &[[f64; 4]], taken: &mut Vec<[f64; 4]>) -> Option<Pt> {
+    let mut segs: Vec<(Pt, Pt, f64)> = pts.windows(2).map(|s| (s[0], s[1], (s[1][0] - s[0][0]).abs() + (s[1][1] - s[0][1]).abs())).collect();
+    segs.sort_by(|a, b| b.2.total_cmp(&a.2));
+    let free = |r: [f64; 4], taken: &Vec<[f64; 4]>| !avoid.iter().chain(taken.iter()).any(|o| r[0] < o[2] && o[0] < r[2] && r[1] < o[3] && o[1] < r[3]);
+    for (a, b, _) in &segs {
+        for t in [0.5, 0.32, 0.68, 0.18, 0.82] {
+            let q = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+            let r = [q[0] - w / 2.0 - 2.0, q[1] - up - 2.0, q[0] + w / 2.0 + 2.0, q[1] + down + 2.0];
+            if free(r, taken) {
+                taken.push(r);
+                return Some(q);
+            }
+        }
+    }
+    // crowded: beside the line instead of on it (left/right of vertical, above/below horizontal runs)
+    for (a, b, _) in &segs {
+        let vertical = (a[0] - b[0]).abs() < 0.5;
+        for t in [0.5, 0.3, 0.7] {
+            let q = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+            let offs: [Pt; 2] = if vertical { [[w / 2.0 + 6.0, 0.0], [-w / 2.0 - 6.0, 0.0]] } else { [[0.0, -(down + 8.0)], [0.0, up + 8.0]] };
+            for o in offs {
+                let q = [q[0] + o[0], q[1] + o[1]];
+                let r = [q[0] - w / 2.0 - 2.0, q[1] - up - 2.0, q[0] + w / 2.0 + 2.0, q[1] + down + 2.0];
+                if free(r, taken) {
+                    taken.push(r);
+                    return Some(q);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// A class's footprint: its box plus the chip bands above and below.
+pub fn footprint(r: Rect, scale: f64) -> Rect {
+    Rect { h: r.h + 2.0 * CHIP_BAND * scale, ..r }
 }
 
 pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene {
@@ -756,6 +907,24 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
             rects.insert(&cl.name, r);
         }
     }
+    // what edge text must not cover: every box and the chips actually drawn around it
+    let mut avoid: Vec<[f64; 4]> = vec![];
+    for cl in d.classes {
+        let Some(r) = rects.get(cl.name.as_str()) else { continue };
+        let s = node_scale(cm.and_then(|m| m.get(&cl.name)));
+        let (x1, y1, x2, y2) = (r.x - r.w / 2.0, r.y - r.h / 2.0, r.x + r.w / 2.0, r.y + r.h / 2.0);
+        avoid.push([x1 - 2.0, y1 - 2.0, x2 + 2.0, y2 + 2.0]);
+        let chip_w = |t: &str| ms.width(t, f::SMALL) + 16.0;
+        let bottom: f64 = if o.plain { 0.0 } else { badges(cm.and_then(|m| m.get(&cl.name))).iter().map(|b| chip_w(&b.text)).sum() };
+        if bottom > 0.0 {
+            avoid.push([x1, y2, x1 + bottom * s, y2 + CHIP_BAND * s]);
+        }
+        let top = cl.status != Status::Accepted || cl.external || cl.aggregate_root;
+        if top {
+            avoid.push([x1, y1 - CHIP_BAND * s, x2, y1]);
+        }
+    }
+    let mut taken: Vec<[f64; 4]> = vec![];
     let focus = o.focus_class.filter(|f| rects.contains_key(f));
     let mut neighbours: HashSet<&str> = HashSet::new();
     if let Some(fc) = focus {
@@ -797,21 +966,24 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
     for cl in d.classes {
         let Some(r) = rects.get(cl.name.as_str()) else { continue };
         if !overview || cl.package.is_none() {
-            let pad = if o.still { 0.0 } else { 22.0 };
+            // chips above / badges below are part of the footprint: live canvas and export route alike
+            let pad = CHIP_BAND * node_scale(d.metrics.and_then(|m| m.classes.get(&cl.name)));
             r_boxes.push(RBox { id: cl.name.clone(), x: r.x, y: r.y, w: r.w, h: r.h, pad_top: pad, pad_bottom: pad });
         }
         if let Some(p) = &cl.package {
+            let fr = footprint(*r, node_scale(d.metrics.and_then(|m| m.classes.get(&cl.name))));
             match by_pkg.iter_mut().find(|g| g.0 == p) {
                 Some(g) => {
                     g.1.push(&cl.name);
-                    g.2.push(*r);
+                    g.2.push(fr);
                 }
-                None => by_pkg.push((p, vec![&cl.name], vec![*r])),
+                None => by_pkg.push((p, vec![&cl.name], vec![fr])),
             }
         }
     }
+    let pkg_min_w = |name: &str| package_min_width(ms, name, d.packages.iter().find(|x| x.name == name));
     for (name, names, rs) in &by_pkg {
-        let [x1, y1, x2, y2] = hull_of(rs);
+        let [x1, y1, x2, y2] = package_hull(rs, pkg_min_w(name));
         zones.push(RZone { id: name.to_string(), x1, y1, x2, y2, members: names.iter().map(|s| s.to_string()).collect() });
         hull_boxes.push(RBox::new(*name, (x1 + x2) / 2.0, (y1 + y2) / 2.0, x2 - x1, y2 - y1));
     }
@@ -862,20 +1034,8 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
                 Some(Package { external: true, .. }) => Rgb::hex(0x6b7280),
                 _ => c::EDGE,
             };
-            let [x1, y1, x2, y2] = hull_of(rs);
-            let mut label_parts = vec![name.to_string()];
-            if let Some(l) = pk.and_then(|p| p.layer) {
-                if layer_name(l) != *name {
-                    label_parts.push(layer_name(l).into());
-                }
-            }
-            if pk.is_some_and(|p| p.external) {
-                label_parts.push("«external»".into());
-            }
-            if let Some(s) = pk.and_then(|p| p.system.clone()) {
-                label_parts.push(s);
-            }
-            let label = label_parts.join("  ·  ");
+            let [x1, y1, x2, y2] = package_hull(rs, pkg_min_w(name));
+            let label = package_label(name, pk);
             hull_of_pkg.insert(name, Rect { x: (x1 + x2) / 2.0, y: (y1 + y2) / 2.0, w: x2 - x1, h: y2 - y1 });
             let proposed = pk.is_some_and(|p| p.status == Status::Proposed);
             let hit = Hit { shape: HitShape::Rect { x1, y1, x2, y2 }, target: HitTarget::Target(Target::Package { name: name.to_string() }), hover: Some(format!("package:{name}")), node: None, title: None };
@@ -914,6 +1074,8 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
     scene.root.add(pkg_layer);
 
     let mut edges = Group::new();
+    // edge text is drawn above every box and line
+    let mut labels = Group::new();
     if overview {
         for dep in pkg_deps {
             let (Some(a), Some(b)) = (hull_of_pkg.get(dep.from.as_str()), hull_of_pkg.get(dep.to.as_str())) else { continue };
@@ -941,8 +1103,13 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
                 route: pkg_routes.get(&id),
                 status: None,
                 key: id.clone(),
+                label_at: None,
             };
-            edges.add(edge(ms, &spec, &mut hits));
+            {
+            let (l, t) = edge_parts(ms, &spec, &mut hits);
+            edges.add(l);
+            labels.add(t);
+        }
         }
     }
     // overlap lens: classes that duplicate each other, methods dealing with another class's concept
@@ -966,8 +1133,13 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
                 route: extra_routes.get(&id),
                 status: None,
                 key: id.clone(),
+                label_at: None,
             };
-            edges.add(edge(ms, &spec, &mut hits));
+            {
+            let (l, t) = edge_parts(ms, &spec, &mut hits);
+            edges.add(l);
+            labels.add(t);
+        }
         }
     }
     if !overview {
@@ -1009,8 +1181,13 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
                 route: extra_routes.get(&id),
                 status: None,
                 key: id.clone(),
+                label_at: None,
             };
-            edges.add(edge(ms, &spec, &mut hits));
+            {
+            let (l, t) = edge_parts(ms, &spec, &mut hits);
+            edges.add(l);
+            labels.add(t);
+        }
         }
     }
     for r in d.relations {
@@ -1037,7 +1214,7 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
             }
         }
         let tgt = match (&r.proposal, r.status) {
-            (Some(id), Status::Proposed) => Target::Proposal { id: id.clone() },
+            (Some(id), Status::Proposed) if !o.concrete_targets => Target::Proposal { id: id.clone() },
             _ => Target::Relation { id: r.id.clone() },
         };
         let l = r.label.clone().or_else(|| roles.as_ref().and_then(|ro| ro.get(&r.id).cloned()));
@@ -1051,6 +1228,11 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
         } else {
             l
         };
+        let label_at = rel_routes.get(&r.id).filter(|rt| rt.points.len() >= 2 && (label.is_some() || warn.is_some())).and_then(|rt| {
+            let lw = label.as_ref().map(|l| ms.width(l, f::SMALL) + 10.0).unwrap_or(0.0).max(warn.as_ref().map(|w| ms.width(w, f::SMALL.bold()) + 4.0).unwrap_or(0.0));
+            let up = if label.is_some() && warn.is_some() { 24.0 } else { 10.0 };
+            place_label(&rt.points, lw, up, 9.0, &avoid, &mut taken)
+        });
         let spec = EdgeSpec {
             from: *a,
             to: *b,
@@ -1067,8 +1249,13 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
             route: rel_routes.get(&r.id),
             status: Some(r.status),
             key: r.id.clone(),
+            label_at,
         };
-        edges.add(edge(ms, &spec, &mut hits));
+        {
+            let (l, t) = edge_parts(ms, &spec, &mut hits);
+            edges.add(l);
+            labels.add(t);
+        }
     }
     scene.root.add(edges);
 
@@ -1118,10 +1305,12 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
             members: if o.plain || cap <= 1 { None } else { o.members.and_then(|m| m.get(n)) },
             revealed: o.revealed.is_some_and(|r| r.contains(n)),
             hovered_row: o.hovered_row.filter(|h| h.0 == n).map(|h| h.1),
+            concrete_targets: o.concrete_targets,
         };
         nodes.add(class_node(ms, &props, Xf::ID, &mut hits));
     }
     scene.root.add(nodes);
+    scene.root.add(labels);
     scene.hits = hits;
     scene
 }

@@ -183,7 +183,7 @@ pub struct RouteOptions<'a> {
 
 impl Default for RouteOptions<'_> {
     fn default() -> Self {
-        Self { margin: 12.0, stub: 32.0, port_gap: 14.0, lane: 8.0, bend: 140.0, cross: 70.0, overlap: 5.0, budget_ms: 80.0, only: None, previous: None, now: None }
+        Self { margin: 12.0, stub: 24.0, port_gap: 14.0, lane: 12.0, bend: 140.0, cross: 70.0, overlap: 5.0, budget_ms: 80.0, only: None, previous: None, now: None }
     }
 }
 
@@ -1331,7 +1331,8 @@ impl RouteCache {
             self.pos = pos;
             return &self.routes;
         }
-        self.routes = route_all(boxes, edges, zones, RouteOptions { budget_ms: 90.0, ..Default::default() });
+        // a full route is final (exports, settled canvas): give it room to find validated paths
+        self.routes = route_all(boxes, edges, zones, RouteOptions { budget_ms: 400.0, ..Default::default() });
         self.structure = st;
         self.epoch = epoch;
         self.pos = pos;

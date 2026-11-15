@@ -182,7 +182,7 @@ fn proposal_note(ui: &mut Ui, design: &Design, id: Option<&str>) {
                 widgets::small_faint(ui, format!("+{} more", f.items.len() - 8));
             }
         }
-        widgets::faint(ui, "Click to review this proposal and edit its planned changes");
+        widgets::faint(ui, "Click to review it · during review, click to inspect it or point pi at it");
     });
     let pts = super::paint::rounded_rect_points(r.response.rect, 8.0);
     let mut closed = pts.clone();

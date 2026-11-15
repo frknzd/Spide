@@ -6,6 +6,7 @@ use super::canvas::{CanvasInput, CanvasOut, ClassCanvas};
 use super::chrome::{self, HealthAction, HealthState, Tab, Toast, TAB_ORDER};
 use super::decisions::{self, CompareCol, CompareUi, DecisionUi};
 use super::export::{self, DialogOut, ExportDialog, ExportSettings, ExportState, Format};
+use super::export_jobs::{self, BatchRun, BatchSettings, ExportView, JobResult};
 use super::hover_card::{self, CardAction, CardCtx};
 use super::overlays::{self, InlineAction, InlineEdit, InlineKind, Palette, PaletteAction, PruneAction, PruneState};
 use super::paint::EguiMeasure;
@@ -26,7 +27,9 @@ use serde_json::json;
 use spide_core::model::{Class, Design, DecisionState, Package, Relation, Status};
 use spide_core::Target;
 use spide_diagram::class_view::{DriftSets, Lens, Stress};
+use spide_diagram::scene::Scene;
 use spide_diagram::svg::{build_export_svg, ExportMeta, ExportOptions, LegendKey, LEGEND_ORDER};
+use spide_diagram::views::C4Level;
 use spide_diagram::visuals::DETAIL_LABELS;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::mpsc::Receiver;
@@ -105,6 +108,14 @@ pub struct SpideApp {
     pub proposal_canvas: Option<Design>,
     pub proposal_ui: ProposalUi,
     pub shown_decision: Option<String>,
+    /// the inspector lists resolved decisions (read-only history)
+    pub history_open: bool,
+    /// fit the canvas to this plan's changes once its review has loaded (deliberate navigation)
+    pub review_locate: Option<(String, f64)>,
+    /// plans whose review layout has been shown: keep positions when toggling before/after or alternatives
+    review_seen: HashSet<String>,
+    /// last canvas positions during review, so elements that disappear (before view) return in place
+    review_pos: std::collections::BTreeMap<String, spide_core::model::Pos>,
     pub timeline: bool,
     pub timeline_ui: TimelineUi,
     pub drift: Option<DriftReport>,
@@ -118,6 +129,8 @@ pub struct SpideApp {
     pub decision_ui: DecisionUi,
     pub class_canvas: Option<ClassCanvas>,
     pub domain_canvas: Option<ClassCanvas>,
+    /// off-screen canvases for exports at other detail levels (same layout pipeline)
+    pub export_canvases: HashMap<String, ClassCanvas>,
     pub views: Views,
     class_data: Option<Arc<ClassData>>,
     domain_data: Option<Arc<ClassData>>,
@@ -138,6 +151,18 @@ fn hash_of(v: impl std::hash::Hash) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     v.hash(&mut h);
     h.finish()
+}
+
+/// `20251114-104700` (batch folder names).
+fn chrono_stamp() -> String {
+    let t = super::format_time(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0));
+    // dd/mm/yyyy, hh:mm:ss
+    let d: Vec<&str> = t.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty()).collect();
+    if d.len() >= 6 {
+        format!("{}{}{}-{}{}{}", d[2], d[1], d[0], d[3], d[4], d[5])
+    } else {
+        "export".into()
+    }
 }
 
 fn slug(s: Option<&str>) -> String {
@@ -254,6 +279,10 @@ impl SpideApp {
             proposal_canvas: None,
             proposal_ui: ProposalUi { drafts, ..Default::default() },
             shown_decision: None,
+            history_open: false,
+            review_locate: None,
+            review_seen: HashSet::new(),
+            review_pos: Default::default(),
             timeline: false,
             timeline_ui: TimelineUi::default(),
             drift: None,
@@ -267,6 +296,7 @@ impl SpideApp {
             decision_ui: DecisionUi::default(),
             class_canvas: None,
             domain_canvas: None,
+            export_canvases: HashMap::new(),
             views: Views::default(),
             class_data: None,
             domain_data: None,
@@ -351,7 +381,13 @@ impl SpideApp {
             }
             self.selected_proposal = Some(id.clone());
         }
+        if !self.review_active || id.is_some() {
+            self.review_locate = Some((id.clone().or(self.selected_proposal.clone()).unwrap_or_default(), self.now()));
+        }
         self.review_active = true;
+        self.history_open = false;
+        self.source_open = false;
+        self.shown_decision = None;
         self.set_preview(None, PreviewSource::Option);
         self.compare = None;
         self.branch_cmp = None;
@@ -364,6 +400,42 @@ impl SpideApp {
         self.drawer = true;
         self.workspace.right_open = true;
         self.class_data = None;
+    }
+
+    /// A plan was approved or dismissed: show the next one (never approve it), or the completion state.
+    pub fn review_resolved(&mut self, accepted: bool) {
+        self.toast("info", if accepted { "Approved — ⌘Z undoes it" } else { "Dismissed — ⌘Z undoes it" });
+        self.review_locate = self.selected_proposal.clone().map(|id| (id, self.now()));
+    }
+
+    /// A diagram element clicked during review: switch to the plan that adds it, else inspect it and
+    /// toggle it as a target of a change request.
+    fn review_pick(&mut self, t: &Target) {
+        let key = match t {
+            Target::Class { name } => format!("class:{name}"),
+            Target::Relation { id } => format!("relation:{id}"),
+            Target::Attribute { class, name } => format!("attribute:{class}.{name}"),
+            Target::Method { class, name } => format!("method:{class}.{name}"),
+            Target::Package { name } => format!("package:{name}"),
+            Target::Proposal { id } => {
+                if Some(id) != self.selected_proposal.as_ref() {
+                    self.open_proposal_review(Some(id.clone()));
+                }
+                return;
+            }
+            _ => return,
+        };
+        // an element of an earlier pending plan: review that plan instead
+        if let Some(d) = self.proposal_canvas.as_ref() {
+            if let Some(pid) = spide_diagram::focus::proposal_at(Some(&key), &d.classes, &d.relations) {
+                if Some(&pid) != self.selected_proposal.as_ref() && d.proposals.iter().any(|p| p.id == pid) {
+                    return self.open_proposal_review(Some(pid));
+                }
+            }
+        }
+        self.proposal_ui.pick(&key);
+        self.workspace.right_open = true;
+        self.drawer = true;
     }
 
     fn calm(&mut self) {
@@ -513,6 +585,9 @@ impl SpideApp {
     fn on_click_target(&mut self, t: Target) {
         let Some(snap) = self.snap.clone() else { return };
         let view = &snap.view;
+        if self.review_active {
+            return self.review_pick(&t);
+        }
         if let Target::Proposal { id } = &t {
             return self.open_proposal_review(Some(id.clone()));
         }
@@ -658,7 +733,7 @@ impl SpideApp {
 
     // ------------------------------------------------------------------ export
 
-    fn legend_for(&self) -> Vec<LegendKey> {
+    fn legend_for(&self, tab: Tab) -> Vec<LegendKey> {
         let Some(snap) = &self.snap else { return vec![] };
         let (view, metrics) = (&snap.view, &snap.metrics);
         let mut keys: HashSet<LegendKey> = HashSet::new();
@@ -679,7 +754,7 @@ impl SpideApp {
                 Dependency => LegendKey::Dependency,
             }
         };
-        match self.tab {
+        match tab {
             Tab::Class => {
                 for r in view.relations.iter().filter(|r| r.status != Status::Pruned) {
                     keys.insert(rk(r));
@@ -721,30 +796,168 @@ impl SpideApp {
         LEGEND_ORDER.iter().copied().filter(|k| keys.contains(k)).collect()
     }
 
-    /// The export SVG of the active view.
-    fn export_svg(&mut self, o: &ExportOptions) -> Option<(String, u32, u32)> {
+    /// Diagrams of the project that currently have something to draw (batch export).
+    pub fn export_views(&self) -> Vec<ExportView> {
+        let Some(snap) = &self.snap else { return vec![] };
+        let d = &snap.view;
+        let mut out = vec![];
+        if !spide_diagram::views::system_empty(&snap.derived, C4Level::Context) {
+            out.push(ExportView::SystemContext);
+        }
+        if !spide_diagram::views::system_empty(&snap.derived, C4Level::Container) {
+            out.push(ExportView::SystemContainers);
+        }
+        if d.classes.iter().any(|c| c.status != Status::Pruned) {
+            out.push(ExportView::Class);
+        }
+        if !snap.derived.domain.classes.is_empty() {
+            out.push(ExportView::Domain);
+        }
+        if !snap.derived.packages.packages.is_empty() {
+            out.push(ExportView::Package);
+        }
+        if d.use_cases.use_cases.iter().any(|u| u.status != Status::Pruned) {
+            out.push(ExportView::Usecase);
+        }
+        for s in d.sequences.iter().filter(|s| s.status != Status::Pruned && !s.participants.is_empty()) {
+            out.push(ExportView::Sequence(s.name.clone()));
+        }
+        out
+    }
+
+    /// The diagram on screen.
+    fn current_export_view(&self) -> ExportView {
+        match self.tab {
+            Tab::System if self.views.level() == C4Level::Context => ExportView::SystemContext,
+            Tab::System => ExportView::SystemContainers,
+            Tab::Class => ExportView::Class,
+            Tab::Domain => ExportView::Domain,
+            Tab::Package => ExportView::Package,
+            Tab::Usecase => ExportView::Usecase,
+            Tab::Sequence => {
+                let seqs = self.snap.as_ref().map(|s| s.view.sequences.iter().filter(|s| s.status != Status::Pruned).map(|s| s.name.clone()).collect::<Vec<_>>()).unwrap_or_default();
+                let name = self.scenario.clone().filter(|n| seqs.contains(n)).or_else(|| seqs.first().cloned()).unwrap_or_default();
+                ExportView::Sequence(name)
+            }
+        }
+    }
+
+    /// One diagram's export scene, shared by the preview, single and batch exports. Class and Domain
+    /// at the canvas's own detail level come from the live canvas (its layout, incl. what you
+    /// dragged); other levels from an off-screen canvas running the same layout pipeline. The layout
+    /// is settled first: an export never captures a frame of a running animation.
+    fn export_scene(&mut self, v: &ExportView, level: Option<u8>, o: &ExportOptions) -> Option<Scene> {
         let snap = self.snap.clone()?;
-        let meta = ExportMeta { title: snap.view.name.clone(), view: self.tab.title().into(), health: Some(snap.metrics.health), legend: self.legend_for(), date: super::format_date_today() };
-        let scene = match self.tab {
-            Tab::Class | Tab::Domain => {
-                let data = if self.tab == Tab::Class { self.class_data()? } else { self.domain_data()? };
-                let level = snap.view.settings.detail_for(self.tab.key());
-                let metrics = if self.tab == Tab::Class { Some(&snap.metrics) } else { None };
+        match v {
+            ExportView::Class | ExportView::Domain => {
+                let class = *v == ExportView::Class;
+                let data = if class { self.class_data()? } else { self.domain_data()? };
+                let view_key = if class { "class" } else { "domain" };
+                let live_level = snap.view.settings.detail_for(view_key);
+                let level = level.unwrap_or(live_level).min(4);
+                let metrics = if class { Some(&snap.metrics) } else { None };
                 let inp = self.canvas_input(&data, &snap, metrics, level, None);
                 let now = self.now();
-                let canvas = if self.tab == Tab::Class { self.class_canvas.as_mut()? } else { self.domain_canvas.as_mut()? };
+                let canvas = if level == live_level {
+                    let slot = if class { &mut self.class_canvas } else { &mut self.domain_canvas };
+                    slot.get_or_insert_with(|| ClassCanvas::new(format!("{}:{view_key}", snap.project_dir), view_key))
+                } else {
+                    let key = format!("{}:{view_key}:{level}:{}", snap.project_dir, data.key);
+                    self.export_canvases.retain(|k, _| k.ends_with(&format!(":{}", data.key)));
+                    self.export_canvases.entry(key.clone()).or_insert_with(|| ClassCanvas::new(key, view_key))
+                };
                 canvas.export_plain = Some(!o.diagnostics);
-                let s = canvas.build_scene(&self.measure, &inp, now);
+                let s = canvas.settled_scene(&self.measure, &inp, now);
                 canvas.export_plain = None;
-                s
+                Some(s)
             }
-            _ => std::mem::take(&mut self.views.scene),
-        };
-        let r = build_export_svg(&scene, &self.measure, &meta, o);
-        if !matches!(self.tab, Tab::Class | Tab::Domain) {
-            self.views.scene = scene;
+            _ => self.view_scene(&snap, v),
         }
-        r
+    }
+
+    fn view_scene(&mut self, snap: &Snapshot, v: &ExportView) -> Option<Scene> {
+        let measure = &self.measure;
+        match v {
+            ExportView::Class | ExportView::Domain => None,
+            ExportView::Package => Some(spide_diagram::views::package_scene(measure, &snap.derived, &snap.metrics, &mut self.views.package).scene),
+            ExportView::SystemContext | ExportView::SystemContainers => {
+                let l = if *v == ExportView::SystemContext { C4Level::Context } else { C4Level::Container };
+                Some(spide_diagram::views::system_scene(measure, &snap.derived, &snap.metrics, l, &mut self.views.system).scene)
+            }
+            ExportView::Usecase => Some(spide_diagram::views::usecase_scene(measure, &snap.view, &mut self.views.usecase).scene),
+            ExportView::Sequence(name) => {
+                let s = snap.view.sequences.iter().find(|s| &s.name == name && s.status != Status::Pruned)?;
+                let actors: Vec<&str> = snap.view.use_cases.actors.iter().map(|a| a.name.as_str()).collect();
+                Some(spide_diagram::views::sequence_scene(measure, s, &|n| actors.contains(&n)).scene)
+            }
+        }
+    }
+
+    fn export_tab(v: &ExportView) -> Tab {
+        match v {
+            ExportView::SystemContext | ExportView::SystemContainers => Tab::System,
+            ExportView::Class => Tab::Class,
+            ExportView::Domain => Tab::Domain,
+            ExportView::Package => Tab::Package,
+            ExportView::Usecase => Tab::Usecase,
+            ExportView::Sequence(_) => Tab::Sequence,
+        }
+    }
+
+    /// The export SVG of one diagram (None: nothing to draw).
+    fn export_svg_for(&mut self, v: &ExportView, level: Option<u8>, o: &ExportOptions) -> Option<(String, u32, u32)> {
+        let snap = self.snap.clone()?;
+        let mut title = v.title();
+        let level = level.or_else(|| v.has_detail().then(|| snap.view.settings.detail_for(if *v == ExportView::Class { "class" } else { "domain" })));
+        if let (true, Some(l)) = (v.has_detail(), level) {
+            title = format!("{title} · {}", spide_diagram::visuals::DETAIL_LABELS[l.min(4) as usize]);
+        }
+        let meta = ExportMeta { title: snap.view.name.clone(), view: title, health: Some(snap.metrics.health), legend: self.legend_for(Self::export_tab(v)), date: super::format_date_today() };
+        let scene = self.export_scene(v, level, o)?;
+        build_export_svg(&scene, &self.measure, &meta, o)
+    }
+
+    /// The export SVG of the active view.
+    fn export_svg(&mut self, o: &ExportOptions) -> Option<(String, u32, u32)> {
+        let v = self.current_export_view();
+        self.export_svg_for(&v, None, o)
+    }
+
+    /// Write the batch's next file (one immutable design revision: a change stops the batch).
+    fn batch_step(&mut self, run: &mut BatchRun) {
+        let Some(snap) = self.snap.clone() else { return };
+        if snap.rev != run.rev {
+            run.cancelled = true;
+            run.results.push(("—".into(), JobResult::Failed("the design changed during the export; stopped (finished files are kept)".into())));
+            return;
+        }
+        let Some(job) = run.jobs.get(run.next).cloned() else { return };
+        run.next += 1;
+        let path = run.dir.join(&job.file);
+        let result = match job.format {
+            Format::Puml => spide_core::plantuml::export(job.view.plantuml(), &snap.view, &snap.metrics, &snap.view.layout).and_then(|t| export_jobs::write_atomic(&path, t.as_bytes())),
+            f => {
+                let p = &run.profiles[job.profile.min(run.profiles.len() - 1)];
+                match self.export_svg_for(&job.view, job.level, &p.options) {
+                    None => {
+                        run.results.push((job.file.clone(), JobResult::Skipped("nothing to draw".into())));
+                        return;
+                    }
+                    Some((svg, _, _)) => {
+                        let bytes = match f {
+                            Format::Png => spide_core::png::render(&svg, p.scale.clamp(1, 6) as f32),
+                            Format::Pdf => spide_core::pdf::render(&svg),
+                            _ => Ok(svg.into_bytes()),
+                        };
+                        bytes.and_then(|b| export_jobs::write_atomic(&path, &b))
+                    }
+                }
+            }
+        };
+        run.results.push((job.file.clone(), match result {
+            Ok(()) => JobResult::Written(path.display().to_string()),
+            Err(e) => JobResult::Failed(e),
+        }));
     }
 
     fn settings_for_project(&self) -> ExportSettings {
@@ -1355,6 +1568,9 @@ impl SpideApp {
             spotlight: None,
             can_move_to_package: class && self.preview.is_none() && self.drift.is_none() && !self.review_active,
             can_edit: !(class && (self.preview.is_some() || self.review_active)),
+            pickable: class && self.review_active && self.preview.is_none(),
+            highlight: None,
+            keep_layout: false,
         }
     }
 
@@ -1605,35 +1821,35 @@ impl SpideApp {
                 self.workspace.right_open = false;
             }
         }
-        let pending: Vec<&spide_core::model::Decision> = snap.view.decisions.iter().filter(|d| d.is_pending()).collect();
+        let pending = snap.view.proposals.len();
+        let resolved = snap.view.decisions.iter().filter(|d| !d.is_pending()).count();
         let nav = Rect::from_min_size(Pos2::new(r.left(), r.top() + 30.0), Vec2::new(r.width(), 50.0));
         ui.painter().rect_filled(nav, 0.0, css::BG);
+        let history_mode = self.history_open || self.shown_decision.is_some();
         ui.scope_builder(egui::UiBuilder::new().max_rect(nav.shrink2(Vec2::new(12.0, 12.0))), |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 let mode = |ui: &mut egui::Ui, text: String, on: bool| {
-                    ui.add(egui::Button::new(RichText::new(text).font(sans(12.5)).color(if on { css::GHOST } else { css::TEXT })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE).corner_radius(6).min_size(Vec2::new(0.0, 26.0)))
+                    ui.add(egui::Button::new(RichText::new(text).font(sans(12.5)).color(if on { css::GHOST } else { css::TEXT })).fill(if on { css::RAISED } else { Color32::TRANSPARENT }).stroke(Stroke::NONE).corner_radius(6).min_size(Vec2::new(0.0, 26.0)))
                 };
-                if mode(ui, format!("Decisions ({})", pending.len()), !self.source_open).clicked() {
-                    self.source_open = false;
-                    self.shown_decision = None;
+                let review_label = if pending > 0 { format!("Review ({pending})") } else { "Review".into() };
+                if mode(ui, review_label, !self.source_open && !history_mode).on_hover_text("Pending changes, shown on the diagram").clicked() {
                     self.open_proposal_review(None);
                 }
-                if mode(ui, "Source".into(), self.source_open).clicked() && self.leave_proposal_review() {
+                if mode(ui, "Source".into(), self.source_open).on_hover_text("Attach Java source and implement approved decisions").clicked() && self.leave_proposal_review() {
                     self.source_open = true;
+                    self.history_open = false;
+                    self.shown_decision = None;
                     self.review_active = false;
                     self.refresh_proposal_canvas();
                 }
-                let history_label = ui.label("History");
-                egui::ComboBox::from_id_salt("decision-history").selected_text("History").width(70.0).show_ui(ui, |ui| {
-                    for dec in snap.view.decisions.iter().filter(|d| !d.is_pending()).rev() {
-                        if ui.selectable_label(self.shown_decision.as_ref() == Some(&dec.id), format!("{} · {}", dec.id, dec.question)).clicked() && self.leave_proposal_review() {
-                            self.source_open = false;
-                            self.review_active = false;
-                            self.shown_decision = Some(dec.id.clone());
-                        }
-                    }
-                }).response.labelled_by(history_label.id);
+                if mode(ui, format!("History ({resolved})"), history_mode && !self.source_open).on_hover_text("Resolved decisions (read-only)").clicked() && self.leave_proposal_review() {
+                    self.source_open = false;
+                    self.history_open = true;
+                    self.shown_decision = None;
+                    self.review_active = false;
+                    self.refresh_proposal_canvas();
+                }
             });
         });
         let body = Rect::from_min_max(Pos2::new(r.left(), nav.bottom()), r.max);
@@ -1641,38 +1857,85 @@ impl SpideApp {
             ui.set_clip_rect(body);
             if self.source_open {
                 super::source::show(ui, &mut self.source_ui, snap, &self.backend);
-            } else if !pending.is_empty() && self.shown_decision.is_none() {
-                self.review_active = true;
+            } else if let Some(id) = self.shown_decision.clone() {
+                if decisions::history(ui, &snap.view, &id) {
+                    self.shown_decision = None;
+                    self.history_open = true;
+                }
+            } else if self.history_open {
+                if let Some(id) = history_list(ui, snap) {
+                    self.shown_decision = Some(id);
+                }
+            } else if pending > 0 {
+                if !self.review_active {
+                    self.review_active = true;
+                    self.review_locate.get_or_insert((String::new(), self.now()));
+                    self.class_data = None;
+                }
                 let now = ui.input(|i| i.time);
                 let mut out = vec![];
                 proposal::show(ui, &mut self.proposal_ui, snap, self.selected_proposal.as_deref(), &self.backend, now, &mut out);
                 for o in out {
                     match o {
                         ProposalOut::Select(id) => {
+                            if id.is_some() && id != self.selected_proposal {
+                                self.review_locate = id.clone().map(|i| (i, now));
+                            }
                             self.selected_proposal = id;
                         }
                         ProposalOut::Focus(name) => {
                             self.tab = Tab::Class;
                             self.later(0.15, move |app| {
                                 if !app.focus_canvas(Some(&name)) {
-                                    app.toast("info", "This target is not drawn on the class diagram. See the change details.");
+                                    app.toast("info", "This change has no element on the class diagram; its details are in the list.");
                                 }
                             });
                         }
                         ProposalOut::Compare(id) => self.compare = Some(id),
                         ProposalOut::Canvas => self.refresh_proposal_canvas(),
+                        ProposalOut::Next(n) => self.next_step(n),
                     }
                 }
-            } else if let Some(id) = self.shown_decision.clone() {
-                if decisions::history(ui, &snap.view, &id) {
-                    self.shown_decision = None;
-                }
             } else {
-                egui::Frame::new().inner_margin(Margin::symmetric(22, 22)).show(ui, |ui| {
-                    ui.label(RichText::new("No open decisions.").font(sans(12.5)).color(css::DIM));
-                });
+                if self.review_active {
+                    // nothing left to review: the canvas is editable again
+                    self.review_active = false;
+                    self.proposal_ui.review = None;
+                    self.refresh_proposal_canvas();
+                }
+                if let Some(n) = proposal::completion(ui, snap) {
+                    self.next_step(n);
+                }
             }
         });
+    }
+
+    fn next_step(&mut self, n: proposal::NextStep) {
+        use proposal::NextStep;
+        match n {
+            NextStep::Brief => self.brief = true,
+            NextStep::Behaviour => {
+                self.tab = Tab::Sequence;
+                self.review_active = false;
+                self.refresh_proposal_canvas();
+            }
+            NextStep::Source => {
+                self.source_open = true;
+                self.history_open = false;
+                self.review_active = false;
+                self.refresh_proposal_canvas();
+            }
+            NextStep::History => {
+                self.history_open = true;
+                self.source_open = false;
+            }
+            NextStep::FocusPi => {
+                self.workspace.left_open = true;
+                if let Some(t) = self.term.as_mut() {
+                    t.focus_requested = true;
+                }
+            }
+        }
     }
 
     fn canvas_workspace(&mut self, ui: &mut egui::Ui, r: Rect, snap: &Arc<Snapshot>) {
@@ -1709,11 +1972,41 @@ impl SpideApp {
                     inp.drift = drift.as_ref();
                     inp.spotlight = self.spotlight.as_ref().map(|s| s.as_deref());
                     inp.saved = if self.preview.is_some() { self.preview.as_ref().and_then(|p| p.layout.get("class")) } else { data.saved.as_ref() };
+                    // review: elements keep their place across before/after and alternatives
+                    let review_saved;
+                    let picked;
+                    if self.review_active {
+                        let mut m = data.saved.clone().unwrap_or_default();
+                        m.extend(self.review_pos.iter().map(|(k, v)| (k.clone(), v.clone())));
+                        review_saved = m;
+                        inp.saved = Some(&review_saved);
+                        inp.keep_layout = self.selected_proposal.as_ref().is_some_and(|p| self.review_seen.contains(p));
+                        picked = self.proposal_ui.picked_classes();
+                        inp.highlight = Some(&picked);
+                    }
                     let c = self.class_canvas.as_mut().unwrap();
                     if c.pinned_focus.as_ref().is_some_and(|p| !data.classes.iter().any(|x| &x.name == p)) {
                         c.pinned_focus = None;
                     }
                     c.show(ui, stage, &self.measure, &inp, &mut canvas_out);
+                    if self.review_active && self.proposal_ui.review.is_some() {
+                        self.review_pos.extend(c.layout.positions());
+                        if let Some(p) = self.selected_proposal.clone() {
+                            self.review_seen.insert(p);
+                        }
+                        // deliberate navigation: fit the plan's changes once its layout is ready
+                        if let (Some((id, since)), Some(fp)) = (self.review_locate.clone(), review_focus.as_ref()) {
+                            let now = ui.input(|i| i.time);
+                            let current = id.is_empty() || Some(&id) == self.selected_proposal.as_ref();
+                            if current && !c.vp.fit_pending() && now - since > 0.25 && (!c.layout.active() || now - since > 2.5) {
+                                c.locate(fp, Some(&snap.metrics), now);
+                                self.review_locate = None;
+                            } else if !current {
+                                self.review_locate = None;
+                            }
+                            ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                        }
+                    }
                 }
             }
             Tab::Domain => {
@@ -1902,8 +2195,10 @@ impl SpideApp {
         }
         // welcome
         if view.classes.is_empty() && self.tab == Tab::Class {
-            match chrome::welcome(ui, r) {
+            let brief_open = view.forces.is_empty() && !view.settings.brief_skipped;
+            match chrome::welcome(ui, r, brief_open) {
                 Some(chrome::WelcomeAction::Brief) => self.brief = true,
+                Some(chrome::WelcomeAction::Skip) => self.command("/skip"),
                 Some(chrome::WelcomeAction::Open) => self.command("/open"),
                 Some(chrome::WelcomeAction::FocusPi) => {
                     self.workspace.left_open = true;
@@ -1940,7 +2235,7 @@ impl SpideApp {
                 }
                 None => {}
             }
-        } else if self.brief && !self.review_active {
+        } else if self.brief {
             match brief::panel(&ctx, r, &mut self.brief_ui, view, metrics, self.stress.as_deref(), &self.backend) {
                 Some(BriefOut::Close) => self.brief = false,
                 Some(BriefOut::Stress(s)) => {
@@ -1971,8 +2266,35 @@ impl SpideApp {
                 self.branch_cmp = Some(b);
             }
         }
-        // proposal dock and timeline
-        if !view.proposals.is_empty() {
+        // review bar (before/after, fit, legend) or the proposal dock, and the timeline
+        if self.review_active && self.tab == Tab::Class && self.preview.is_none() && !view.proposals.is_empty() {
+            let bottom = if self.timeline { 104.0 } else { 16.0 };
+            let mut act = None;
+            egui::Area::new(egui::Id::unique("review-bar")).order(egui::Order::Middle).pivot(egui::Align2::CENTER_BOTTOM).fixed_pos(Pos2::new(r.center().x, r.bottom() - bottom)).show(&ctx, |ui| {
+                act = chrome::review_bar(ui, self.proposal_ui.baseline, self.proposal_ui.review.is_some(), r.width() - 40.0);
+            });
+            match act {
+                Some(chrome::ReviewBar::Before(b)) => {
+                    self.proposal_ui.baseline = b;
+                    self.refresh_proposal_canvas();
+                }
+                Some(chrome::ReviewBar::Fit) => {
+                    let fp = super::state::proposal_review::review_footprint(self.proposal_ui.review.as_ref(), self.selected_proposal.as_deref());
+                    let now = self.now();
+                    let located = match (fp, self.class_canvas.as_mut()) {
+                        (Some(fp), Some(c)) => {
+                            c.focus(None, now);
+                            c.locate(&fp, Some(metrics), now)
+                        }
+                        _ => false,
+                    };
+                    if !located {
+                        self.fit_active();
+                    }
+                }
+                None => {}
+            }
+        } else if !view.proposals.is_empty() {
             let bottom = if self.timeline { 104.0 } else { 16.0 };
             egui::Area::new(egui::Id::unique("proposal-dock")).order(egui::Order::Middle).pivot(egui::Align2::CENTER_BOTTOM).fixed_pos(Pos2::new(r.center().x, r.bottom() - bottom)).show(&ctx, |ui| {
                 if chrome::proposal_bar(ui, view.proposals.len()) {
@@ -2090,10 +2412,33 @@ impl SpideApp {
         if self.export.is_some() {
             let title = self.tab.title();
             let mut dlg = self.export.take().unwrap();
-            let out = export::dialog(&ctx, &mut dlg, title, &mut |o| self.export_svg(o));
+            let views = self.export_views();
+            // a running batch writes one file per frame: progress stays visible and Stop works
+            if let Some(run) = dlg.run.as_mut().filter(|r| !r.done()) {
+                self.batch_step(run);
+                ctx.request_repaint();
+            }
+            let out = export::dialog(&ctx, &mut dlg, title, &views, &mut |o| self.export_svg(o));
             let mut keep = true;
             match out {
                 Some(DialogOut::Close) => keep = false,
+                Some(DialogOut::BatchCancel) => {
+                    if let Some(r) = dlg.run.as_mut() {
+                        r.cancelled = true;
+                    }
+                }
+                Some(DialogOut::BatchStart) => {
+                    let profiles = export::effective_profiles(&dlg.settings);
+                    let jobs = export_jobs::jobs(&views, &dlg.settings.batch, &profiles);
+                    if let Some(parent) = rfd::FileDialog::new().set_title("Folder for the exported diagrams").set_directory(&snap.project_dir).pick_folder() {
+                        let stamp = chrono_stamp();
+                        match export_jobs::output_dir(&parent, &snap.view.name, &stamp) {
+                            Ok(dir) => dlg.run = Some(BatchRun { dir, jobs, profiles, next: 0, results: vec![], cancelled: false, rev: snap.rev }),
+                            Err(e) => self.toast("error", format!("export folder: {e}")),
+                        }
+                    }
+                    self.export_settings.insert(snap.project_dir.clone(), dlg.settings.clone());
+                }
                 Some(DialogOut::Changed) => {
                     self.export_settings.insert(snap.project_dir.clone(), dlg.settings.clone());
                 }
@@ -2126,6 +2471,41 @@ impl SpideApp {
     }
 }
 
+/// Resolved decisions, newest first; returns the one clicked.
+fn history_list(ui: &mut egui::Ui, snap: &Snapshot) -> Option<String> {
+    let mut out = None;
+    egui::ScrollArea::vertical().id_salt("history-list").auto_shrink([false, false]).show(ui, |ui| {
+        egui::Frame::new().inner_margin(Margin::symmetric(12, 6)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let resolved: Vec<_> = snap.view.decisions.iter().filter(|d| !d.is_pending()).rev().collect();
+            if resolved.is_empty() {
+                widgets::para(ui, "No resolved decisions yet. Approved and dismissed changes appear here with their consequences.", 12.5, css::DIM);
+            }
+            for d in resolved {
+                let (state, c) = match d.state {
+                    spide_core::model::DecisionState::Accepted => ("approved", css::GOOD),
+                    spide_core::model::DecisionState::Overruled => ("overruled", css::WARN),
+                    _ => ("dismissed", css::FAINT),
+                };
+                let r = egui::Frame::new().inner_margin(Margin::symmetric(8, 6)).corner_radius(6).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.add(egui::Label::new(RichText::new(&d.question).font(sans(12.5)).color(css::TEXT)).wrap());
+                    ui.label(RichText::new(state).font(sans(11.0)).color(c));
+                });
+                let resp = ui.interact(r.response.rect, ui.scope_id().with(("history", &d.id)), Sense::click());
+                if resp.hovered() {
+                    ui.painter().rect_stroke(r.response.rect, 6.0, Stroke::new(1.0, css::LINE_STRONG), egui::StrokeKind::Inside);
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if resp.clicked() {
+                    out = Some(d.id.clone());
+                }
+            }
+        });
+    });
+    out
+}
+
 /// A collapsed pane's vertical rail button.
 fn rail(ui: &mut egui::Ui, r: Rect, label: &str) -> egui::Response {
     let br = Rect::from_min_size(r.min, Vec2::new(30.0, r.height().min(160.0)));
@@ -2153,6 +2533,9 @@ mod export_tests {
         steps(&mut h, 10);
         assert!(h.state().export.is_some());
         shot(&mut h, "export-dialog");
+        h.state_mut().export.as_mut().unwrap().batch_mode = true;
+        steps(&mut h, 10);
+        shot(&mut h, "export-batch");
         h.state_mut().export = None;
         for (format, ext, magic) in [
             (Format::Svg, "svg", b"<svg".as_slice()),
@@ -2167,6 +2550,58 @@ mod export_tests {
             assert!(data.len() > 100);
             assert!(data.windows(magic.len()).any(|w| w == magic), "{ext} signature");
         }
+    }
+
+    #[test]
+    fn batch_exports_every_diagram_level_and_format_without_touching_the_canvas() {
+        let dir = project("library");
+        let mut h = harness(dir.path(), (1440.0, 900.0));
+        steps(&mut h, 150);
+        let tab = h.state().tab;
+        let detail = h.state().snap.as_ref().unwrap().view.settings.detail_for("class");
+        let before = h.state().class_canvas.as_ref().map(|c| c.layout.positions());
+        let views = h.state().export_views();
+        assert!(views.contains(&ExportView::Class) && views.contains(&ExportView::Domain), "{views:?}");
+        let batch = BatchSettings { levels: vec![0, 1, 2, 3, 4], formats: vec![Format::Svg, Format::Png, Format::Pdf], plantuml: true, ..Default::default() };
+        let profiles = vec![export_jobs::Profile::default(), export_jobs::Profile { name: "dark".into(), options: ExportOptions { theme: "dark".into(), diagnostics: true, ..Default::default() }, scale: 1 }];
+        let jobs = export_jobs::jobs(&views, &batch, &profiles);
+        let out = tempfile::tempdir().unwrap();
+        let rev = h.state().snap.as_ref().unwrap().rev;
+        let mut run = BatchRun { dir: out.path().to_path_buf(), jobs: jobs.clone(), profiles, next: 0, results: vec![], cancelled: false, rev };
+        while !run.done() {
+            h.state_mut().batch_step(&mut run);
+        }
+        let (written, skipped, failed) = run.counts();
+        assert_eq!(failed, 0, "{:?}", run.results);
+        assert_eq!(written + skipped, jobs.len());
+        assert!(written >= views.len() * 3, "{:?}", run.results);
+        for j in &jobs {
+            if let Some((_, export_jobs::JobResult::Written(p))) = run.results.iter().find(|r| r.0 == j.file) {
+                let data = std::fs::read(p).unwrap();
+                assert!(data.len() > 50, "{}", j.file);
+            }
+        }
+        // the class diagram at every detail level differs (different boxes, same pipeline)
+        let a = std::fs::read_to_string(out.path().join("class-1-names-current.svg")).unwrap();
+        let b = std::fs::read_to_string(out.path().join("class-4-full-current.svg")).unwrap();
+        assert_ne!(a, b);
+        // nothing on screen changed: tab, saved detail level, canvas layout
+        assert_eq!(h.state().tab, tab);
+        assert_eq!(h.state().snap.as_ref().unwrap().view.settings.detail_for("class"), detail);
+        if let (Some(b), Some(c)) = (before, h.state().class_canvas.as_ref()) {
+            assert_eq!(b, c.layout.positions());
+        }
+        // the live level's export equals the single export (same scene)
+        let o = ExportOptions::default();
+        let single = h.state_mut().export_svg_for(&ExportView::Class, None, &o).unwrap().0;
+        let batch_one = h.state_mut().export_svg_for(&ExportView::Class, Some(detail), &o).unwrap().0;
+        assert_eq!(single, batch_one);
+        // cancelling stops between jobs and keeps finished files
+        let mut run2 = BatchRun { dir: tempfile::tempdir().unwrap().keep(), jobs, profiles: vec![export_jobs::Profile::default()], next: 0, results: vec![], cancelled: false, rev };
+        h.state_mut().batch_step(&mut run2);
+        run2.cancelled = true;
+        assert!(run2.done());
+        assert_eq!(run2.results.len(), 1);
     }
 }
 

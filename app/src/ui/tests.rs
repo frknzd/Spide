@@ -279,3 +279,175 @@ fn canvas_pin_drag_and_layout_persistence() {
     assert_eq!(saved.y, after.y);
     assert!(saved.pinned);
 }
+
+fn op(v: serde_json::Value) -> spide_core::Op {
+    serde_json::from_value(v).unwrap()
+}
+
+/// Library + one decision with two alternatives and one small single-option change.
+fn review_fixture(h: &mut Harness<'static, SpideApp>) -> (String, String) {
+    use spide_core::model::DecisionOption;
+    let st = h.state().backend.st.clone();
+    let (decision, small) = {
+        let mut s = st.lock();
+        let decision = s.store.propose_decision("Where should overdue fines be calculated?".into(), Some("Fines depend on the loan period and the member type.".into()), vec![
+            DecisionOption { id: "A".into(), label: "Loan calculates its own fine".into(), summary: Some("Information Expert: the loan knows its dates.".into()), pros: vec!["No new class".into()], cons: vec!["Loan grows".into()], ops: vec![op(serde_json::json!({"op":"add_method","class":"Loan","method":{"name":"fine","returns":"Money"}}))], ..Default::default() },
+            DecisionOption { id: "B".into(), label: "A FinePolicy strategy".into(), summary: Some("Pure Fabrication for varying fine rules.".into()), pros: vec!["Rules can vary per member type".into()], cons: vec!["One more class".into()], ops: vec![op(serde_json::json!({"op":"add_class","name":"FinePolicy","package":"domain"})), op(serde_json::json!({"op":"add_relation","from":"Loan","to":"FinePolicy","kind":"dependency"}))], ..Default::default() },
+        ]).unwrap();
+        let p = s.store.propose_ops(vec![op(serde_json::json!({"op":"add_method","class":"Catalog","method":{"name":"search","params":[{"name":"q","type":"String"}],"returns":"List<Book>"}}))], Some("Add catalogue search".into()), "agent").unwrap();
+        let small = s.store.design.decisions.iter().find(|d| d.plan.as_deref() == Some(&p)).unwrap().id.clone();
+        (decision, small)
+    };
+    st.changed();
+    (decision, small)
+}
+
+#[test]
+fn diagram_review_is_one_click_and_advances_after_approval() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    let dir = project("library");
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    steps(&mut h, 60);
+    let st = h.state().backend.st.clone();
+    let classes_before = st.lock().store.design.classes.len();
+    let (decision, small) = review_fixture(&mut h);
+    h.state_mut().open_proposal_review(None);
+    steps(&mut h, 90);
+    // the first plan is on the diagram right away, without committing anything
+    assert!(h.state().review_active);
+    assert!(h.state().proposal_ui.review.is_some(), "review loads without a Preview click");
+    assert!(h.state().proposal_canvas.as_ref().is_some_and(|d| d.classes.iter().any(|c| c.name == "Loan" && c.methods.iter().any(|m| m.name == "fine"))));
+    assert_eq!(st.lock().store.design.classes.len(), classes_before);
+    // question, alternatives and their tradeoffs are visible without disclosure clicks
+    h.get_by_label("Where should overdue fines be calculated?");
+    h.get_by_label("+ Rules can vary per member type");
+    h.get_by_label("Approve design");
+    shot(&mut h, "review-rail");
+    // one click on the other alternative replaces the plan on the diagram
+    h.get_by_label("A FinePolicy strategy").click();
+    steps(&mut h, 60);
+    let plan = st.lock().store.design.decisions.iter().find(|d| d.id == decision).unwrap().plan.clone().unwrap();
+    assert_eq!(st.lock().store.design.proposals.iter().find(|p| p.id == plan).unwrap().option.as_deref(), Some("B"));
+    assert!(h.state().proposal_canvas.as_ref().is_some_and(|d| d.classes.iter().any(|c| c.name == "FinePolicy")));
+    assert!(st.lock().store.design.live_class("FinePolicy").is_none(), "selecting never approves");
+    // before / proposed
+    h.get_by_label("Before").click();
+    steps(&mut h, 20);
+    assert!(h.state().proposal_canvas.as_ref().is_some_and(|d| !d.classes.iter().any(|c| c.name == "FinePolicy")));
+    h.get_by_label("Proposed").click();
+    steps(&mut h, 20);
+    // a new arrival doesn't steal the selection
+    let selected = h.state().selected_proposal.clone();
+    st.lock().store.propose_ops(vec![op(serde_json::json!({"op":"add_class","name":"LateArrival"}))], Some("Late arrival".into()), "agent").unwrap();
+    st.changed();
+    steps(&mut h, 30);
+    assert_eq!(h.state().selected_proposal, selected);
+    // approval advances to the next plan in queue order (and doesn't approve it)
+    h.get_by_label("Approve design").click();
+    steps(&mut h, 60);
+    assert!(st.lock().store.design.live_class("FinePolicy").is_some());
+    let next_plan = st.lock().store.design.decisions.iter().find(|d| d.id == small).unwrap().plan.clone();
+    assert_eq!(h.state().selected_proposal, next_plan);
+    assert!(!st.lock().store.design.decisions.iter().find(|d| d.id == small).unwrap().state.eq(&spide_core::model::DecisionState::Accepted));
+    // the queue navigates in one click
+    h.get_by_label("Review: Late arrival").click();
+    steps(&mut h, 30);
+    assert_eq!(h.state().selected_proposal.as_deref(), st.lock().store.design.proposals.last().map(|p| p.id.as_str()));
+    h.get_by_label("Dismiss").click();
+    steps(&mut h, 60);
+    h.get_by_label("Approve design").click();
+    steps(&mut h, 60);
+    assert!(st.lock().store.design.proposals.is_empty());
+    h.get_by_label("✓ Review complete");
+    h.get_by_label("Check behaviour →");
+    assert!(!h.state().review_active, "the canvas is editable again");
+    assert!(!h.get_by_label("Decision history →").accesskit_node().is_disabled());
+    shot(&mut h, "review-complete");
+}
+
+#[test]
+fn diagram_picks_become_refinement_targets_and_requests_need_pi() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    let dir = project("library");
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    steps(&mut h, 60);
+    review_fixture(&mut h);
+    h.state_mut().open_proposal_review(None);
+    steps(&mut h, 200);
+    // clicking an element on the diagram during review inspects it and targets it
+    let p = class_pos(&h, "method:Loan.fine");
+    click(&mut h, p, egui::PointerButton::Primary);
+    steps(&mut h, 10);
+    let scope = h.state().proposal_ui.scope.clone();
+    let r = h.state().proposal_ui.refine.get(&scope).cloned().unwrap_or_default();
+    assert_eq!(r.targets, vec!["method:Loan.fine".to_string()]);
+    assert_eq!(r.inspect.as_deref(), Some("method:Loan.fine"));
+    assert!(h.state().proposal_ui.picked_classes().contains("Loan"));
+    h.get_by_label("Loan.fine()");
+    h.get_by_label("+ Money");
+    shot(&mut h, "review-pick");
+    // pi is offline in tests: the request is unavailable with a reason; notes and picks are kept
+    h.get_by_label("Notes or requested changes").focus();
+    steps(&mut h, 2);
+    h.get_by_label("Notes or requested changes").type_text("Name it overdueFine");
+    steps(&mut h, 5);
+    assert!(h.get_by_label("Request changes").accesskit_node().is_disabled());
+    h.get_by_label_contains("Request changes: pi is");
+    // clicking it again removes it
+    let p = class_pos(&h, "method:Loan.fine");
+    click(&mut h, p, egui::PointerButton::Primary);
+    steps(&mut h, 10);
+    assert!(h.state().proposal_ui.refine.get(&scope).is_some_and(|r| r.targets.is_empty()));
+    // narrow window: the rail is a drawer beside pi, actions stay reachable
+    let mut narrow = harness(dir.path(), (960.0, 720.0));
+    steps(&mut narrow, 60);
+    narrow.state_mut().open_proposal_review(None);
+    steps(&mut narrow, 90);
+    narrow.get_by_label("Approve design");
+    shot(&mut narrow, "review-narrow");
+}
+
+#[test]
+fn revision_requests_carry_the_selection_and_reject_stale_revisions() {
+    let dir = project("library");
+    let mut h = harness(dir.path(), (1200.0, 800.0));
+    let (decision, _) = review_fixture(&mut h);
+    let st = h.state().backend.st.clone();
+    let s = st.lock();
+    let rev = s.store.design.rev;
+    let msg = crate::commands::revision_message(&s, &decision, rev, " rename it ", Some("B"), &["Loan [class:Loan]".into()]).unwrap();
+    assert!(msg.contains(&format!("decision {decision}")));
+    assert!(msg.contains("option shown to the user: B"));
+    assert!(msg.contains("- Loan [class:Loan]"));
+    assert!(msg.contains("User guidance: rename it"));
+    assert!(msg.contains("Do NOT apply anything"));
+    assert!(crate::commands::revision_message(&s, &decision, rev - 1, "x", None, &[]).is_err(), "stale revision");
+    assert!(crate::commands::revision_message(&s, &decision, rev, "  ", None, &[]).is_err(), "guidance required");
+}
+
+#[test]
+fn unsaved_manual_edits_block_approval_and_survive() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    let dir = project("library");
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    steps(&mut h, 60);
+    review_fixture(&mut h);
+    h.state_mut().open_proposal_review(None);
+    steps(&mut h, 90);
+    let st = h.state().backend.st.clone();
+    // a manual amendment (advanced mode) in the local draft
+    {
+        let ui = &mut h.state_mut().proposal_ui;
+        let mut sess = ui.session.clone().unwrap();
+        sess.plan.rationale = Some("my amendment".into());
+        ui.drafts.store(sess.clone());
+        ui.session = Some(sess);
+    }
+    steps(&mut h, 20);
+    assert!(h.get_by_label("Approve design").accesskit_node().is_disabled());
+    h.get_by_label("Approve: Save or discard your manual edits first.");
+    h.get_by_label("Save plan");
+    assert!(st.lock().store.design.decisions.iter().all(|d| d.is_pending()));
+    let scope = h.state().proposal_ui.scope.clone();
+    assert!(h.state().proposal_ui.drafts.load(&scope).is_some(), "draft persisted");
+}

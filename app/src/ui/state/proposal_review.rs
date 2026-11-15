@@ -144,6 +144,232 @@ pub fn field_diffs(before: &Value, after: &Value, prefix: &str) -> Vec<FieldDiff
     vec![FieldDiff { field: if prefix.is_empty() { "value".into() } else { prefix.into() }, before: before.clone(), after: after.clone() }]
 }
 
+// ---------------------------------------------------------------- readable review
+
+/// One readable line of a plan's effect, with the diagram element it concerns (hover-key form).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChangeLine {
+    /// '+' added, '~' changed, '−' removed
+    pub sign: char,
+    pub text: String,
+    /// `class:A`, `relation:id`, `package:p`; None for changes without a class-diagram element
+    pub key: Option<String>,
+    /// the class to locate on the canvas
+    pub class: Option<String>,
+}
+
+fn sign_of(before: &Value, after: &Value) -> char {
+    match (before.is_null(), after.is_null()) {
+        (true, false) => '+',
+        (false, true) => '−',
+        _ => '~',
+    }
+}
+
+fn str_of<'a>(v: &'a Value, before: &'a Value, k: &str) -> &'a str {
+    v.get(k).or_else(|| before.get(k)).and_then(Value::as_str).unwrap_or("?")
+}
+
+/// A short signature for a member object: `name(a: T): R` for methods, `name: T` for attributes.
+pub fn member_text(kind: &str, v: &Value) -> String {
+    let name = v.get("name").and_then(Value::as_str).unwrap_or("?");
+    if kind == "methods" {
+        let params: Vec<String> = v.get("params").and_then(Value::as_array).map(|ps| ps.iter().map(|p| format!("{}: {}", p.get("name").and_then(Value::as_str).unwrap_or(""), p.get("type").and_then(Value::as_str).unwrap_or(""))).collect()).unwrap_or_default();
+        let ret = v.get("returns").and_then(Value::as_str).map(|r| format!(": {r}")).unwrap_or_default();
+        format!("{name}({}){ret}", params.join(", "))
+    } else {
+        let ty = v.get("type").and_then(Value::as_str).map(|t| format!(": {t}")).unwrap_or_default();
+        format!("{name}{ty}")
+    }
+}
+
+fn members<'a>(class: &'a Value, kind: &str) -> Vec<&'a Value> {
+    class.get(kind).and_then(Value::as_array).map(|a| a.iter().collect()).unwrap_or_default()
+}
+
+/// Member-level changes of one class: (sign, kind, before, after) per attribute/method name.
+fn member_changes<'a>(before: &'a Value, after: &'a Value) -> Vec<(char, &'static str, &'a Value, &'a Value)> {
+    let mut out = vec![];
+    for kind in ["attributes", "methods"] {
+        let (a, b) = (members(before, kind), members(after, kind));
+        let name = |v: &Value| v.get("name").and_then(Value::as_str).map(str::to_owned);
+        let mut names: Vec<String> = vec![];
+        for v in a.iter().chain(b.iter()) {
+            if let Some(n) = name(v) {
+                if !names.contains(&n) {
+                    names.push(n);
+                }
+            }
+        }
+        for n in names {
+            let x = a.iter().find(|v| name(v).as_deref() == Some(&n)).copied().unwrap_or(&Value::Null);
+            let y = b.iter().find(|v| name(v).as_deref() == Some(&n)).copied().unwrap_or(&Value::Null);
+            if field_diffs(x, y, "").is_empty() {
+                continue;
+            }
+            out.push((sign_of(x, y), kind, x, y));
+        }
+    }
+    out
+}
+
+/// A readable line for one review change.
+pub fn describe_change(path: &str, before: &Value, after: &Value) -> ChangeLine {
+    let (kind, name) = path.split_once('.').unwrap_or((path, ""));
+    let sign = sign_of(before, after);
+    let verb = match sign {
+        '+' => "Add",
+        '−' => "Remove",
+        _ => "Change",
+    };
+    let cur = if after.is_null() { before } else { after };
+    match kind {
+        "classes" => {
+            let text = if sign == '~' {
+                let mut bits: Vec<String> = member_changes(before, after).into_iter().map(|(s, k, x, y)| format!("{s} {}", member_text(k, if y.is_null() { x } else { y }))).collect();
+                bits.extend(field_diffs(before, after, "").into_iter().filter(|f| !f.field.starts_with("attributes") && !f.field.starts_with("methods")).map(|f| format!("~ {}", f.field.replace('_', " "))));
+                format!("{name}: {}", if bits.is_empty() { "metadata".into() } else { bits.join(", ") })
+            } else {
+                let n = |k| members(cur, k).len();
+                let (a, m) = (n("attributes"), n("methods"));
+                let pkg = cur.get("package").and_then(Value::as_str).map(|p| format!(" in {p}")).unwrap_or_default();
+                let size = if a + m > 0 { format!(" ({a} attr, {m} methods)") } else { String::new() };
+                format!("{verb} class {name}{pkg}{}", if sign == '+' { size } else { String::new() })
+            };
+            ChangeLine { sign, text, key: Some(format!("class:{name}")), class: Some(name.to_string()) }
+        }
+        "relations" => {
+            let (from, to) = (str_of(after, before, "from"), str_of(after, before, "to"));
+            let rk = str_of(after, before, "kind");
+            let detail = if sign == '~' { format!(" ({})", field_diffs(before, after, "").iter().map(|f| f.field.replace('_', " ")).collect::<Vec<_>>().join(", ")) } else { String::new() };
+            ChangeLine { sign, text: format!("{verb} {rk} {from} → {to}{detail}"), key: Some(format!("relation:{name}")), class: Some(from.to_string()) }
+        }
+        "packages" => ChangeLine { sign, text: format!("{verb} package {name}"), key: Some(format!("package:{name}")), class: None },
+        _ => {
+            let what = kind.trim_end_matches('s').replace('_', " ");
+            let text = if name.is_empty() { format!("{verb} {}", kind.replace('_', " ")) } else { format!("{verb} {what} {name}") };
+            ChangeLine { sign, text, key: None, class: None }
+        }
+    }
+}
+
+/// Every readable change of a reviewed plan, in plan order.
+pub fn change_lines(review: &ProposalReview) -> Vec<ChangeLine> {
+    review.steps.iter().flat_map(|s| s.changes.iter().map(|c| describe_change(&c.path, &c.before, &c.after))).collect()
+}
+
+/// A human label for a diagram element key (`class:A`, `method:A.run`, `relation:r1`).
+pub fn element_label(key: &str, review: Option<&ProposalReview>) -> String {
+    let (kind, rest) = key.split_once(':').unwrap_or(("", key));
+    match kind {
+        "method" => format!("{rest}()"),
+        "relation" => review
+            .and_then(|r| r.design.relations.iter().chain(r.baseline.relations.iter()).find(|x| x.id == rest))
+            .map(|x| format!("{} → {}", x.from, x.to))
+            .unwrap_or_else(|| format!("relation {rest}")),
+        "package" => format!("package {rest}"),
+        _ => rest.to_string(),
+    }
+}
+
+/// The class a diagram element key belongs to.
+pub fn element_class(key: &str, review: Option<&ProposalReview>) -> Option<String> {
+    let (kind, rest) = key.split_once(':')?;
+    match kind {
+        "class" => Some(rest.into()),
+        "method" | "attribute" => rest.rfind('.').map(|i| rest[..i].to_string()),
+        "relation" => review.and_then(|r| r.design.relations.iter().chain(r.baseline.relations.iter()).find(|x| x.id == rest)).map(|x| x.from.clone()),
+        _ => None,
+    }
+}
+
+/// What a plan does to one element: readable before/after field changes (empty: untouched).
+pub fn element_diffs(review: &ProposalReview, key: &str) -> Vec<FieldDiff> {
+    let Some((kind, rest)) = key.split_once(':') else { return vec![] };
+    let find = |path: String| review.steps.iter().flat_map(|s| s.changes.iter()).filter(move |c| c.path == path);
+    let mut out = vec![];
+    match kind {
+        "class" => {
+            for c in find(format!("classes.{rest}")) {
+                for (_, k, x, y) in member_changes(&c.before, &c.after) {
+                    let kind = if k == "methods" { "method" } else { "attribute" };
+                    let text = |v: &Value| if v.is_null() { Value::Null } else { Value::String(member_text(k, v)) };
+                    let name = if y.is_null() { x } else { y }.get("name").and_then(Value::as_str).unwrap_or("?");
+                    out.push(FieldDiff { field: format!("{kind} {name}"), before: text(x), after: text(y) });
+                }
+                out.extend(field_diffs(&c.before, &c.after, "").into_iter().filter(|f| !f.field.starts_with("attributes") && !f.field.starts_with("methods")));
+            }
+        }
+        "method" | "attribute" => {
+            let Some(i) = rest.rfind('.') else { return vec![] };
+            let (class, name) = (&rest[..i], &rest[i + 1..]);
+            let plural = if kind == "method" { "methods" } else { "attributes" };
+            for c in find(format!("classes.{class}")) {
+                let pick = |v: &Value| members(v, plural).into_iter().find(|m| m.get("name").and_then(Value::as_str) == Some(name)).cloned().unwrap_or(Value::Null);
+                out.extend(field_diffs(&pick(&c.before), &pick(&c.after), ""));
+            }
+        }
+        "relation" => {
+            for c in find(format!("relations.{rest}")) {
+                out.extend(field_diffs(&c.before, &c.after, ""));
+            }
+        }
+        "package" => {
+            for c in find(format!("packages.{rest}")) {
+                out.extend(field_diffs(&c.before, &c.after, ""));
+            }
+        }
+        _ => {}
+    }
+    // a new or removed element: only its meaningful values (no `false`, empty lists, unset fields)
+    let blank = |v: &Value| match v {
+        Value::Null | Value::Bool(false) => true,
+        Value::Array(a) => a.is_empty(),
+        Value::String(s) => s.is_empty(),
+        _ => false,
+    };
+    out.retain(|f| !(blank(&f.before) && blank(&f.after)));
+    out
+}
+
+/// A compact display of a diff value.
+pub fn value_text(v: &Value) -> String {
+    match v {
+        Value::Null => "—".into(),
+        Value::String(s) => s.clone(),
+        Value::Array(a) if a.iter().all(Value::is_string) => {
+            if a.is_empty() {
+                "—".into()
+            } else {
+                a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")
+            }
+        }
+        v => serde_json::to_string(v).unwrap_or_default(),
+    }
+}
+
+/// Refinement targets and guidance for one decision, kept until sent or discarded.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Refinement {
+    pub targets: Vec<String>,
+    pub inspect: Option<String>,
+}
+
+impl Refinement {
+    /// Click on a diagram element: inspect it and toggle it as a refinement target.
+    pub fn toggle(&mut self, key: &str) {
+        if let Some(i) = self.targets.iter().position(|t| t == key) {
+            self.targets.remove(i);
+            if self.inspect.as_deref() == Some(key) {
+                self.inspect = None;
+            }
+        } else {
+            self.targets.push(key.to_string());
+            self.inspect = Some(key.to_string());
+        }
+    }
+}
+
 pub fn review_footprint(review: Option<&ProposalReview>, id: Option<&str>) -> Option<Footprint> {
     let (review, id) = (review?, id?);
     let mut f = Footprint { ids: BTreeSet::from([id.to_string()]), ..Default::default() };
@@ -241,6 +467,46 @@ mod tests {
         let f = review_footprint(Some(&review), Some("p")).unwrap();
         assert!(f.changed.contains("A"));
         assert!(f.packages.contains("core"));
+    }
+
+    #[test]
+    fn changes_read_as_sentences_and_elements_show_their_own_diffs() {
+        let before = json!({"name": "Loan", "attributes": [{"name": "due", "type": "Date"}], "methods": [], "role": null});
+        let after = json!({"name": "Loan", "attributes": [{"name": "due", "type": "Date"}], "methods": [{"name": "fine", "params": [{"name": "today", "type": "Date"}], "returns": "Money"}], "role": "domain"});
+        let l = describe_change("classes.Loan", &before, &after);
+        assert_eq!((l.sign, l.key.as_deref(), l.class.as_deref()), ('~', Some("class:Loan"), Some("Loan")));
+        assert_eq!(l.text, "Loan: + fine(today: Date): Money, ~ role");
+        let added = describe_change("classes.Fine", &Value::Null, &json!({"name": "Fine", "package": "domain"}));
+        assert_eq!((added.sign, added.text.as_str()), ('+', "Add class Fine in domain"));
+        let rel = describe_change("relations.r1", &json!({"from": "A", "to": "B", "kind": "dependency"}), &Value::Null);
+        assert_eq!((rel.sign, rel.text.as_str(), rel.key.as_deref()), ('−', "Remove dependency A → B", Some("relation:r1")));
+        let force = describe_change("forces.Speed", &Value::Null, &json!({"name": "Speed"}));
+        assert_eq!((force.text.as_str(), force.key), ("Add force Speed", None));
+
+        let review = ProposalReview {
+            rev: 1,
+            baseline: Default::default(),
+            design: Default::default(),
+            steps: vec![ReviewStep { index: 0, changes: vec![ReviewChange { path: "classes.Loan".into(), before, after }], error: None }],
+            errors: vec![],
+            prerequisites: vec![],
+            notices: vec![],
+            can_accept: true,
+            impact: None,
+        };
+        let d = element_diffs(&review, "class:Loan");
+        assert_eq!(d[0], FieldDiff { field: "method fine".into(), before: Value::Null, after: json!("fine(today: Date): Money") });
+        assert!(d.iter().any(|f| f.field == "role"));
+        let m = element_diffs(&review, "method:Loan.fine");
+        assert!(m.iter().any(|f| f.field == "returns" && f.after == json!("Money")));
+        assert!(element_diffs(&review, "attribute:Loan.due").is_empty(), "untouched member");
+        assert_eq!(element_label("method:Loan.fine", None), "Loan.fine()");
+        assert_eq!(element_class("attribute:Loan.due", None).as_deref(), Some("Loan"));
+        let mut r = Refinement::default();
+        r.toggle("class:Loan");
+        assert_eq!((r.targets.len(), r.inspect.as_deref()), (1, Some("class:Loan")));
+        r.toggle("class:Loan");
+        assert_eq!(r, Refinement::default());
     }
 
     #[test]

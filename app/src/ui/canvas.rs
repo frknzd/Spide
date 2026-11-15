@@ -10,10 +10,10 @@ use spide_core::Target;
 use spide_diagram::class_view::{self, external_classes, rect_of, Data, DriftSets, Lens, Opts, Routes, Stress};
 use spide_diagram::focus::Footprint;
 use spide_diagram::insights::{self, Marks, Members, OverlapLink};
-use spide_diagram::layout::{self, GroupSpec, LayoutEdge, LayoutNode};
+
 use spide_diagram::physics::{LinkSpec, LivingLayout, NodeSpec};
 use spide_diagram::scene::{HitTarget, Scene};
-use spide_diagram::visuals::{node_scale, ClassBox};
+use spide_diagram::visuals::ClassBox;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
@@ -59,6 +59,12 @@ pub struct CanvasInput<'a> {
     pub spotlight: Option<Option<&'a str>>,
     pub can_move_to_package: bool,
     pub can_edit: bool,
+    /// review: read-only, but clicks select concrete elements (inspection, refinement targets)
+    pub pickable: bool,
+    /// classes drawn as selected (review refinement targets)
+    pub highlight: Option<&'a HashSet<String>>,
+    /// keep node positions: no automatic re-layout when a batch of classes appears (review toggles)
+    pub keep_layout: bool,
 }
 
 struct Insights {
@@ -90,6 +96,7 @@ pub struct ClassCanvas {
     route_epoch: u64,
     dragging: Option<(String, [f64; 2])>,
     pending_tidy: bool,
+    fit_after_tidy: bool,
     pub scene: Scene,
     hovered_row: Option<(String, String)>,
 }
@@ -122,13 +129,25 @@ impl ClassCanvas {
             route_epoch: 0,
             dragging: None,
             pending_tidy: false,
+            fit_after_tidy: false,
             scene: Scene::default(),
             hovered_row: None,
         }
     }
 
+    /// The scene with the layout at rest (exports: never a frame of a running animation).
+    pub fn settled_scene(&mut self, m: &EguiMeasure, inp: &CanvasInput, now: f64) -> Scene {
+        self.sync(m, inp, now);
+        if self.layout.active() {
+            self.layout.settle();
+            self.route_epoch += 1;
+        }
+        self.build_scene(m, inp, now)
+    }
+
     pub fn tidy(&mut self) {
         self.pending_tidy = true;
+        self.fit_after_tidy = true;
     }
 
     pub fn positions(&self) -> HashMap<String, [f64; 2]> {
@@ -187,7 +206,6 @@ impl ClassCanvas {
 
     fn sync(&mut self, m: &EguiMeasure, inp: &CanvasInput, now: f64) {
         let level = inp.level.max(1);
-        let plain = self.export_plain == Some(true);
         let ins_key = hash_of((inp.data_key, inp.metrics.is_some()));
         if self.insights.is_none() || ins_key != self.insights_key {
             self.insights_key = ins_key;
@@ -201,14 +219,15 @@ impl ClassCanvas {
             });
         }
         let ins = self.insights.as_ref().unwrap();
-        let reveal: Vec<&String> = if self.export_plain.is_some() { vec![] } else { let mut v: Vec<&String> = self.revealed.iter().collect(); v.sort(); v };
-        let bkey = hash_of((inp.data_key, level, inp.show_methods, &reveal, plain, self.export_plain.is_some()));
+        // box sizes (and so the layout) are the same whether or not an export hides diagnostics:
+        // an export never re-lays out the canvas, it draws what you see
+        let mut reveal: Vec<&String> = self.revealed.iter().collect();
+        reveal.sort();
+        let bkey = hash_of((inp.data_key, level, inp.show_methods, &reveal));
         if bkey != self.boxes_key {
             self.boxes_key = bkey;
             let ext = external_classes(inp.classes, inp.packages);
-            let empty = HashSet::new();
-            let revealed = if self.export_plain.is_some() { &empty } else { &self.revealed };
-            self.boxes = class_view::boxes_for(m, inp.classes, inp.show_methods, level, inp.relations, None, &ext, if plain { None } else { Some(&ins.marks) }, if plain { None } else { Some(&ins.members) }, revealed);
+            self.boxes = class_view::boxes_for(m, inp.classes, inp.show_methods, level, inp.relations, None, &ext, Some(&ins.marks), Some(&ins.members), &self.revealed);
         }
         // sync the simulation with the model
         let skey = hash_of((bkey, (inp.tension * 1000.0) as i64));
@@ -221,12 +240,12 @@ impl ClassCanvas {
                 .iter()
                 .filter_map(|c| {
                     let b = self.boxes.get(&c.name)?;
-                    let s = node_scale(cm.and_then(|m| m.get(&c.name)));
+                    let (w, h) = class_view::node_extent(m, c, b, inp.metrics);
                     let layer = c.package.as_deref().and_then(|p| pk.get(p)).and_then(|p| p.layer);
                     Some(NodeSpec {
                         id: c.name.clone(),
-                        w: b.w * s,
-                        h: b.h * s + 22.0, // room for badges
+                        w,
+                        h,
                         pkg: c.package.clone(),
                         layer: layer.map(layer_rank),
                         heat: cm.and_then(|m| m.get(&c.name)).map(|m| m.heat).unwrap_or(0.0),
@@ -237,24 +256,28 @@ impl ClassCanvas {
             let fresh = specs.iter().filter(|s| !self.layout.has(&s.id) && s.init.is_none()).count();
             let links: Vec<LinkSpec> = inp.relations.iter().map(|r| LinkSpec { from: r.from.clone(), to: r.to.clone(), kind: r.kind.as_str().into() }).collect();
             self.layout.update(&specs, &links, inp.tension);
-            // a batch of new classes: lay everything out again (packages as compound nodes)
-            if fresh >= 3 {
+            // any structural or size change: lay everything out again (quality over stability);
+            // review keeps positions while alternatives are toggled
+            if !inp.keep_layout {
                 self.pending_tidy = true;
+                // many new classes (first load, big plans): show the whole new drawing
+                self.fit_after_tidy |= fresh >= 3;
             }
         }
         // a different granularity changes every box: lay out again
         if self.last_level.is_some_and(|l| l != level) {
             self.pending_tidy = true;
+            self.fit_after_tidy = true;
         }
         self.last_level = Some(level);
         if self.pending_tidy {
             self.pending_tidy = false;
-            let groups: Vec<GroupSpec> = inp.packages.iter().map(|p| GroupSpec { id: p.name.clone(), rank: package_rank(Some(p)), external: p.external }).collect();
-            let nodes: Vec<LayoutNode> = self.layout.nodes.iter().map(|n| LayoutNode { id: n.id.clone(), w: n.w, h: n.h, group: n.pkg.clone() }).collect();
-            let edges: Vec<LayoutEdge> = inp.relations.iter().map(|r| LayoutEdge { from: r.from.clone(), to: r.to.clone(), kind: r.kind.as_str().into() }).collect();
-            let pos = layout::compound(&nodes, &edges, &groups);
+            let extents: HashMap<String, (f64, f64)> = self.layout.nodes.iter().map(|n| (n.id.clone(), (n.w, n.h))).collect();
+            let pos = class_view::layout_classes(m, inp.classes, &extents, inp.relations, inp.packages);
             self.layout.tidy(&pos);
-            self.vp.request_fit(now + 1.5, true);
+            if std::mem::take(&mut self.fit_after_tidy) {
+                self.vp.request_fit(now + 1.5, true);
+            }
         }
     }
 
@@ -371,7 +394,7 @@ impl ClassCanvas {
             show_methods: inp.show_methods,
             still: exporting,
             focus_class: if exporting { None } else { focus_class.as_deref() },
-            highlight: None,
+            highlight: if exporting { None } else { inp.highlight },
             stress: if exporting { None } else { inp.stress },
             drift: if exporting { None } else { inp.drift },
             pinned,
@@ -380,7 +403,8 @@ impl ClassCanvas {
             route_epoch: self.route_epoch,
             proposal_focus: if exporting { None } else { proposal_focus },
             hide_packages: false,
-            zoom_cap: if exporting { 4 } else { self.zoom_cap() },
+            // detail 0 is the package overview, on screen and in exports
+            zoom_cap: if inp.level == 0 { 0 } else if exporting { 4 } else { self.zoom_cap() },
             level: inp.level.max(1),
             show_implicit: inp.show_implicit,
             marks: Some(&ins.marks),
@@ -391,6 +415,7 @@ impl ClassCanvas {
             members: Some(&ins.members),
             revealed: Some(if exporting { &empty } else { &self.revealed }),
             hovered_row: self.hovered_row.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
+            concrete_targets: inp.pickable && !exporting,
         };
         let data = Data { classes: inp.classes, relations: inp.relations, packages: inp.packages, metrics: inp.metrics, implicit: inp.implicit };
         class_view::build(m, &data, &o, &mut self.routes)
@@ -448,11 +473,11 @@ impl ClassCanvas {
                     }
                 }
                 ViewEvent::Click(HitTarget::Target(t), mods) => {
-                    if inp.read_only {
+                    if inp.read_only && !inp.pickable {
                         continue;
                     }
                     // ⌥-click pins / unpins a class where it is
-                    if mods.alt {
+                    if mods.alt && !inp.read_only {
                         if let Target::Class { name } = &t {
                             if self.layout.has(name) {
                                 self.layout.toggle_pin(name);

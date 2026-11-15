@@ -5,7 +5,9 @@ use super::theme::{bold, css, mono, sans};
 use super::widgets::{self, button, icon_button, link, primary_enabled, segmented};
 use egui::{Color32, Margin, RichText, Stroke, TextureHandle, Vec2};
 use serde::{Deserialize, Serialize};
+use super::export_jobs::{self, BatchRun, BatchSettings, ExportView, JobResult, Profile};
 use spide_diagram::svg::ExportOptions;
+use spide_diagram::visuals::DETAIL_LABELS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -48,11 +50,13 @@ pub struct ExportSettings {
     pub options: ExportOptions,
     pub scale: u8,
     pub last_path: Option<String>,
+    /// batch export selections (independent of Export Again)
+    pub batch: BatchSettings,
 }
 
 impl Default for ExportSettings {
     fn default() -> Self {
-        Self { format: Format::Png, options: ExportOptions::default(), scale: 2, last_path: None }
+        Self { format: Format::Png, options: ExportOptions::default(), scale: 2, last_path: None, batch: BatchSettings::default() }
     }
 }
 
@@ -72,11 +76,14 @@ pub struct ExportDialog {
     pub preview_key: String,
     pub preview_at: f64,
     pub empty: bool,
+    /// "All diagrams" mode
+    pub batch_mode: bool,
+    pub run: Option<BatchRun>,
 }
 
 impl ExportDialog {
     pub fn new(settings: ExportSettings) -> Self {
-        Self { settings, state: ExportState::Idle, preview: None, preview_key: String::new(), preview_at: 0.0, empty: false }
+        Self { settings, state: ExportState::Idle, preview: None, preview_key: String::new(), preview_at: 0.0, empty: false, batch_mode: false, run: None }
     }
 }
 
@@ -86,15 +93,27 @@ pub enum DialogOut {
     Reveal(String),
     /// settings changed (persist)
     Changed,
+    /// start the batch (ask for a folder)
+    BatchStart,
+    BatchCancel,
+}
+
+/// The profiles a batch uses: the saved ones, or the current settings.
+pub fn effective_profiles(s: &ExportSettings) -> Vec<Profile> {
+    if s.batch.profiles.is_empty() {
+        vec![Profile { name: "current".into(), options: s.options.clone(), scale: s.scale }]
+    } else {
+        s.batch.profiles.clone()
+    }
 }
 
 /// The export sheet. `svg` builds the current view's export SVG for the given options.
-pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, svg: &mut dyn FnMut(&ExportOptions) -> Option<(String, u32, u32)>) -> Option<DialogOut> {
+pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views: &[ExportView], svg: &mut dyn FnMut(&ExportOptions) -> Option<(String, u32, u32)>) -> Option<DialogOut> {
     let mut out = None;
     let now = ctx.input(|i| i.time);
     let f = info(d.settings.format);
     // live preview of exactly what will be written (debounced)
-    if f.image {
+    if f.image || d.batch_mode {
         let key = serde_json::to_string(&d.settings.options).unwrap_or_default();
         if key != d.preview_key {
             if d.preview_at == 0.0 {
@@ -149,8 +168,15 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, svg: 
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
                             widgets::kicker(ui, "Export");
-                            ui.label(RichText::new(view_title).font(bold(16.0)).color(css::TEXT));
+                            ui.label(RichText::new(if d.batch_mode { "All diagrams" } else { view_title }).font(bold(16.0)).color(css::TEXT));
                         });
+                        ui.add_space(24.0);
+                        if d.run.as_ref().is_none_or(|r| r.done()) {
+                            if let Some(v) = segmented(ui, &d.batch_mode, &[(false, "This view"), (true, "All diagrams")]) {
+                                d.batch_mode = v;
+                                d.preview_key.clear();
+                            }
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                             if icon_button(ui, "×").on_hover_text("Close export").clicked() {
                                 out = Some(DialogOut::Close);
@@ -181,7 +207,7 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, svg: 
                         row += 1;
                     }
                     p.vline(pr.right(), pr.y_range(), Stroke::new(1.0, css::LINE));
-                    if f.image {
+                    if f.image || d.batch_mode {
                         match &d.preview {
                             Some((tex, iw, ih)) => {
                                 let avail = pr.shrink(22.0);
@@ -199,7 +225,7 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, svg: 
                         p.text(pr.center() + Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, f.help, sans(12.5), css::DIM);
                     }
                     // the size label drawn properly (on top of its plate)
-                    if let (true, Some((_, iw, ih))) = (f.image, &d.preview) {
+                    if let (true, Some((_, iw, ih))) = (f.image && !d.batch_mode, &d.preview) {
                         let size_text = match d.settings.format {
                             Format::Png => format!("{} × {} px", (*iw as f32 * d.settings.scale as f32).round(), (*ih as f32 * d.settings.scale as f32).round()),
                             Format::Pdf => format!("{} × {} mm page", ((*iw as f32 / 96.0) * 25.4).round(), ((*ih as f32 / 96.0) * 25.4).round()),
@@ -215,6 +241,12 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, svg: 
                             egui::Frame::new().inner_margin(Margin::symmetric(18, 16)).show(ui, |ui| {
                                 ui.set_width(w - pw - 36.0);
                                 ui.spacing_mut().item_spacing.y = 14.0;
+                                if d.batch_mode {
+                                    if let Some(o) = batch_panel(ui, d, views) {
+                                        out = Some(o);
+                                    }
+                                    return;
+                                }
                                 egui::Grid::new("formats").spacing(Vec2::new(4.0, 4.0)).show(ui, |ui| {
                                     let cw = (w - pw - 36.0 - 12.0) / 4.0;
                                     for (i, x) in FORMATS.iter().enumerate() {
@@ -311,6 +343,12 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, svg: 
                 widgets::hline(ui);
                 egui::Frame::new().fill(css::SURFACE).inner_margin(Margin::symmetric(18, 12)).show(ui, |ui| {
                     ui.set_width(w - 36.0);
+                    if d.batch_mode {
+                        if let Some(o) = batch_footer(ui, d, views) {
+                            out = Some(o);
+                        }
+                        return;
+                    }
                     ui.horizontal(|ui| {
                         match &d.state {
                             ExportState::Error(e) => {
@@ -346,8 +384,163 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, svg: 
             });
     });
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        out = Some(DialogOut::Close);
+        out = Some(if d.run.as_ref().is_some_and(|r| !r.done()) { DialogOut::BatchCancel } else { DialogOut::Close });
     }
+    out
+}
+
+fn label_col(ui: &mut egui::Ui, text: &str) {
+    ui.add_sized(Vec2::new(92.0, 20.0), egui::Label::new(RichText::new(text.to_uppercase()).font(bold(11.0)).color(css::FAINT)));
+}
+
+/// Batch selections: diagrams, detail levels, formats, settings profiles.
+fn batch_panel(ui: &mut egui::Ui, d: &mut ExportDialog, views: &[ExportView]) -> Option<DialogOut> {
+    let mut changed = false;
+    let running = d.run.as_ref().is_some_and(|r| !r.done());
+    ui.add_enabled_ui(!running, |ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.spacing_mut().interact_size.y = 18.0;
+        widgets::para(ui, "Every diagram of this project, at every detail level you pick, in every format and settings profile. Images use the canvas layout; files go into a new folder.", 12.0, css::DIM);
+        let b = &mut d.settings.batch;
+        ui.add_space(8.0);
+        ui.horizontal_top(|ui| {
+            label_col(ui, "Diagrams");
+            ui.vertical(|ui| {
+                if views.is_empty() {
+                    ui.label(RichText::new("Nothing to export yet.").font(sans(12.5)).color(css::FAINT));
+                }
+                for v in views {
+                    let mut on = !b.excluded.contains(&v.key());
+                    if ui.checkbox(&mut on, RichText::new(v.title()).font(sans(12.5)).color(css::TEXT)).changed() {
+                        b.excluded.retain(|k| k != &v.key());
+                        if !on {
+                            b.excluded.push(v.key());
+                        }
+                        changed = true;
+                    }
+                }
+            });
+        });
+        ui.add_space(10.0);
+        ui.horizontal_top(|ui| {
+            label_col(ui, "Detail");
+            ui.vertical(|ui| {
+                for (l, name) in DETAIL_LABELS.iter().enumerate() {
+                    let mut on = b.levels.contains(&(l as u8));
+                    if ui.checkbox(&mut on, RichText::new(format!("{l} · {name}")).font(sans(12.5)).color(css::TEXT)).changed() {
+                        b.levels.retain(|x| *x != l as u8);
+                        if on {
+                            b.levels.push(l as u8);
+                            b.levels.sort();
+                        }
+                        changed = true;
+                    }
+                }
+                widgets::para(ui, "Class and domain diagrams only; the other views have one level.", 11.0, css::FAINT);
+            });
+        });
+        ui.add_space(10.0);
+        ui.horizontal_top(|ui| {
+            label_col(ui, "Formats");
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    for f in [Format::Png, Format::Svg, Format::Pdf] {
+                        let mut on = b.formats.contains(&f);
+                        if ui.checkbox(&mut on, RichText::new(info(f).label).font(sans(12.5)).color(css::TEXT)).changed() {
+                            b.formats.retain(|x| *x != f);
+                            if on {
+                                b.formats.push(f);
+                            }
+                            changed = true;
+                        }
+                    }
+                });
+                if ui.checkbox(&mut b.plantuml, RichText::new("PlantUML (one file per view)").font(sans(12.5)).color(css::TEXT)).on_hover_text("PlantUML lays diagrams out itself and always shows the full model: no detail levels or themes").changed() {
+                    changed = true;
+                }
+            });
+        });
+        ui.add_space(10.0);
+        ui.horizontal_top(|ui| {
+            label_col(ui, "Settings");
+            ui.vertical(|ui| {
+                if b.profiles.is_empty() {
+                    widgets::para(ui, "The current export settings (theme, scale, contents). Add profiles to export several variants.", 11.5, css::DIM);
+                }
+                let mut remove = None;
+                for (i, p) in b.profiles.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui.add(egui::TextEdit::singleline(&mut p.name).desired_width(90.0).font(sans(12.0))).changed() {
+                            changed = true;
+                        }
+                        ui.label(RichText::new(p.summary()).font(sans(11.5)).color(css::DIM));
+                        if icon_button(ui, "×").on_hover_text("Remove this profile").clicked() {
+                            remove = Some(i);
+                        }
+                    });
+                }
+                if let Some(i) = remove {
+                    b.profiles.remove(i);
+                    changed = true;
+                }
+                if link(ui, "＋ Add the current export settings as a profile").on_hover_text("Set theme, scale and contents under “This view”, then add them here").clicked() {
+                    let n = b.profiles.len() + 1;
+                    let name = if d.settings.options.theme == "dark" { format!("dark-{n}") } else { format!("light-{n}") };
+                    b.profiles.push(Profile { name, options: d.settings.options.clone(), scale: d.settings.scale });
+                    changed = true;
+                }
+            });
+        });
+    });
+    changed.then_some(DialogOut::Changed)
+}
+
+/// Batch footer: what will be written, progress, cancel, and the summary.
+fn batch_footer(ui: &mut egui::Ui, d: &mut ExportDialog, views: &[ExportView]) -> Option<DialogOut> {
+    let mut out = None;
+    let jobs = export_jobs::jobs(views, &d.settings.batch, &effective_profiles(&d.settings));
+    ui.horizontal(|ui| {
+        match &d.run {
+            Some(r) if !r.done() => {
+                let frac = r.next as f32 / r.jobs.len().max(1) as f32;
+                ui.add(egui::ProgressBar::new(frac).desired_width(260.0).text(format!("{} / {} · {}", r.next, r.jobs.len(), r.jobs.get(r.next).map(|j| j.file.as_str()).unwrap_or(""))));
+            }
+            Some(r) => {
+                let (w, sk, f) = r.counts();
+                let text = format!("{}{w} written{}{}", if r.cancelled { "Stopped · " } else { "" }, if sk > 0 { format!(" · {sk} empty, skipped") } else { String::new() }, if f > 0 { format!(" · {f} failed") } else { String::new() });
+                let color = if f > 0 || r.cancelled { css::WARN } else { css::GOOD };
+                let resp = ui.label(RichText::new(text).font(sans(12.0)).color(color));
+                let failures: Vec<String> = r.results.iter().filter_map(|(n, x)| match x {
+                    JobResult::Failed(e) | JobResult::Skipped(e) => Some(format!("{n}: {e}")),
+                    _ => None,
+                }).collect();
+                if !failures.is_empty() {
+                    resp.on_hover_text(failures.join("\n"));
+                }
+                if link(ui, "Reveal folder").clicked() {
+                    out = Some(DialogOut::Reveal(r.dir.display().to_string()));
+                }
+            }
+            None => {
+                ui.label(RichText::new(format!("{} file{}", jobs.len(), if jobs.len() == 1 { "" } else { "s" })).font(sans(12.0)).color(css::DIM));
+            }
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let running = d.run.as_ref().is_some_and(|r| !r.done());
+            if running {
+                if button(ui, "Stop").clicked() {
+                    out = Some(DialogOut::BatchCancel);
+                }
+            } else {
+                if primary_enabled(ui, !jobs.is_empty(), "Export all…").clicked() {
+                    out = Some(DialogOut::BatchStart);
+                }
+                if button(ui, if d.run.is_some() { "Done" } else { "Cancel" }).clicked() {
+                    out = Some(DialogOut::Close);
+                }
+            }
+        });
+    });
     out
 }
 
