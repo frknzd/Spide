@@ -342,7 +342,7 @@ pub fn plan_title(p: &Proposal, snap: &Snapshot) -> String {
 pub enum NextStep {
     Brief,
     Behaviour,
-    Source,
+    Implement,
     History,
     FocusPi,
 }
@@ -386,10 +386,9 @@ pub fn completion(ui: &mut Ui, snap: &Snapshot) -> Option<NextStep> {
         if step(ui, "Check behaviour →", behaviour) {
             out = Some(NextStep::Behaviour);
         }
-        if snap.source.attachment.is_some() {
-            if step(ui, "Implement in source →", "Prepare a separately approved implementation task for an approved decision.") {
-                out = Some(NextStep::Source);
-            }
+        let ahead = snap.project.as_ref().and_then(|p| p.report.as_ref()).map(|r| r.count(spide_core::sync::SyncStatus::DesignAhead)).unwrap_or(0);
+        if ahead > 0 && step(ui, "Implement in code →", &format!("{ahead} approved change{} not in the code yet — the agent implements them.", if ahead == 1 { "" } else { "s" })) {
+            out = Some(NextStep::Implement);
         }
         if approved > 0 && step(ui, "Decision history →", &format!("{approved} resolved decision{} with their consequences.", if approved == 1 { "" } else { "s" })) {
             out = Some(NextStep::History);

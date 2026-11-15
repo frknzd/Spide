@@ -96,9 +96,9 @@ export default function (pi: ExtensionAPI) {
       return { action: "handled" };
     }
   });
-  const commands = ["tidy", "fit", "find", "focus", "detail", "lens", "implicit", "external", "brief", "rules", "mode", "strict", "lenient", "accept", "reject", "undo", "redo", "add", "pruned", "timeline", "branch", "switch", "compare", "merge", "import", "drift", "code", "coderoot", "export", "open", "new", "save", "name", "folder", "agent restart"];
+  const commands = ["tidy", "fit", "find", "focus", "detail", "lens", "implicit", "external", "brief", "rules", "mode", "strict", "lenient", "accept", "reject", "undo", "redo", "add", "pruned", "timeline", "branch", "switch", "compare", "merge", "project", "readjust", "implement", "verify", "synced", "reindex", "coderoot", "export", "open", "new", "save", "name", "folder", "agent restart"];
   pi.registerCommand("spide", {
-    description: "Spide canvas commands (e.g. /spide tidy, /spide import). Pi commands stay native.",
+    description: "Spide canvas commands (e.g. /spide tidy, /spide find Order). Pi commands stay native.",
     getArgumentCompletions: (prefix) => commands.filter((c) => c.startsWith(prefix)).map((c) => ({ value: c, label: c })),
     handler: async (args, c) => {
       try { await request("command", { command: "/" + (args.trim() || "brief") }); }

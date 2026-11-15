@@ -96,6 +96,8 @@ pub enum DialogOut {
     /// start the batch (ask for a folder)
     BatchStart,
     BatchCancel,
+    /// regeneration didn't finish: write the diagrams as they are
+    BatchExportAnyway,
 }
 
 /// The profiles a batch uses: the saved ones, or the current settings.
@@ -501,6 +503,17 @@ fn batch_footer(ui: &mut egui::Ui, d: &mut ExportDialog, views: &[ExportView]) -
     let jobs = export_jobs::jobs(views, &d.settings.batch, &effective_profiles(&d.settings));
     ui.horizontal(|ui| {
         match &d.run {
+            Some(r) if matches!(r.phase, export_jobs::BatchPhase::Regenerating { .. }) => {
+                if let export_jobs::BatchPhase::Regenerating { pending, .. } = &r.phase {
+                    ui.spinner();
+                    ui.label(RichText::new(format!("Regenerating {} with the agent…", export_jobs::view_list(pending))).font(sans(12.0)).color(css::DIM));
+                }
+            }
+            Some(r) if matches!(r.phase, export_jobs::BatchPhase::Stuck { .. }) => {
+                if let export_jobs::BatchPhase::Stuck { reason, .. } = &r.phase {
+                    ui.add(egui::Label::new(RichText::new(reason).font(sans(12.0)).color(css::WARN)).wrap());
+                }
+            }
             Some(r) if !r.done() => {
                 let frac = r.next as f32 / r.jobs.len().max(1) as f32;
                 ui.add(egui::ProgressBar::new(frac).desired_width(260.0).text(format!("{} / {} · {}", r.next, r.jobs.len(), r.jobs.get(r.next).map(|j| j.file.as_str()).unwrap_or(""))));
@@ -527,7 +540,15 @@ fn batch_footer(ui: &mut egui::Ui, d: &mut ExportDialog, views: &[ExportView]) -
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let running = d.run.as_ref().is_some_and(|r| !r.done());
-            if running {
+            let stuck = d.run.as_ref().is_some_and(|r| matches!(r.phase, export_jobs::BatchPhase::Stuck { .. }));
+            if stuck {
+                if button(ui, "Stop").clicked() {
+                    out = Some(DialogOut::BatchCancel);
+                }
+                if primary_enabled(ui, true, "Export anyway").on_hover_text("Write the diagrams as they are, including the out-of-date ones").clicked() {
+                    out = Some(DialogOut::BatchExportAnyway);
+                }
+            } else if running {
                 if button(ui, "Stop").clicked() {
                     out = Some(DialogOut::BatchCancel);
                 }

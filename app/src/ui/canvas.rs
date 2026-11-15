@@ -7,7 +7,7 @@ use egui::{Modifiers, Pos2, Rect};
 use spide_core::metrics::Metrics;
 use spide_core::model::{Class, Layer, Package, Pos, Status};
 use spide_core::Target;
-use spide_diagram::class_view::{self, external_classes, rect_of, Data, DriftSets, Lens, Opts, Routes, Stress};
+use spide_diagram::class_view::{self, external_classes, rect_of, Data, Lens, Opts, Routes, Stress, SyncSets};
 use spide_diagram::focus::Footprint;
 use spide_diagram::insights::{self, Marks, Members, OverlapLink};
 
@@ -52,7 +52,7 @@ pub struct CanvasInput<'a> {
     pub read_only: bool,
     pub review_focus: Option<&'a Footprint>,
     pub stress: Option<&'a Stress>,
-    pub drift: Option<&'a DriftSets>,
+    pub sync: Option<&'a SyncSets>,
     /// hovered element key (focus mode, ghost spotlight)
     pub hovered: Option<&'a str>,
     /// ghost spotlight requested from the proposal bar: `Some(None)` = all ghosts
@@ -396,7 +396,7 @@ impl ClassCanvas {
             focus_class: if exporting { None } else { focus_class.as_deref() },
             highlight: if exporting { None } else { inp.highlight },
             stress: if exporting { None } else { inp.stress },
-            drift: if exporting { None } else { inp.drift },
+            sync: if exporting { None } else { inp.sync },
             pinned,
             focus_set: if exporting { None } else { self.focus_set.as_ref() },
             plain,

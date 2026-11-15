@@ -146,7 +146,7 @@ fn duplicates_get_one_home_and_pure_fabrication_when_no_expert_fits() {
 fn agent_tools_answer() {
     let mut s = Store::new(rest_extraction());
     let names: Vec<String> = tools::tool_list().as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
-    for t in ["get_responsibilities", "get_overlap", "suggest_home", "assess_class", "get_code"] {
+    for t in ["get_responsibilities", "get_overlap", "suggest_home", "assess_class"] {
         assert!(names.contains(&t.to_string()), "{t} listed");
     }
     let r: serde_json::Value = serde_json::from_str(&tools::call(&mut s, "get_responsibilities", &serde_json::json!({"class": "RestExtractionPanel"})).unwrap().text).unwrap();

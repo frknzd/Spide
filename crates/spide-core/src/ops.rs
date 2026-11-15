@@ -189,6 +189,19 @@ pub enum Op {
         description: Option<String>,
     },
     RemoveLink { from: String, to: String },
+    /// Spide Project: trace a class (or one of its methods) to a Java symbol
+    /// (`org.x.Foo`, or `org.x.Foo#bar(int)` for a method).
+    LinkCode {
+        class: String,
+        #[serde(default)]
+        method: Option<String>,
+        symbol: String,
+    },
+    UnlinkCode {
+        class: String,
+        #[serde(default)]
+        method: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -282,6 +295,14 @@ impl Op {
             Op::AssignContainer { package, container } => format!("run {package} in {}", container.as_deref().unwrap_or("(no container)")),
             Op::AddLink { from, to, .. } => format!("link {from} → {to}"),
             Op::RemoveLink { from, to } => format!("remove link {from} → {to}"),
+            Op::LinkCode { class, method, symbol } => match method {
+                Some(m) => format!("link {class}.{m}() → {symbol}"),
+                None => format!("link {class} → {symbol}"),
+            },
+            Op::UnlinkCode { class, method } => match method {
+                Some(m) => format!("unlink {class}.{m}()"),
+                None => format!("unlink {class}"),
+            },
         }
     }
 
@@ -296,7 +317,9 @@ impl Op {
             | Op::AddMethod { class, .. }
             | Op::UpdateMethod { class, .. }
             | Op::RemoveMethod { class, .. }
-            | Op::MoveToPackage { class, .. } => vec![class.clone()],
+            | Op::MoveToPackage { class, .. }
+            | Op::LinkCode { class, .. }
+            | Op::UnlinkCode { class, .. } => vec![class.clone()],
             Op::AddRelation { from, to, .. } | Op::UpdateRelation { from, to, .. } | Op::RemoveRelation { from, to, .. } => {
                 vec![from.clone(), to.clone()]
             }
@@ -864,6 +887,31 @@ impl Op {
                     status: st,
                     proposal: prop,
                 });
+            }
+            Op::LinkCode { class, method, symbol } => {
+                let sym = symbol.trim();
+                let ok = !sym.is_empty() && sym.split(['.', '#', '(', ')', ',', '$', '<', '>', '[', ']', ' ']).all(|p| p.chars().all(|c| c.is_alphanumeric() || c == '_'));
+                if !ok {
+                    return err(format!("not a Java symbol: {symbol}"));
+                }
+                if method.is_some() != sym.contains('#') {
+                    return err("a method link needs Type#name(params); a class link a fully qualified type");
+                }
+                let c = live_class_mut(d, class)?;
+                let link = Some(SourceSymbol { symbol: sym.to_string(), ..Default::default() });
+                match method {
+                    Some(m) => c.methods.iter_mut().find(|x| x.name == *m && x.status != Status::Pruned).ok_or_else(|| OpError(format!("unknown method {class}.{m}")))?.source = link,
+                    None => c.source = link,
+                }
+                mark_changed(c, mode);
+            }
+            Op::UnlinkCode { class, method } => {
+                let c = live_class_mut(d, class)?;
+                match method {
+                    Some(m) => c.methods.iter_mut().find(|x| x.name == *m && x.status != Status::Pruned).ok_or_else(|| OpError(format!("unknown method {class}.{m}")))?.source = None,
+                    None => c.source = None,
+                }
+                mark_changed(c, mode);
             }
             Op::RemoveLink { from, to } => {
                 let idx = d

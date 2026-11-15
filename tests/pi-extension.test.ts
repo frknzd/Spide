@@ -83,3 +83,17 @@ test("one native session: authenticated handshake, context, follow-up, duplicate
     delete process.env.SPIDE_CONTROL_GENERATION;
   }
 });
+
+test("/spide completions offer the Spide Project commands and not the removed code import", () => {
+  process.env.SPIDE_CONTROL_SOCKET = join(tmpdir(), "spide-unused.sock");
+  process.env.SPIDE_CONTROL_TOKEN = "test-only";
+  process.env.SPIDE_CONTROL_GENERATION = "1";
+  const registered = new Map<string, any>();
+  bridge({ on() {}, registerCommand: (name: string, spec: any) => registered.set(name, spec), getActiveTools: () => [], sendUserMessage() {} } as any);
+  const spide = registered.get("spide");
+  assert.ok(spide);
+  const all = spide.getArgumentCompletions("").map((c: any) => c.value);
+  for (const c of ["project", "readjust", "implement", "verify", "synced", "reindex"]) assert.ok(all.includes(c), c);
+  for (const c of ["import", "drift", "code"]) assert.ok(!all.includes(c), c);
+  assert.deepEqual(spide.getArgumentCompletions("re").map((c: any) => c.value), ["reject", "redo", "readjust", "reindex"]);
+});

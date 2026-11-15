@@ -22,10 +22,7 @@ pub fn send_prompt(st: &AppState, pi: &PiBridge, text: String, tab: String) -> R
     if text.is_empty() {
         return Ok(());
     }
-    let msg = {
-        let s = st.lock();
-        format!("{}\n[spide source context]\n{}", prompts::user_prompt(&text, &tab, &s.store.design), crate::source_tracking::context(&s))
-    };
+    let msg = prompts::user_prompt(&text, &tab, &st.lock().store.design);
     pi.prompt(generation, &st, msg, Some(text))
 }
 
@@ -74,9 +71,8 @@ pub fn revision_message(s: &crate::state::Shared, id: &str, rev: u64, notes: &st
     let option = option.or(dec.chosen.as_deref()).unwrap_or("none");
     let targets = if targets.is_empty() { "none (the whole plan)".to_string() } else { targets.iter().map(|t| format!("\n- {t}")).collect::<String>() };
     Ok(format!(
-        "[spide · request revision · decision {id}]\nRevise this decision's concrete plan using propose_ops with decision/option IDs (or propose a replacement decision). Keep related small changes together in one coherent plan. Do NOT apply anything. No defence is required.\nDecision: {}\nPlan: {plan} · option shown to the user: {option} · design revision: {rev}\nDiagram elements the user selected:{targets}\nUser guidance: {notes}\nSource context: {}",
+        "[spide · request revision · decision {id}]\nRevise this decision's concrete plan using propose_ops with decision/option IDs (or propose a replacement decision). Keep related small changes together in one coherent plan. Do NOT apply anything. No defence is required.\nDecision: {}\nPlan: {plan} · option shown to the user: {option} · design revision: {rev}\nDiagram elements the user selected:{targets}\nUser guidance: {notes}",
         serde_json::to_string(dec).unwrap(),
-        crate::source_tracking::context(s)
     ))
 }
 
@@ -275,6 +271,7 @@ pub fn regenerate(st: &AppState, pi: &PiBridge, view: String, scenario: Option<S
     let generation = pi.ticket();
     let msg = match view.as_str() {
         "usecase" => prompts::gen_use_cases(),
+        "domain" => prompts::gen_domain_model(),
         "sequence" => prompts::gen_sequence(scenario.as_deref()),
         _ => return Err(format!("{view} is derived automatically")),
     };
@@ -283,6 +280,13 @@ pub fn regenerate(st: &AppState, pi: &PiBridge, view: String, scenario: Option<S
         None => format!("↻ {view}"),
     };
     pi.prompt(generation, &st, msg, Some(label))
+}
+
+/// Before a batch export: ask the agent to regenerate every out-of-date agent-built view, in order.
+pub fn regenerate_for_export(st: &AppState, pi: &PiBridge, views: Vec<String>, sequences: Vec<String>) -> R {
+    let generation = pi.ticket();
+    let msg = prompts::gen_for_export(views.iter().any(|v| v == "domain"), views.iter().any(|v| v == "usecase"), &sequences);
+    pi.prompt(generation, st, msg, Some("↻ diagrams for export".into()))
 }
 
 // ---------------------------------------------------------------- files
@@ -296,6 +300,11 @@ pub fn open_design(st: &AppState, pi: &PiBridge, path: String) -> R {
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let design = Design::from_json(&text).map_err(|e| format!("not a Spide design: {e}"))?;
     let dir = path.parent().map(PathBuf::from).ok_or("bad path")?;
+    // `<root>/spide/design.json` of a Spide Project: open the project itself
+    let root = spide_core::project::resolve_root(&dir);
+    if root != dir && path.file_name().is_some_and(|n| n == "design.json") {
+        return switch_project(st, pi, root, None);
+    }
     // a design.json elsewhere is copied into its folder's design.json; never clobber a different one
     let target = dir.join("design.json");
     if path.file_name() != target.file_name() {
@@ -316,20 +325,20 @@ pub fn save_as(st: &AppState, path: String) -> R {
 }
 
 fn switch_project(st: &AppState, pi: &PiBridge, dir: PathBuf, design: Option<Design>) -> R {
+    let dir = spide_core::project::resolve_root(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     // Stop old control requests and reap the old process before replacing project state.
     pi.shutdown();
     {
         let mut s = st.lock();
-        s.source = crate::source_tracking::load(&dir);
-        s.implementations = crate::source_implementation::load(&dir);
         s.project_dir = dir.clone();
         s.last_written = None;
         s.last_history = None;
         s.branch = crate::branches::active(&dir);
+        s.project = crate::project::load(&dir);
         let d = match design {
             Some(d) => d,
-            None => match std::fs::read_to_string(dir.join("design.json")).ok().and_then(|t| Design::from_json(&t).ok()) {
+            None => match std::fs::read_to_string(s.design_path()).ok().and_then(|t| Design::from_json(&t).ok()) {
                 Some(d) => d,
                 None => Design {
                     name: dir.file_name().and_then(|n| n.to_str()).unwrap_or("Untitled").to_string(),
@@ -339,9 +348,10 @@ fn switch_project(st: &AppState, pi: &PiBridge, dir: PathBuf, design: Option<Des
         };
         s.store.load(d);
     }
-    crate::watcher::watch(st, &dir);
-    crate::source_tracking::watch(st);
-    crate::source_tracking::refresh_async(st);
+    let design_path = st.lock().design_path();
+    crate::watcher::watch(st, &design_path);
+    crate::project::watch(st);
+    crate::project::refresh_async(st);
     st.changed();
     pi.restart(st)
 }
@@ -372,7 +382,15 @@ pub fn export_plantuml(st: &AppState, view: String, path: String) -> R {
 }
 
 pub fn export_archunit(st: &AppState, path: String) -> R {
-    let java = spide_core::archunit::archunit_test(&st.lock().store.design);
+    let java = {
+        let s = st.lock();
+        let mut d = s.store.design.clone();
+        // a Spide Project's manifest names the code root
+        if let Some(root) = s.project.as_ref().and_then(|p| p.manifest.code_root.clone()) {
+            d.settings.code_root = Some(root);
+        }
+        spide_core::archunit::archunit_test(&d)
+    };
     std::fs::write(path, java).map_err(|e| e.to_string())
 }
 
@@ -383,6 +401,11 @@ pub fn set_code_root(st: &AppState, root: Option<String>) -> R {
         if !ok {
             return Err(format!("not a Java package name: {r}"));
         }
+    }
+    let manifest = st.lock().project.as_ref().map(|p| p.manifest.clone());
+    if let Some(mut m) = manifest {
+        m.code_root = root.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
+        return save_manifest(st, m);
     }
     st.lock().store.set_code_root(root);
     done(&st)
@@ -416,6 +439,7 @@ pub fn export_plantuml_all(st: &AppState, dir: String) -> R<Vec<String>> {
         let empty = match view {
             "system" => snap.view.containers.is_empty() && snap.view.systems.is_empty(),
             "usecase" => snap.view.use_cases.use_cases.is_empty(),
+            "domain" => snap.view.domain.is_empty(),
             "sequence" => snap.view.sequences.is_empty(),
             _ => snap.view.classes.is_empty(),
         };
@@ -615,120 +639,128 @@ pub fn branch_merge(st: &AppState, name: String) -> R {
     done(&st)
 }
 
-// ---------------------------------------------------------------- reality (code import)
-
-fn reality_path(project: &std::path::Path) -> PathBuf {
-    project.join(".spide").join("reality.json")
-}
-
-pub fn load_reality(project: &std::path::Path) -> Option<Design> {
-    if project.join(".spide/source.json").exists() {
-        let source = crate::source_tracking::load(project);
-        return source.attachment.and(source.snapshot);
-    }
-    std::fs::read_to_string(reality_path(project)).ok().and_then(|t| Design::from_json(&t).ok())
-}
-
-#[derive(serde::Serialize)]
-pub struct ImportSummary {
-    pub files: usize,
-    pub classes: usize,
-    pub relations: usize,
-    pub skipped: Vec<String>,
-    pub code_root: Option<String>,
-}
-
-/// Import Java sources under `dir` as the read-only "reality" model (`.spide/reality.json`).
-pub fn import_code(st: &AppState, pi: &PiBridge, dir: String) -> R<ImportSummary> {
-    let generation = pi.ticket();
-    let (project, root) = {
-        let s = st.lock();
-        (s.project_dir.clone(), s.store.design.settings.code_root.clone())
-    };
-    let r = spide_import::import_java(std::path::Path::new(&dir), root.as_deref())?;
-    let summary = ImportSummary {
-        files: r.files,
-        classes: r.design.classes.len(),
-        relations: r.design.relations.len(),
-        skipped: r.skipped,
-        code_root: r.design.settings.code_root.clone(),
-    };
-    {
-        let mut s = st.lock();
-        if s.project_dir != project || pi.ticket() != generation {
-            return Err("project/session changed during import; assessment cancelled".into());
-        }
-        crate::state::write_atomic(&reality_path(&project), &r.design.to_json()).map_err(|e| e.to_string())?;
-        if s.store.design.settings.code_root.is_none() {
-            s.store.set_code_root(summary.code_root.clone());
-        }
-        s.store.design.settings.code_dir = Some(dir);
-    }
-    st.changed();
-    // let the agent judge the real implementation (batched, in the background)
-    let msg = prompts::assess_code(summary.classes);
-    let _ = pi.prompt(generation, &st, msg, Some("⌕ judging the imported code".into()));
-    Ok(summary)
-}
-
-#[derive(serde::Serialize, Clone)]
-pub struct DriftReport {
-    pub drift: spide_core::drift::Drift,
-    /// The code judged like the design: both health scores, code-only issues, clones, design-vs-code disagreements.
-    pub findings: spide_core::code::CodeFindings,
-    /// The imported code with the design's rules applied (for drawing code-only classes).
-    pub reality: Design,
-    pub checklist: String,
-    pub code_dir: Option<String>,
-}
-
-pub fn drift(st: &AppState) -> R<DriftReport> {
-    let (project, design) = {
-        let s = st.lock();
-        (s.project_dir.clone(), s.store.design.clone())
-    };
-    let reality = {
-        let s = st.lock();
-        crate::source_tracking::mapped(&design, &s.source)
-    }.or_else(|| load_reality(&project)).ok_or("No active source snapshot; attach Java source first")?;
-    let drift = spide_core::drift::drift(&design, &reality);
-    let checklist = spide_core::drift::checklist(&drift);
-    let findings = spide_core::code::analyse(&design, &reality);
-    Ok(DriftReport { reality: spide_core::drift::with_design_rules(&design, &reality), drift, findings, checklist, code_dir: design.settings.code_dir.clone() })
-}
-
-/// The imported implementation of a class (or one method), for the hover card.
-pub fn code_snippet(st: &AppState, class: String, method: Option<String>) -> R<String> {
-    let (project, dir) = {
-        let s = st.lock();
-        (s.project_dir.clone(), s.store.design.settings.code_dir.clone())
-    };
-    let (root, mapped) = {
-        let s = st.lock();
-        (s.source.attachment.as_ref().map(|a| a.repository.display().to_string()), crate::source_tracking::mapped(&s.store.design, &s.source))
-    };
-    let dir = root.or(dir).ok_or("No active source attachment")?;
-    let reality = mapped.or_else(|| load_reality(&project)).ok_or("No active source snapshot")?;
-    spide_core::code::snippet(&reality, std::path::Path::new(&dir), &class, method.as_deref())
-}
-
-/// What exists only in the code becomes a proposal (never removes anything from the design).
-pub fn drift_adopt(st: &AppState) -> R {
-    let project = st.lock().project_dir.clone();
-    let reality = load_reality(&project).ok_or("no code imported yet")?;
-    {
-        let mut s = st.lock();
-        let ops = spide_core::drift::adopt_ops(&s.store.design, &reality);
-        if ops.is_empty() {
-            return Err("the code has nothing the design lacks".into());
-        }
-        s.store.propose_ops(ops, Some("adopt what exists only in the code".into()), "code").map_err(|e| e.0)?;
-    }
-    done(&st)
-}
 
 pub fn reveal_project(st: &AppState) -> R {
     let dir = st.lock().project_dir.clone();
     std::process::Command::new("open").arg(dir).spawn().map_err(|e| e.to_string())?;
     Ok(())
 }
+
+// ---------------------------------------------------------------- Spide Project
+
+/// Make `root` a Spide Project with the current design (copied; the old folder stays) and open it.
+pub fn create_project(st: &AppState, pi: &PiBridge, root: String, manifest: spide_core::project::Manifest, git_exclude: bool) -> R<Vec<String>> {
+    let root = PathBuf::from(root);
+    let (design, from) = {
+        let s = st.lock();
+        (s.store.design.clone(), s.project_dir.clone())
+    };
+    let added = crate::project::create(&root, &manifest, &design, Some(&from), git_exclude)?;
+    switch_project(st, pi, root, None)?;
+    Ok(added)
+}
+
+pub fn open_project(st: &AppState, pi: &PiBridge, root: String) -> R {
+    let root = spide_core::project::resolve_root(&PathBuf::from(root));
+    if !spide_core::project::is_project(&root) {
+        return Err(format!("{} has no spide/project.json — create a Spide Project there first", root.display()));
+    }
+    switch_project(st, pi, root, None)
+}
+
+/// Save an edited manifest and index again.
+pub fn save_manifest(st: &AppState, manifest: spide_core::project::Manifest) -> R {
+    {
+        let mut s = st.lock();
+        let p = s.project.as_mut().ok_or("not a Spide Project")?;
+        let errors = manifest.validate(&p.root, spide_core::project::work_tree(&p.root).as_deref());
+        if !errors.is_empty() {
+            return Err(errors.join("; "));
+        }
+        crate::state::write_atomic(&p.root.join(spide_core::project::MANIFEST), &manifest.to_json()).map_err(|e| e.to_string())?;
+        p.manifest = manifest;
+        p.warnings.clear();
+    }
+    crate::project::watch(st);
+    crate::project::refresh_async(st);
+    Ok(())
+}
+
+pub fn reindex(st: &AppState) -> R {
+    if st.lock().project.is_none() {
+        return Err("not a Spide Project".into());
+    }
+    crate::project::refresh_async(st);
+    Ok(())
+}
+
+/// Code → design: the agent proposes design changes for what changed in the code.
+pub fn readjust(st: &AppState, pi: &PiBridge, classes: Vec<String>) -> R {
+    let generation = pi.ticket();
+    let msg = {
+        let s = st.lock();
+        let p = s.project.as_ref().ok_or("not a Spide Project")?;
+        let a = p.analysis.as_deref().ok_or("the code isn't indexed yet")?;
+        let n = a
+            .report
+            .items
+            .iter()
+            .filter(|i| classes.is_empty() || classes.contains(&i.class))
+            .filter(|i| matches!(i.status, spide_core::sync::SyncStatus::CodeAhead | spide_core::sync::SyncStatus::Conflict | spide_core::sync::SyncStatus::Unreconciled))
+            .count();
+        if n == 0 {
+            return Err("nothing to readjust in this scope".into());
+        }
+        let empty = s.store.design.live_classes().next().is_none();
+        prompts::readjust(&classes, n, empty)
+    };
+    pi.prompt(generation, st, msg, Some("↻ readjust design".into()))
+}
+
+/// Design → code: the agent implements the approved design (pi's own permissions guard the edits).
+pub fn implement(st: &AppState, pi: &PiBridge, classes: Vec<String>, keep_design: bool) -> R {
+    let generation = pi.ticket();
+    let (msg, pending) = {
+        let mut s = st.lock();
+        let items = crate::project::begin_implement(&mut s, &classes, keep_design)?;
+        let p = s.project.as_ref().unwrap();
+        let a = p.analysis.clone().unwrap();
+        let code = p.index.code.clone().unwrap();
+        let brief = spide_core::sync::implement_brief(&a, &s.store.design, &code, &p.manifest, &classes, keep_design);
+        let touched: std::collections::BTreeSet<String> = items.iter().filter_map(|id| a.report.items.iter().find(|i| &i.id == id)).map(|i| i.class.clone()).collect();
+        let pending: Vec<String> = s.store.design.proposals.iter().filter(|p| p.ops.iter().flat_map(Op::touched_classes).any(|c| touched.contains(&c))).map(|p| p.id.clone()).collect();
+        (prompts::implement(&brief, &p.manifest), pending)
+    };
+    if !pending.is_empty() {
+        st.toast("info", format!("Pending plans touch these classes ({}); only the approved design is implemented.", pending.join(", ")));
+    }
+    st.emit();
+    let r = pi.prompt(generation, st, msg, Some("⇢ implement in code".into()));
+    if r.is_err() {
+        if let Some(p) = st.lock().project.as_mut() {
+            p.implementing = None;
+        }
+        st.emit();
+    }
+    r
+}
+
+/// Re-index; with a test command, the agent runs it and reports.
+pub fn verify(st: &AppState, pi: &PiBridge) -> R {
+    let generation = pi.ticket();
+    let cmd = {
+        let s = st.lock();
+        let p = s.project.as_ref().ok_or("not a Spide Project")?;
+        p.manifest.commands.get("test").cloned()
+    };
+    crate::project::refresh_async(st);
+    match cmd {
+        Some(c) => pi.prompt(generation, st, prompts::verify(&c.run, c.cwd.as_deref().unwrap_or(".")), Some("✓ verify".into())),
+        None => Ok(()),
+    }
+}
+
+pub fn mark_synced(st: &AppState) -> R<usize> {
+    crate::project::mark_synced(st)
+}
+

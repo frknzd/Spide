@@ -3,14 +3,12 @@
 
 pub mod adr;
 pub mod archunit;
-pub mod code;
 pub mod course;
 pub mod assess;
 pub mod derive;
 pub mod decisions;
 pub mod detail;
 pub mod diff;
-pub mod drift;
 pub mod home;
 pub mod impact;
 pub mod metrics;
@@ -18,13 +16,14 @@ pub mod model;
 pub mod ops;
 pub mod overlap;
 pub mod plantuml;
+pub mod project;
 pub mod responsibility;
 pub mod pdf;
 pub mod png;
 pub mod rules;
 pub mod scenarios;
-pub mod source;
 pub mod store;
+pub mod sync;
 pub mod proposal_review;
 pub mod tools;
 

@@ -101,22 +101,42 @@ pub fn fix_issue(message: &str, rule: Option<&str>, fix_hint: Option<&str>, kind
     )
 }
 
-pub fn assess_code(classes: usize) -> String {
-    format!(
-        "[spide · code imported]\nThe user imported the real code ({classes} classes); /drift compares it with the design. \
-         Judge the IMPLEMENTATION: for the classes that matter (start with the ones get_metrics flags, then the rest), read them \
-         with get_code and record ONE batched assess_class call with basis=code: purpose, role, and per method concern + verdict \
-         (fits|misplaced|duplicate|delegates) with a short reason based on what the body does (Information Expert, Controller, \
-         Creator, Law of Demeter, duplicated code). Then tell the user in 1–2 sentences what stands out. Don't change the design."
-    )
-}
-
 pub fn analyse_change(name: &str, description: Option<&str>) -> String {
     format!(
         "[spide · analyse change scenario]\nChange scenario: \"{name}\"{}\nRead get_design. Which classes would have to change to support it? \
          Call set_change_impact once with every class that must change and a short why. Don't propose design changes in this turn; \
          if locality is poor, say so in one sentence and offer to raise a decision.",
         description.map(|d| format!(" — {d}")).unwrap_or_default()
+    )
+}
+
+pub fn gen_domain_model() -> String {
+    "[spide · generate domain model]\nRead get_design. Build a conceptual DOMAIN MODEL (Larman) of the problem domain this class design \
+     deals with: concepts of the domain (things, events, roles, descriptions), attributes (simple types, no visibility, no methods), \
+     associations with verb-phrase labels and multiplicities, generalization only for a real is-a. Leave out software artefacts: UI, \
+     controllers, services, repositories, listeners, adapters, framework/library classes and design patterns. Names may differ from \
+     the class design; it is a separate model. Keep pruned items out. Call set_domain_model once. Reply with one sentence."
+        .into()
+}
+
+/// One request for everything a batch export needs regenerated (domain model, use cases, sequences — in that order).
+pub fn gen_for_export(domain: bool, use_cases: bool, sequences: &[String]) -> String {
+    let mut steps = vec![];
+    if domain {
+        steps.push("the DOMAIN MODEL: a conceptual model of the problem domain (concepts with attributes, no methods, no software \
+                    artefacts; associations with labels and multiplicities) → call set_domain_model once"
+            .to_string());
+    }
+    if use_cases {
+        steps.push("the USE CASE diagram (actors, user-goal use cases with the classes that realise them) → call set_use_cases once".to_string());
+    }
+    for s in sequences {
+        steps.push(format!("the sequence diagram \"{s}\" (existing classes and methods only) → call set_sequence with name \"{s}\""));
+    }
+    let list: String = steps.iter().enumerate().map(|(i, s)| format!("\n{}. {s}", i + 1)).collect();
+    format!(
+        "[spide · regenerate diagrams for export]\nThe user is exporting all diagrams; these are out of date with the class model. \
+         Read get_design, then regenerate, in this order:{list}\nKeep pruned items out. Don't change the class design. Reply with one sentence."
     )
 }
 
@@ -139,3 +159,48 @@ pub fn gen_sequence(scenario: Option<&str>) -> String {
          Call set_sequence once, then reply with one sentence."
     )
 }
+
+/// Spide Project: code → design.
+pub fn readjust(classes: &[String], n: usize, empty_design: bool) -> String {
+    let scope = if classes.is_empty() { "all classes".to_string() } else { classes.join(", ") };
+    let bootstrap = if empty_design {
+        "\nThe design is empty: BOOTSTRAP it from the code — one decision per package with the public API only (no private helpers, \
+         accessors or framework plumbing), responsibilities per class, framework/library classes marked external; afterwards generate \
+         the domain model (set_domain_model) and use cases (set_use_cases)."
+    } else {
+        ""
+    };
+    format!(
+        "[spide · readjust the design to the code]\nThe code changed; bring the DESIGN up to date ({n} difference(s), scope: {scope}). \
+         Follow the spide-readjust skill: get_sync with status [code_ahead, conflict, unreconciled]{} → read get_code where the intent \
+         is unclear → propose_ops for mechanical changes (start from suggested_ops; add responsibilities and descriptions), \
+         propose_decision when the code changed structure or responsibilities (offer adopting it vs. keeping the design and \
+         implementing it back). Never delete design intent just because the code lacks it. Don't edit code. Reply with one sentence.{bootstrap}",
+        if classes.is_empty() { String::new() } else { format!(" for classes {}", serde_json::to_string(classes).unwrap()) }
+    )
+}
+
+/// Spide Project: design → code, for the approved changes in `brief`.
+pub fn implement(brief: &str, m: &spide_core::project::Manifest) -> String {
+    let test = m
+        .commands
+        .get("test")
+        .map(|c| format!("\n- When done, run `{}` (in `{}` relative to the project root) and fix what you broke.", c.run, c.cwd.as_deref().unwrap_or(".")))
+        .unwrap_or_default();
+    format!(
+        "[spide · implement the approved design in the code]\nThe user asked you to implement these approved design changes in the Java code \
+         (follow the spide-implement skill). Per class: the file, the exact changes, the class's responsibilities and the decisions behind them.\n{brief}\n\
+         Rules:\n- Implement only these changes and keep existing behaviour; follow the repository's instructions (AGENTS.md).\n\
+         - Don't create framework/library types (ZAP, Swing, JDK); ask the user to mark them external instead.\n- Don't change the design through Spide tools.\n- Never commit, stash, reset or switch branches.\n- Ask the user before deleting a file.{test}\n\
+         - Finish with a two-line summary. Spide re-indexes the code afterwards and shows what is still out of sync."
+    )
+}
+
+/// Spide Project: run the test command.
+pub fn verify(cmd: &str, cwd: &str) -> String {
+    format!(
+        "[spide · verify]\nRun `{cmd}` in `{cwd}` (relative to the project root) and report pass or fail in one sentence; on failure quote the \
+         first relevant error. Don't change code unless the user asks. (Structural sync is checked by Spide; tests check behaviour.)"
+    )
+}
+

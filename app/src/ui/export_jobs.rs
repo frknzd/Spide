@@ -224,6 +224,52 @@ pub enum JobResult {
     Failed(String),
 }
 
+/// Agent-built views among the selected ones that are out of date with the class model (or missing
+/// while there are classes): the batch asks the agent to regenerate them before writing anything.
+pub fn stale_views(views: &[ExportView], excluded: &[String], d: &spide_core::derive::Derived) -> Vec<ExportView> {
+    let chosen = |v: &ExportView| views.contains(v) && !excluded.contains(&v.key());
+    let mut out = vec![];
+    if d.domain_stale && chosen(&ExportView::Domain) {
+        out.push(ExportView::Domain);
+    }
+    if d.use_cases_stale && chosen(&ExportView::Usecase) {
+        out.push(ExportView::Usecase);
+    }
+    for v in views {
+        if let ExportView::Sequence(n) = v {
+            if chosen(v) && d.stale_sequences.contains(n) {
+                out.push(v.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Where a batch is.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BatchPhase {
+    /// writing one file per frame
+    Writing,
+    /// waiting for the agent to regenerate out-of-date views
+    Regenerating { pending: Vec<ExportView>, since: f64, saw_busy: bool },
+    /// regeneration didn't finish: the user picks Export anyway or Stop
+    Stuck { pending: Vec<ExportView>, reason: String },
+}
+
+/// Human list of views ("domain model, use cases").
+pub fn view_list(views: &[ExportView]) -> String {
+    let names: Vec<String> = views
+        .iter()
+        .map(|v| match v {
+            ExportView::Domain => "domain model".to_string(),
+            ExportView::Usecase => "use cases".to_string(),
+            ExportView::Sequence(n) => format!("sequence “{n}”"),
+            v => v.title(),
+        })
+        .collect();
+    names.join(", ")
+}
+
 /// A running batch: the plan, how far it got, and what happened.
 pub struct BatchRun {
     pub dir: PathBuf,
@@ -234,11 +280,15 @@ pub struct BatchRun {
     pub cancelled: bool,
     /// design revision the batch started from: a change aborts it (one consistent snapshot)
     pub rev: u64,
+    pub phase: BatchPhase,
 }
 
 impl BatchRun {
+    pub fn new(dir: PathBuf, jobs: Vec<Job>, profiles: Vec<Profile>, rev: u64) -> Self {
+        Self { dir, jobs, profiles, next: 0, results: vec![], cancelled: false, rev, phase: BatchPhase::Writing }
+    }
     pub fn done(&self) -> bool {
-        self.cancelled || self.next >= self.jobs.len()
+        self.cancelled || (self.phase == BatchPhase::Writing && self.next >= self.jobs.len())
     }
     pub fn counts(&self) -> (usize, usize, usize) {
         let w = self.results.iter().filter(|r| matches!(r.1, JobResult::Written(_))).count();
@@ -281,6 +331,17 @@ mod tests {
         assert_eq!(puml, vec!["system-plantuml.puml", "class-plantuml.puml", "domain-plantuml.puml", "usecase-plantuml.puml", "sequence-plantuml.puml"]);
         assert!(js.iter().any(|j| j.file == "class-2-responsibilities.pdf"));
         assert!(js.iter().all(|j| !j.file.contains("current")));
+    }
+
+    #[test]
+    fn stale_views_are_the_selected_out_of_date_agent_views() {
+        let d = spide_core::derive::Derived { domain_stale: true, use_cases_stale: true, stale_sequences: vec!["Borrow a book".into()], ..Default::default() };
+        assert_eq!(stale_views(&views(), &[], &d), vec![ExportView::Domain, ExportView::Usecase, ExportView::Sequence("Borrow a book".into())]);
+        // excluded views and views that aren't exported are left alone
+        assert_eq!(stale_views(&views(), &["domain".into(), "usecase".into()], &d), vec![ExportView::Sequence("Borrow a book".into())]);
+        assert!(stale_views(&[ExportView::Class], &[], &d).is_empty());
+        assert!(stale_views(&views(), &[], &Default::default()).is_empty());
+        assert_eq!(view_list(&[ExportView::Domain, ExportView::Usecase]), "domain model, use cases");
     }
 
     #[test]

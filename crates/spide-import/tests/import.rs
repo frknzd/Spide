@@ -80,59 +80,58 @@ fn smoke_on_zap_addon_if_present() {
     assert!(ms < 2000, "import too slow: {ms} ms");
     // the code judged on its own (no intended design): what stands out
     let t = std::time::Instant::now();
-    let f = spide_core::code::analyse(&Design::default(), &r.design);
-    eprintln!("code health {} ({} ms)", f.code_health, t.elapsed().as_millis());
+    let f = compute(&r.design, false);
+    eprintln!("code health {} ({} ms)", f.health, t.elapsed().as_millis());
     for i in f.issues.iter().take(if std::env::var("SPIDE_SMOKE_VERBOSE").is_ok() { 60 } else { 0 }) {
         eprintln!("  [{} {:.2}/{:.2} {}] {}", i.kind, i.severity, i.confidence, i.basis, i.message);
     }
-    for c in f.clones.iter().take(10) {
+    for c in f.overlap.pairs.iter().filter(|p| p.code >= spide_core::overlap::DUPLICATE).take(10) {
         eprintln!("  clone {} ≈ {} ({:.2})", c.a, c.b, c.code);
     }
 }
 
 #[test]
-fn drift_between_design_and_code() {
-    use spide_core::drift::{adopt_ops, checklist, drift};
-    let reality = spide_import::import_java(&fixture(), None).unwrap().design;
-    // the intended design: like the code, but planned differently
+fn sync_between_design_and_code() {
+    use spide_core::sync::{self, SyncStatus};
+    let manifest = project::Manifest { code_root: Some("org.acme.library".into()), ..Default::default() };
+    let reality = spide_import::import_java(&fixture(), Some("org.acme.library")).unwrap().design;
+    // the design as the code is: everything in sync
+    let a = sync::analyse(&reality, &reality, &manifest, None, false);
+    assert!(a.report.items.is_empty(), "{:#?}", a.report.items.iter().map(|i| (&i.id, i.status)).collect::<Vec<_>>());
+    // the intended design: planned differently
     let ops: Vec<Op> = serde_json::from_str(
         r#"[{"op":"remove_class","name":"AuditLog"},
             {"op":"add_class","name":"Reservation","package":"domain"},
             {"op":"add_method","class":"Member","method":{"name":"reserve","params":[{"name":"b","type":"Book"}]}},
-            {"op":"move_to_package","class":"LoanType","package":"app"},
-            {"op":"add_relation","from":"Book","to":"Member","kind":"dependency"},
-            {"op":"remove_relation","from":"Member","to":"Loan"}]"#,
+            {"op":"move_to_package","class":"LoanType","package":"app"}]"#,
     )
     .unwrap();
     let intended = ops::apply_all(&reality, &ops, ops::Mode::Commit(Status::Accepted, None)).unwrap();
-    let d = drift(&intended, &reality);
-    assert_eq!(d.missing_in_code, vec!["Reservation".to_string()]);
-    assert_eq!(d.extra_in_code, vec!["AuditLog".to_string()]);
-    let member = d.members.iter().find(|m| m.class == "Member").unwrap();
-    assert_eq!(member.missing_in_code, vec!["reserve()".to_string()]);
-    assert_eq!(d.packages.len(), 1);
-    assert_eq!(d.packages[0].class, "LoanType");
-    assert!(d.relations_missing_in_code.iter().any(|r| r.from == "Book" && r.to == "Member"));
-    assert!(d.relations_extra_in_code.iter().any(|r| r.from == "Member" && r.to == "Loan"));
-    assert!(d.rule_violations_in_code.iter().any(|v| v.contains("cycle")), "{:?}", d.rule_violations_in_code);
-    assert!(d.conformance > 0.7 && d.conformance < 1.0, "{}", d.conformance);
-
-    // adopting the code's extras applies cleanly to the design and removes those drifts
-    let adopt = adopt_ops(&intended, &reality);
-    let after = ops::apply_all(&intended, &adopt, ops::Mode::Commit(Status::Accepted, None)).expect("adopt ops apply");
-    let d2 = drift(&after, &reality);
-    assert!(d2.extra_in_code.is_empty());
-    assert!(d2.relations_extra_in_code.is_empty(), "{:?}", d2.relations_extra_in_code);
-
-    let todo = checklist(&d);
-    assert!(todo.contains("- [ ] create class `Reservation`"));
-    assert!(todo.contains("- [ ] add `Member.reserve()`"));
-    assert!(todo.contains("- [ ] move `LoanType` to package `app`"));
-
-    // identical design ⇒ no drift
-    let same = drift(&reality, &reality);
-    assert!(same.missing_in_code.is_empty() && same.members.is_empty() && same.relations_missing_in_code.is_empty());
-    assert!((same.conformance - 1.0).abs() < 1e-9);
+    let a = sync::analyse(&intended, &reality, &manifest, None, false);
+    let st = |id: &str| a.report.items.iter().find(|i| i.id == id).map(|i| i.status);
+    // no baseline yet: every difference is unreconciled
+    assert_eq!(st("class:Reservation"), Some(SyncStatus::Unreconciled));
+    assert_eq!(st("method:Member.reserve(Book)"), Some(SyncStatus::Unreconciled));
+    assert_eq!(st("class:AuditLog"), Some(SyncStatus::Unreconciled));
+    // LoanType keeps its explicit link (the imported design carries it): only its package differs
+    assert_eq!(st("class:LoanType"), Some(SyncStatus::Unreconciled));
+    let lt = a.report.items.iter().find(|i| i.id == "class:LoanType").unwrap();
+    assert!(matches!(&lt.suggested_ops[..], [Op::MoveToPackage { package: Some(p), .. }] if p == "domain"), "{:?}", lt.suggested_ops);
+    // without a link, the moved class is another type: the code's LoanType keeps its own identity
+    let mut unlinked = intended.clone();
+    unlinked.class_mut("LoanType").unwrap().source = None;
+    let u = sync::analyse(&unlinked, &reality, &manifest, None, false);
+    assert!(u.report.items.iter().any(|i| i.id == "class:org.acme.library.domain.LoanType"), "{:?}", u.report.items.iter().map(|i| &i.id).collect::<Vec<_>>());
+    // readjusting AuditLog back into the design applies cleanly and puts it in sync
+    let audit = a.report.items.iter().find(|i| i.id == "class:AuditLog").unwrap();
+    let after = ops::apply_all(&intended, &audit.suggested_ops, ops::Mode::Commit(Status::Accepted, None)).expect("suggested ops apply");
+    let a2 = sync::analyse(&after, &reality, &manifest, None, false);
+    assert!(!a2.report.items.iter().any(|i| i.class == "AuditLog"), "{:?}", a2.report.items.iter().filter(|i| i.class == "AuditLog").map(|i| &i.id).collect::<Vec<_>>());
+    // the brief names files and changes
+    let brief = sync::implement_brief(&a, &intended, &reality, &manifest, &["Member".into(), "Reservation".into()], false);
+    assert!(brief.contains("add method `reserve(b: Book)`"), "{brief}");
+    assert!(brief.contains("src/main/java/org/acme/library/domain/Member.java"), "{brief}");
+    assert!(brief.contains("src/main/java/org/acme/library/domain/Reservation.java"), "{brief}");
 }
 
 fn course_fixture() -> Design {
@@ -176,20 +175,19 @@ fn code_is_judged_like_the_design() {
         .unwrap();
         ops::apply_all(&Design::default(), &ops, ops::Mode::Commit(Status::Accepted, None)).unwrap()
     };
-    let f = code::analyse(&intended, &reality);
-    let kinds = |k: &str| f.issues.iter().filter(|i| i.kind == k).map(|i| i.message.clone()).collect::<Vec<_>>();
+    let _ = intended;
+    // the code judged like a design (the same checks run on the implementation's facts)
+    let m = compute(&reality, false);
+    let kinds = |k: &str| m.issues.iter().filter(|i| i.kind == k).map(|i| i.message.clone()).collect::<Vec<_>>();
     // the same switch on the square kind in two classes → polymorphism
-    assert!(!kinds("type_switch").is_empty(), "{:#?}", f.issues.iter().map(|i| (&i.kind, &i.message)).collect::<Vec<_>>());
+    assert!(!kinds("type_switch").is_empty(), "{:#?}", m.issues.iter().map(|i| (&i.kind, &i.message)).collect::<Vec<_>>());
     // a chain through getters → Law of Demeter
     assert!(kinds("demeter").iter().any(|m| m.contains("GamePanel.locationOf")));
     // Game creates the Piece that Player keeps → Creator
     assert!(kinds("creator").iter().any(|m| m.contains("Piece")), "{:?}", kinds("creator"));
-    // the UI computes standings, the domain shows dialogs
-    assert!(f.issues.iter().any(|i| i.kind == "misplaced_responsibility" && i.targets.contains(&"GamePanel.richestCash".to_string())));
-    assert!(f.issues.iter().any(|i| i.kind == "misplaced_responsibility" && i.targets.contains(&"Player.landOn".to_string())));
+    // the UI computes standings
+    assert!(m.issues.iter().any(|i| i.kind == "misplaced_responsibility" && i.targets.contains(&"GamePanel.richestCash".to_string())));
     // two loops summing positive values are the same code
-    assert!(f.clones.iter().any(|p| (p.a.contains("totalPrice") && p.b.contains("netWorth")) || (p.b.contains("totalPrice") && p.a.contains("netWorth"))), "{:#?}", f.clones);
-    // the design says Player.landOn is domain work; the code shows a dialog
-    assert!(f.disagreements.iter().any(|x| x.class == "Player" && x.method.as_deref() == Some("landOn")), "{:#?}", f.disagreements);
-    assert!(f.code_health < 100);
+    assert!(m.overlap.pairs.iter().filter(|p| p.code >= overlap::DUPLICATE).any(|p| (p.a.contains("totalPrice") && p.b.contains("netWorth")) || (p.b.contains("totalPrice") && p.a.contains("netWorth"))));
+    assert!(m.health < 100);
 }

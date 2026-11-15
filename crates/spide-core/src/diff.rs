@@ -86,6 +86,13 @@ pub fn diff(old: &Design, new: &Design) -> Vec<Op> {
                         role: (o.role != c.role).then(|| c.role.clone().unwrap_or_default()),
                     });
                 }
+                let sym = |c: &Class| c.source.as_ref().map(|s| s.symbol.clone()).filter(|s| !s.is_empty());
+                if sym(o) != sym(c) {
+                    members.push(match sym(c) {
+                        Some(symbol) => Op::LinkCode { class: c.name.clone(), method: None, symbol },
+                        None => Op::UnlinkCode { class: c.name.clone(), method: None },
+                    });
+                }
                 let oa: Vec<&Attribute> = o.attributes.iter().filter(|a| a.status.is_live()).collect();
                 let na: Vec<&Attribute> = c.attributes.iter().filter(|a| a.status.is_live()).collect();
                 for a in &na {

@@ -20,8 +20,6 @@ pub enum PiStatus {
 
 pub struct Shared {
     pub store: Store,
-    pub source: crate::source_tracking::SourceState,
-    pub implementations: Vec<crate::source_implementation::Task>,
     pub pi_generation: u64,
     pub project_dir: PathBuf,
     /// Content we last wrote to design.json (to ignore our own file events).
@@ -33,11 +31,18 @@ pub struct Shared {
     pub last_history: Option<String>,
     /// Name of the active branch (design.json).
     pub branch: String,
+    /// Spide Project: the code folder this design lives in (None: design-only).
+    pub project: Option<crate::project::ProjectState>,
 }
 
 impl Shared {
+    /// `spide/design.json` in a Spide Project, `design.json` otherwise.
     pub fn design_path(&self) -> PathBuf {
-        self.project_dir.join("design.json")
+        if self.project.is_some() {
+            self.project_dir.join(spide_core::project::DESIGN)
+        } else {
+            self.project_dir.join("design.json")
+        }
     }
 }
 
@@ -69,8 +74,6 @@ pub struct ProposalImpact {
 #[derive(Serialize)]
 pub struct Snapshot {
     pub rev: u64,
-    pub source: crate::source_tracking::SourceState,
-    pub implementations: Vec<crate::source_implementation::Task>,
     /// Design with pending proposals applied as ghosts.
     pub view: Design,
     /// Metrics over accepted elements.
@@ -89,11 +92,14 @@ pub struct Snapshot {
     pub pi_error: Option<String>,
     pub mcp_url: String,
     pub branch: String,
+    pub project: Option<crate::project::ProjectSnap>,
 }
 
 impl AppState {
     pub fn new(events: Events, project_dir: PathBuf) -> Self {
-        let path = project_dir.join("design.json");
+        let project_dir = spide_core::project::resolve_root(&project_dir);
+        let project = crate::project::load(&project_dir);
+        let path = crate::project::design_path(&project_dir);
         let mut store = Store::default();
         let mut last_written = None;
         if let Ok(s) = std::fs::read_to_string(&path) {
@@ -117,8 +123,6 @@ impl AppState {
         AppState {
             inner: Arc::new(Mutex::new(Shared {
                 store,
-                source: crate::source_tracking::load(&project_dir),
-                implementations: crate::source_implementation::load(&project_dir),
                 pi_generation: 0,
                 project_dir,
                 last_written,
@@ -127,6 +131,7 @@ impl AppState {
                 mcp_port: 0,
                 last_history,
                 branch,
+                project,
             })),
             events,
         }
@@ -146,18 +151,21 @@ impl AppState {
         let snap = {
             let mut s = self.lock();
             s.store.suggest_externals();
-            crate::source_implementation::invalidate(&mut s);
             save(&mut s);
-            build_snapshot(&s)
+            let dirty = crate::project::recompute(&mut s);
+            (build_snapshot(&s), dirty)
         };
+        let (snap, dirty) = snap;
+        if dirty {
+            crate::project::schedule_baseline_write(self);
+        }
         self.events.send(UiEvent::Snapshot(Arc::new(snap)));
     }
 
     /// Broadcast without saving (status changes).
     pub fn emit(&self) {
         let snap = {
-            let mut s = self.lock();
-            crate::source_implementation::invalidate(&mut s);
+            let s = self.lock();
             build_snapshot(&s)
         };
         self.events.send(UiEvent::Snapshot(Arc::new(snap)));
@@ -199,11 +207,12 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
     let store = &s.store;
     let mut view = store.view();
     let mut accepted = store.design.clone();
-    if s.source.status == "current" {
-        if let Some(code) = crate::source_tracking::mapped(&store.design, &s.source) {
-            view = spide_core::source::with_bound_length_evidence(&view, &code, &s.source.bindings);
-            accepted = spide_core::source::with_bound_length_evidence(&accepted, &code, &s.source.bindings);
-        }
+    // Spide Project: linked methods carry the real code's facts (long methods, clones, course checks)
+    if let Some(v) = crate::project::with_code_facts(s, &view) {
+        view = v;
+    }
+    if let Some(a) = crate::project::with_code_facts(s, &accepted) {
+        accepted = a;
     }
     revalidate_sequences(&mut view);
     let metrics = compute(&accepted, false);
@@ -223,10 +232,7 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
             let focus: Vec<String> = o.ops.iter().flat_map(|op| op.touched_classes()).collect();
             let impact = impact_of_ops(&store.design, &o.ops).ok();
             match store.preview(&o.ops, &tag) {
-                Ok(mut p) => {
-                    if s.source.status == "current" {
-                        if let Some(code) = crate::source_tracking::mapped(&store.design, &s.source) { p = spide_core::source::with_bound_length_evidence(&p, &code, &s.source.bindings); }
-                    }
+                Ok(p) => {
                     let h = compute(&p, true).health;
                     previews.push(OptionPreview {
                         decision: d.id.clone(),
@@ -265,8 +271,6 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
     }
     Snapshot {
         rev: store.design.rev,
-        source: s.source.clone(),
-        implementations: s.implementations.clone(),
         view,
         metrics,
         ghost_health,
@@ -281,6 +285,7 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
         pi_error: s.pi_error.clone(),
         mcp_url: mcp_url(s.mcp_port),
         branch: s.branch.clone(),
+        project: crate::project::snap(s),
     }
 }
 

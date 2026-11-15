@@ -22,6 +22,8 @@ pub fn target_label(t: &Target) -> String {
         Target::System { name } => name.clone(),
         Target::Container { name } => name.clone(),
         Target::Link { id } => id.clone(),
+        Target::Concept { name } => format!("concept {name}"),
+        Target::ConceptLink { id } => id.clone(),
     }
 }
 
@@ -166,41 +168,6 @@ pub fn inline_edit(ctx: &egui::Context, s: &mut InlineEdit) -> Option<InlineActi
     out
 }
 
-/// Read-only view of the imported implementation of a class or method (/code Class[.method]).
-pub fn code_view(ctx: &egui::Context, area: egui::Rect, title: &str, text: &str) -> bool {
-    let mut close = false;
-    let rect = egui::Rect::from_min_max(Pos2::new(area.left() + 8.0, area.top() + 124.0), Pos2::new(area.right() - 8.0, area.bottom() - 10.0));
-    egui::Area::new(egui::Id::unique("code-view")).order(egui::Order::Foreground).fixed_pos(rect.min).show(ctx, |ui| {
-        widgets::panel_frame().show(ui, |ui| {
-            ui.set_width(rect.width());
-            ui.set_height(rect.height());
-            egui::Frame::new().inner_margin(Margin { left: 16, right: 10, top: 14, bottom: 8 }).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        widgets::kicker(ui, "Imported code · read-only");
-                        ui.label(RichText::new(title).font(mono(13.0)).color(css::TEXT));
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                        if icon_button(ui, "×").on_hover_text("Close · Esc").clicked() {
-                            close = true;
-                        }
-                    });
-                });
-            });
-            widgets::hline(ui);
-            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                egui::Frame::new().inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
-                    let t = if text.is_empty() { "No implementation was imported for this element." } else { text };
-                    ui.add(egui::Label::new(RichText::new(t).font(mono(12.0)).color(css::TEXT)).extend());
-                });
-            });
-        });
-    });
-    if ctx.input(|i| i.key_pressed(Key::Escape)) {
-        close = true;
-    }
-    close
-}
 
 pub struct Palette {
     pub text: String,

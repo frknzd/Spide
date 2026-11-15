@@ -8,7 +8,7 @@ fn hover_cards_reserve_height_even_for_short_content_and_fit_small_canvases() {
     let ops = serde_json::from_str(r#"[{"op":"add_class","name":"Example","attributes":[{"name":"value","type":"int"}],"methods":[{"name":"run"}]}]"#).unwrap();
     state.lock().store.apply_user(ops).unwrap();
     let snap = state.snapshot();
-    let cx = CardCtx { snap: &snap, design: &snap.view, metrics: &snap.metrics, drift: None };
+    let cx = CardCtx { snap: &snap, design: &snap.view, metrics: &snap.metrics };
     let ctx = egui::Context::default();
     crate::ui::theme::install_fonts(&ctx);
     crate::ui::theme::install_style(&ctx);

@@ -42,6 +42,9 @@ C4 levels (above classes):
 - {"op":"assign_container","package":"domain","container":"API"}   (which container a package runs in; null unassigns)
 - {"op":"add_link","from":"API","to":"PaymentProvider","interaction?":"sync|async|event","protocol?":"HTTPS/JSON"}  (container/system/actor ends)
 - {"op":"remove_link","from":"…","to":"…"}
+Spide Project (design and code together): trace links to Java symbols (exact, never guessed from simple names):
+- {"op":"link_code","class":"Order","symbol":"org.shop.domain.Order"}   - {"op":"link_code","class":"Order","method":"total","symbol":"org.shop.domain.Order#total(int)"}
+- {"op":"unlink_code","class":"Order","method?":"total"}
 Container→container dependencies are DERIVED from class dependencies; only add links for external systems, actors or protocols.
 ATTR   = {"name":"total","type":"Money","visibility?":"public|private|protected|package","is_static?":false,"multiplicity?":"0..1"}
 METHOD = {"name":"addLine","params":[{"name":"p","type":"Product"},{"name":"qty","type":"int"}],"returns?":"OrderLine","visibility?":"public",
@@ -54,11 +57,11 @@ pub fn tool_list() -> Value {
     let ops_schema = json!({"type":"array","description": OPS_DOC,"items":{"type":"object","properties":{"op":{"type":"string"}},"required":["op"]}});
     json!([
         {"name":"get_design","description":"Read the whole design: partner mode, design stage, the brief (forces: goals, qualities, constraints, expected changes), classes with members, relations, packages, pending proposals and decisions, \
-           pruned elements WITH the user's feedback (respect it!), use cases and sequences. Compact JSON.",
+           pruned elements WITH the user's feedback (respect it!), the domain model (and whether it is stale), use cases and sequences. Compact JSON.",
          "inputSchema":{"type":"object","properties":{}}, "annotations":{"readOnlyHint":true}},
         {"name":"get_metrics","description":"Architecture health: score 0–100, issues (cycles, god classes, low cohesion (LCOM4), layer violations, orphans, high coupling), per-class fan-in/out & instability, package metrics.",
          "inputSchema":{"type":"object","properties":{}}, "annotations":{"readOnlyHint":true}},
-        {"name":"get_view","description":"Read a derived view: domain (conceptual classes), package (packages + dependencies), use_case, sequence.",
+        {"name":"get_view","description":"Read a view: domain (the conceptual domain model you built), package (packages + dependencies), use_case, sequence.",
          "inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["domain","package","use_case","sequence"]}},"required":["kind"]},
          "annotations":{"readOnlyHint":true}},
         {"name":"propose_decision","description":"Raise a design DECISION for user approval. Use this for every non-trivial choice \
@@ -99,6 +102,24 @@ pub fn tool_list() -> Value {
                 "classes":{"type":"array","items":{"type":"string"},"description":"Classes that realise it"},
                 "description":{"type":"string"}},"required":["name","actors"]}}},
           "required":["actors","use_cases"]}},
+        {"name":"set_domain_model","description":"Replace the DOMAIN MODEL: a conceptual model of the problem domain (Larman), separate from the \
+           class design and without references to it. Concepts are things of the domain (e.g. Book, Loan, Member; for a traffic analyser: \
+           API call, Endpoint, Path segment) with attributes (simple types, no visibility, NO methods). Associations carry a verb-phrase \
+           label and multiplicities; generalization only for a real is-a (from = specific, to = general); composition/aggregation \
+           from = whole, to = part. Leave out software artefacts: UI, controllers, services, repositories, listeners, adapters, \
+           framework/library classes and design patterns. Names may differ from the class design. Pruned items stay pruned.",
+         "inputSchema":{"type":"object","properties":{
+            "concepts":{"type":"array","items":{"type":"object","properties":{
+                "name":{"type":"string"},"description":{"type":"string"},
+                "attributes":{"type":"array","items":{"type":"object","properties":{
+                    "name":{"type":"string"},"type":{"type":"string"},"multiplicity":{"type":"string"}},"required":["name"]}}},
+              "required":["name"]}},
+            "associations":{"type":"array","items":{"type":"object","properties":{
+                "from":{"type":"string"},"to":{"type":"string"},
+                "kind":{"type":"string","enum":["association","generalization","composition","aggregation"]},
+                "label":{"type":"string","description":"verb phrase, read from → to"},
+                "from_mult":{"type":"string"},"to_mult":{"type":"string"}},"required":["from","to"]}}},
+          "required":["concepts"]}},
         {"name":"set_change_impact","description":"Record your analysis of a CHANGE SCENARIO (\"what if we must support X?\"): the classes that \
            would have to change, each with a short why. Spide computes the ripple (classes depending on them) and a locality score, \
            and lets the user stress-test the design. Creates the scenario if it doesn't exist. Be honest: list every class that must change.",
@@ -111,7 +132,7 @@ pub fn tool_list() -> Value {
            stereotypes, verbs, calls): agreement raises an issue's confidence, a 'fits' verdict lowers it (and on serious issues shows a \
            disagreement the user must resolve), and your 'misplaced'/'duplicate' verdicts become issues. An assessment goes stale when the \
            class changes; get_design lists stale and missing ones. Judge by responsibilities (RDD knowing/doing/deciding, GRASP Expert, \
-           Controller, Creator, Pure Fabrication), not by taste. basis=code when you read the implementation (get_code).",
+           Controller, Creator, Pure Fabrication), not by taste. basis=code when you judged the implementation itself.",
          "inputSchema":{"type":"object","properties":{
             "assessments":{"type":"array","items":{"type":"object","properties":{
                 "class":{"type":"string"},"purpose":{"type":"string","description":"one sentence"},
@@ -132,16 +153,14 @@ pub fn tool_list() -> Value {
            (explicit role > your assessment > name > stereotype > layer, with the evidence), every method's concern \
            (presentation|coordination|domain_logic|persistence|formatting|creation|accessor) and RDD kind (knowing|doing|deciding) \
            with the reason, what it reads/tells elsewhere, and the findings (misplaced work, fat controllers, vague names, role \
-           inconsistencies, mixed concerns) with course references. on=code judges the imported implementation instead.",
-         "inputSchema":{"type":"object","properties":{"class":{"type":"string","description":"only this class"},
-            "on":{"type":"string","enum":["design","code"]}}}},
+           inconsistencies, mixed concerns) with course references.",
+         "inputSchema":{"type":"object","properties":{"class":{"type":"string","description":"only this class"}}}},
         {"name":"get_overlap","description":"How much behaviour is duplicated or misplaced: method pairs with a similarity score and \
            its parts (name, signature, touches = what the bodies call/use, text, code = normalised implementation), the class \
            overlap matrix (share of A's behaviour duplicated in B), concepts another class owns (its data or stated \
            responsibility), concepts scattered over ≥3 classes (shotgun surgery), pass-through delegation (not duplication) and \
-           middle men. Run it before proposing new members. on=code compares the imported implementation (real clones).",
-         "inputSchema":{"type":"object","properties":{"class":{"type":"string"},"min_score":{"type":"number","minimum":0,"maximum":1},
-            "on":{"type":"string","enum":["design","code"]}}}},
+           middle men. Run it before proposing new members.",
+         "inputSchema":{"type":"object","properties":{"class":{"type":"string"},"min_score":{"type":"number","minimum":0,"maximum":1}}}},
         {"name":"suggest_home","description":"Where should a misplaced method (method: \"Class.method\") or a group of duplicates \
            (group: [\"A.m\", \"B.n\"]) live? Ranked candidates: keep, move to an existing class (Information Expert share of \
            the data it uses; wholes take over their parts), or a NEW Pure Fabrication class in the innermost legal layer. Each \
@@ -149,10 +168,6 @@ pub fn tool_list() -> Value {
            change, the receiver's LCOM4, role fit, a score, a why, and ready-to-use OPS. Turn the top 2–3 into propose_decision \
            options (copy their ops) — the user chooses and approves.",
          "inputSchema":{"type":"object","properties":{"method":{"type":"string"},"group":{"type":"array","items":{"type":"string"}}}}},
-        {"name":"get_code","description":"Read the IMPLEMENTATION of a class (or one method) from the imported code (/import), \
-           with the facts Spide extracted (lines, call chains, switches, loops, creations, UI calls). Use it to judge what the code \
-           really does before assess_class with basis=code. Read-only; long classes are capped — ask per method.",
-         "inputSchema":{"type":"object","properties":{"class":{"type":"string"},"method":{"type":"string"}},"required":["class"]}},
         {"name":"set_sequence","description":"Create/replace one sequence diagram. Participants: classes or actors. Each sync/async/create message's \
            `method` must be an existing method name on the `to` class (validated; problems are reported back and highlighted). \
            Use kind=return for replies.",
@@ -270,7 +285,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             let v = store.view();
             let kind = args.get("kind").and_then(Value::as_str).unwrap_or("");
             let out = match kind {
-                "domain" => serde_json::to_value(derive::domain_model(&v)).unwrap(),
+                "domain" => serde_json::to_value(&v.domain).unwrap(),
                 "package" => {
                     let m = compute(&v, false);
                     json!({"packages": derive::package_view(&v).packages, "dependencies": m.package_deps})
@@ -374,7 +389,6 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
                 true,
             )
         }
-        "get_code" => Err("get_code is answered by the Spide app (it needs the imported code)".into()),
         "get_responsibilities" => ok(responsibilities_json(&store.view(), args), false),
         "get_overlap" => ok(overlap_json(&store.view(), args), false),
         "suggest_home" => {
@@ -386,6 +400,14 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             };
             let s = crate::home::suggest_home(&v, &methods)?;
             ok(serde_json::to_string(&s).unwrap(), false)
+        }
+        "set_domain_model" => {
+            let m: DomainModel = parse(args)?;
+            let warnings = store.set_domain_model(m).map_err(|e| e.0)?;
+            ok(
+                if warnings.is_empty() { "Domain model updated.".into() } else { format!("Updated with warnings: {}", warnings.join("; ")) },
+                true,
+            )
         }
         "set_use_cases" => {
             let m: UseCaseModel = parse(args)?;
@@ -595,6 +617,12 @@ pub fn design_digest(store: &Store) -> String {
     for r in d.relations.iter().filter(|r| r.status == Status::Pruned) {
         pruned.push(json!({"relation": r.id, "feedback": r.feedback}));
     }
+    for c in d.domain.concepts.iter().filter(|c| c.status == Status::Pruned) {
+        pruned.push(json!({"concept": c.name, "feedback": c.feedback}));
+    }
+    for a in d.domain.associations.iter().filter(|a| a.status == Status::Pruned) {
+        pruned.push(json!({"domain_association": a.id, "feedback": a.feedback}));
+    }
     let feedback: Vec<Value> =
         d.feedback.iter().rev().take(12).map(|f| json!({"on": f.target, "user_said": f.text})).collect();
     let pending: Vec<Value> = d
@@ -663,6 +691,11 @@ pub fn design_digest(store: &Store) -> String {
         "decided": decided,
         "pruned_by_user": pruned,
         "recent_user_feedback": feedback,
+        "domain_model": {
+            "concepts": d.domain.concepts.iter().filter(|c| live(c.status)).map(|c| &c.name).collect::<Vec<_>>(),
+            "associations": d.domain.associations.iter().filter(|a| live(a.status)).count(),
+            "stale": d.live_classes().next().is_some() && (d.domain.is_empty() || d.domain.generated_rev.is_none_or(|r| r < d.model_rev)),
+        },
         "use_cases": d.use_cases.use_cases.iter().filter(|u| live(u.status)).map(|u| &u.name).collect::<Vec<_>>(),
         "actors": d.use_cases.actors.iter().filter(|a| live(a.status)).map(|a| &a.name).collect::<Vec<_>>(),
         "sequences": d.sequences.iter().filter(|s| live(s.status)).map(|s| &s.name).collect::<Vec<_>>(),

@@ -58,22 +58,6 @@ fn unified_review_approves_a_large_collapsed_plan_with_empty_notes() {
     steps(&mut h, 30);
     assert_eq!(st.lock().store.design.classes.len(), 100);
     assert!(st.lock().store.design.decisions[0].notes.is_empty());
-    assert!(!dir.path().join(".spide/source.json").exists(), "pure design must not create a source attachment");
-}
-
-#[test]
-fn source_panel_is_optional_and_accessible_for_scoped_java() {
-    let dir = project("library"); let repo = tempfile::tempdir().unwrap();
-    std::fs::write(repo.path().join("Book.java"), "public class Book { public void read() {} }").unwrap();
-    let a = crate::source_tracking::Attachment { repository: repo.path().canonicalize().unwrap(), roots: vec![".".into()], exclusions: vec![] };
-    let imported = spide_import::import_java(repo.path(), None).unwrap();
-    let source = crate::source_tracking::SourceState { attachment: Some(a.clone()), snapshot: Some(imported.design), files: crate::source_tracking::inventory(&a).unwrap(), status: "current".into(), ..Default::default() };
-    crate::source_tracking::persist(dir.path(), &source).unwrap();
-    let mut h = harness(dir.path(), (1440.0, 900.0));
-    h.state_mut().source_open = true;
-    steps(&mut h, 60);
-    assert!(h.state().source_open);
-    shot(&mut h, "source-scoped-java");
 }
 
 #[test]
@@ -138,7 +122,7 @@ fn workspace_shortcuts_and_narrow_drawer() {
 }
 
 #[test]
-fn panels_compare_timeline_and_code() {
+fn panels_compare_and_timeline() {
     let dir = project("rest-extraction");
     let mut h = harness(dir.path(), (1440.0, 900.0));
     steps(&mut h, 150);
@@ -152,11 +136,6 @@ fn panels_compare_timeline_and_code() {
     assert!(h.state().timeline);
     shot(&mut h, "panel-timeline");
     h.state_mut().command("/timeline");
-    // Code modal renders the backend's source text without rich-text interpretation.
-    h.state_mut().code_view = Some(("RestExtractor".into(), "public class RestExtractor {\n    void extract() {}\n}".into()));
-    steps(&mut h, 20);
-    assert!(h.state().code_view.is_some());
-    shot(&mut h, "panel-code");
 }
 
 #[test]
@@ -450,4 +429,116 @@ fn unsaved_manual_edits_block_approval_and_survive() {
     assert!(st.lock().store.design.decisions.iter().all(|d| d.is_pending()));
     let scope = h.state().proposal_ui.scope.clone();
     assert!(h.state().proposal_ui.drafts.load(&scope).is_some(), "draft persisted");
+}
+
+#[test]
+fn domain_tab_draws_the_stored_model_and_prunes_only_concepts() {
+    use super::canvas::CanvasOut;
+    use spide_core::{Status, Target};
+    let dir = project("library");
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    let st = h.state().backend.st.clone();
+    steps(&mut h, 60);
+    h.state_mut().tab = Tab::Domain;
+    steps(&mut h, 200);
+    shot(&mut h, "library-domain-stored");
+    // the canvas reports classes; on the Domain tab they become concepts, and renames/moves are dropped
+    let Some(CanvasOut::Prune(ts, _)) = super::app::domain_canvas_out(CanvasOut::Prune(vec![Target::Class { name: "Loan".into() }, Target::Attribute { class: "Loan".into(), name: "due".into() }], egui::Pos2::ZERO)) else { panic!("prune kept") };
+    assert_eq!(ts, vec![Target::Concept { name: "Loan".into() }]);
+    assert!(super::app::domain_canvas_out(CanvasOut::DoubleClick(Target::Class { name: "Loan".into() }, egui::Pos2::ZERO)).is_none());
+    crate::commands::prune(&st, ts).unwrap();
+    let s = st.lock();
+    assert_eq!(s.store.design.class("Loan").unwrap().status, Status::Accepted, "the design class with the same name is untouched");
+    assert_eq!(s.store.design.domain.concepts.iter().find(|c| c.name == "Loan").unwrap().status, Status::Pruned);
+}
+
+#[test]
+fn domain_tab_without_a_model_offers_to_generate_it() {
+    use egui_kittest::kittest::Queryable;
+    let dir = project("rest-extraction");
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    steps(&mut h, 60);
+    h.state_mut().tab = Tab::Domain;
+    steps(&mut h, 30);
+    assert!(h.query_by_label("No domain model yet.").is_some());
+    assert!(h.query_by_label("↻ generate").is_some());
+    shot(&mut h, "rest-extraction-domain-empty");
+}
+
+
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            copy_dir(&p, &to.join(e.file_name()));
+        } else {
+            std::fs::copy(&p, to.join(e.file_name())).unwrap();
+        }
+    }
+}
+
+/// A Spide Project: the library fixture's Java code with the library example design.
+fn library_project() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    copy_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/spide-import/tests/fixtures/library/src"), &dir.path().join("src"));
+    let design: spide_core::Design = serde_json::from_str(&std::fs::read_to_string(format!("{}/../examples/library.json", env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
+    let m = spide_core::project::Manifest { name: "Library".into(), code_root: Some("org.acme.library".into()), ..Default::default() };
+    crate::project::create(dir.path(), &m, &design, None, false).unwrap();
+    dir
+}
+
+fn wait_indexed(h: &mut Harness<'static, SpideApp>) {
+    crate::project::refresh_async(&h.state().backend.st);
+    for _ in 0..300 {
+        h.step();
+        let ok = h.state().snap.as_ref().and_then(|s| s.project.as_ref()).is_some_and(|p| p.report.is_some() && p.index == Some(crate::project::IndexStatus::Current));
+        if ok {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("project never indexed");
+}
+
+#[test]
+fn project_rail_design_only_and_form() {
+    use egui_kittest::kittest::Queryable;
+    let dir = project("library");
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    steps(&mut h, 30);
+    h.state_mut().command("/project");
+    steps(&mut h, 20);
+    assert!(h.state().project_open);
+    assert!(h.query_by_label("Create Spide Project in a code folder…").is_some());
+    shot(&mut h, "project-design-only");
+    let module = library_project();
+    let m = crate::project::suggest_manifest(module.path(), "Library");
+    h.state_mut().project_ui.form = Some(super::project::Form::new(module.path().to_path_buf(), &m, false));
+    steps(&mut h, 10);
+    assert!(h.query_by_label("New Spide Project").is_some());
+    shot(&mut h, "project-form");
+}
+
+#[test]
+fn project_rail_sync_and_lens() {
+    use egui_kittest::kittest::Queryable;
+    let module = library_project();
+    let mut h = harness(module.path(), (1440.0, 900.0));
+    wait_indexed(&mut h);
+    h.state_mut().command("/project");
+    steps(&mut h, 30);
+    let snap = h.state().snap.clone().unwrap();
+    let r = snap.project.as_ref().unwrap().report.as_ref().unwrap();
+    // the first agreement created the baseline: what only the design has is ahead of the code and vice versa
+    assert!(r.count(spide_core::sync::SyncStatus::DesignAhead) > 0 && r.count(spide_core::sync::SyncStatus::CodeAhead) > 0, "{:?}", r.counts);
+    assert!(h.query_by_label_contains("Implement in code").is_some());
+    shot(&mut h, "project-sync");
+    // the sync lens draws statuses and code-only ghosts on the class diagram
+    h.state_mut().command("/lens sync");
+    steps(&mut h, 200);
+    assert_eq!(h.state().lens, spide_diagram::class_view::Lens::Sync);
+    let phantoms = snap.project.as_ref().unwrap().phantoms.len();
+    assert!(phantoms > 0);
+    shot(&mut h, "project-sync-lens");
 }

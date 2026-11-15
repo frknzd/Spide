@@ -22,6 +22,10 @@ pub enum Target {
     Package { name: String },
     Actor { name: String },
     UseCase { name: String },
+    /// Domain model concept.
+    Concept { name: String },
+    /// Domain model association.
+    ConceptLink { id: String },
     Sequence { name: String },
     Message { sequence: String, index: usize },
     Proposal { id: String },
@@ -41,6 +45,8 @@ impl Target {
             Target::Package { name } => format!("package {name}"),
             Target::Actor { name } => format!("actor {name}"),
             Target::UseCase { name } => format!("use case \"{name}\""),
+            Target::Concept { name } => format!("concept {name}"),
+            Target::ConceptLink { id } => format!("domain association {id}"),
             Target::Sequence { name } => format!("sequence \"{name}\""),
             Target::Message { sequence, index } => format!("message #{} in \"{sequence}\"", index + 1),
             Target::Proposal { id } => format!("proposal {id}"),
@@ -458,6 +464,66 @@ impl Store {
         Ok(warnings)
     }
 
+    /// Replace the domain model (agent-built). Pruned concepts/associations and their feedback survive
+    /// when the new model leaves them out, so the agent doesn't silently bring them back.
+    pub fn set_domain_model(&mut self, mut m: DomainModel) -> Result<Vec<String>, OpError> {
+        let mut warnings = vec![];
+        let mut seen = std::collections::HashSet::new();
+        m.concepts.retain(|c| {
+            let name = c.name.trim();
+            if name.is_empty() {
+                warnings.push("concept without a name dropped".into());
+                return false;
+            }
+            if !seen.insert(name.to_string()) {
+                warnings.push(format!("duplicate concept {name} dropped"));
+                return false;
+            }
+            true
+        });
+        for c in &mut m.concepts {
+            c.name = c.name.trim().to_string();
+            c.status = Status::Accepted;
+            c.attributes.retain(|a| !a.name.trim().is_empty());
+        }
+        m.associations.retain(|a| {
+            let ok = seen.contains(a.from.as_str()) && seen.contains(a.to.as_str());
+            if !ok {
+                warnings.push(format!("association {} → {}: unknown concept, dropped", a.from, a.to));
+            }
+            ok
+        });
+        let mut ids = std::collections::HashSet::new();
+        for a in &mut m.associations {
+            a.status = Status::Accepted;
+            let base = format!("{}-{}-{}", a.from, a.kind.as_str(), a.to);
+            let mut id = base.clone();
+            let mut n = 2;
+            while !ids.insert(id.clone()) {
+                id = format!("{base}-{n}");
+                n += 1;
+            }
+            a.id = id;
+        }
+        m.generated_rev = Some(self.design.model_rev);
+        self.mutate("agent", "domain model updated", move |d| {
+            let old = std::mem::take(&mut d.domain);
+            for c in old.concepts.into_iter().filter(|c| c.status == Status::Pruned) {
+                if !m.concepts.iter().any(|x| x.name == c.name) {
+                    m.concepts.push(c);
+                }
+            }
+            for a in old.associations.into_iter().filter(|a| a.status == Status::Pruned) {
+                if !m.associations.iter().any(|x| x.id == a.id) {
+                    m.associations.push(a);
+                }
+            }
+            d.domain = m;
+            Ok(())
+        })?;
+        Ok(warnings)
+    }
+
     pub fn set_sequence(&mut self, mut s: Sequence) -> Result<Vec<String>, OpError> {
         if s.name.trim().is_empty() {
             return Err(OpError("sequence needs a name".into()));
@@ -558,6 +624,9 @@ fn strip_pruned(d: &mut Design) {
     }
     let names: Vec<String> = d.classes.iter().map(|c| c.name.clone()).collect();
     d.relations.retain(|r| r.status != Status::Pruned && names.contains(&r.from) && names.contains(&r.to));
+    d.domain.concepts.retain(|c| c.status != Status::Pruned);
+    let concepts: Vec<String> = d.domain.concepts.iter().map(|c| c.name.clone()).collect();
+    d.domain.associations.retain(|a| a.status != Status::Pruned && concepts.contains(&a.from) && concepts.contains(&a.to));
     d.packages.retain(|p| p.status != Status::Pruned);
     d.forces.retain(|f| f.status != Status::Pruned);
     d.change_scenarios.retain(|c| c.status != Status::Pruned);
@@ -615,6 +684,27 @@ fn set_status(d: &mut Design, t: &Target, st: Status, fb: Option<String>) -> Res
             let u = d.use_cases.use_cases.iter_mut().find(|u| &u.name == name).ok_or_else(nf)?;
             u.status = st;
             u.feedback = fb;
+        }
+        Target::Concept { name } => {
+            let c = d.domain.concepts.iter_mut().find(|c| &c.name == name).ok_or_else(nf)?;
+            c.status = st;
+            c.feedback = fb.clone();
+            // pruning a concept prunes its associations; restoring it brings them back
+            for a in d.domain.associations.iter_mut().filter(|a| &a.from == name || &a.to == name) {
+                let affected = match st {
+                    Status::Pruned => a.status != Status::Pruned,
+                    _ => a.status == Status::Pruned,
+                };
+                if affected {
+                    a.status = st;
+                    a.feedback = fb.clone();
+                }
+            }
+        }
+        Target::ConceptLink { id } => {
+            let a = d.domain.associations.iter_mut().find(|a| &a.id == id).ok_or_else(nf)?;
+            a.status = st;
+            a.feedback = fb;
         }
         Target::Sequence { name } => {
             let s = d.sequences.iter_mut().find(|s| &s.name == name).ok_or_else(nf)?;

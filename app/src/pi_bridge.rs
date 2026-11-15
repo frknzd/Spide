@@ -90,12 +90,40 @@ impl PiBridge {
         cmd.env("SPIDE_CONTROL_TOKEN", &control.token);
         cmd.env("SPIDE_CONTROL_GENERATION", generation.to_string());
         cmd.args(["--session-dir", &sessions.display().to_string(), "--continue", "--append-system-prompt", include_str!("../../agent/spide-skill.md"), "--tools", "*", "-e", &ext.display().to_string()]);
+        // Spide Project: the readjust/implement skills (app-owned, refreshed at every launch)
+        if st.lock().project.is_some() {
+            match write_project_skills(&project) {
+                Ok(dirs) => {
+                    for dir in dirs {
+                        cmd.args(["--skill", &dir.display().to_string()]);
+                    }
+                }
+                Err(e) => eprintln!("spide: project skills: {e}"),
+            }
+        }
         match Terminal::spawn(cmd, generation) {
             Ok(t) => Ok((t, control)),
             Err(e) => { control.stop(); Err(e) }
         }
     }
 }
+/// The bundled Spide Project skills, written to `.spide/skills/<name>/SKILL.md`.
+pub const PROJECT_SKILLS: [(&str, &str); 2] = [
+    ("spide-readjust", include_str!("../../agent/skills/spide-readjust/SKILL.md")),
+    ("spide-implement", include_str!("../../agent/skills/spide-implement/SKILL.md")),
+];
+
+pub fn write_project_skills(project: &Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut out = vec![];
+    for (name, text) in PROJECT_SKILLS {
+        let dir = project.join(".spide").join("skills").join(name);
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("SKILL.md"), text)?;
+        out.push(dir);
+    }
+    Ok(out)
+}
+
 fn write_mcp_config(project: &Path, port: u16) -> std::io::Result<()> {
     let path = project.join(".pi/mcp.json");
     std::fs::create_dir_all(path.parent().unwrap())?;

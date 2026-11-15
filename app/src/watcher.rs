@@ -1,4 +1,5 @@
-//! Watches `<project>/design.json`. External edits become proposals (never applied silently).
+//! Watches the design file (`design.json`, or `spide/design.json` in a Spide Project). External edits
+//! become proposals (never applied silently).
 
 use crate::state::AppState;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -10,9 +11,11 @@ use std::time::Duration;
 
 static WATCHER: Mutex<Option<RecommendedWatcher>> = Mutex::new(None);
 
-pub fn watch(st: &AppState, dir: &Path) {
+pub fn watch(st: &AppState, target: &Path) {
     let (tx, rx) = channel::<()>();
-    let target = dir.join("design.json");
+    let target = target.to_path_buf();
+    let dir = target.parent().map(Path::to_path_buf).unwrap_or_default();
+    let _ = std::fs::create_dir_all(&dir);
     let target2 = target.clone();
     let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(ev) = res {
@@ -28,7 +31,7 @@ pub fn watch(st: &AppState, dir: &Path) {
             return;
         }
     };
-    if let Err(e) = watcher.watch(dir, RecursiveMode::NonRecursive) {
+    if let Err(e) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
         eprintln!("spide: watch {}: {e}", dir.display());
         return;
     }
@@ -55,7 +58,7 @@ fn on_change(st: &AppState, path: &Path) {
     let Ok(text) = std::fs::read_to_string(path) else { return };
     let ops = {
         let mut s = st.lock();
-        if s.project_dir.join("design.json") != path || s.last_written.as_deref() == Some(text.as_str()) {
+        if s.design_path() != path || s.last_written.as_deref() == Some(text.as_str()) {
             return;
         }
         let ext = match Design::from_json(&text) {

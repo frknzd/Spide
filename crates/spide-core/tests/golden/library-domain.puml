@@ -41,32 +41,28 @@ skinparam note {
 hide methods
 hide empty members
 
-class Catalog <<entity>> {
-  -books : List<Book>
+class Catalog {
 }
-class Book <<entity>> {
-  -isbn : String
-  -title : String
-  -author : String
+class Book {
+  isbn : String
+  title : String
+  author : String
 }
-class BookCopy <<entity>> {
-  -barcode : String
-  -available : boolean
+class BookCopy {
+  barcode : String
+  available : Boolean
 }
-class Member <<entity>> {
-  -id : String
-  -name : String
-  -loans : List<Loan>
+class Member {
+  id : String
+  name : String
 }
-class Loan <<entity>> {
-  -due : Date
-  -returned : boolean
-}
-class NotificationLog {
+class Loan {
+  due : Date
+  returned : Boolean
 }
 
-Catalog "1" *-left- "*" Book
-Book "1" *-right- "1..*" BookCopy
-Loan -up-> "1" BookCopy : lends
-Member "1" -left- "0..5" Loan : holds
+Catalog "1" *-- "*" Book : lists
+Book "1" *-- "1..*" BookCopy : exists as
+Loan "0..1" -- "1" BookCopy : lends
+Member "1" -- "0..5" Loan : holds
 @enduml

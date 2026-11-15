@@ -9,9 +9,10 @@ pub mod export_jobs;
 pub mod hover_card;
 pub mod overlays;
 pub mod paint;
+pub mod project;
 pub mod proposal;
 pub mod state;
-pub mod source;
+
 pub mod terminal;
 pub mod theme;
 pub mod timeline;

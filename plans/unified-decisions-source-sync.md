@@ -1,5 +1,7 @@
 # Unified decisions and source-aware design
 
+> **Superseded (source part).** The source attachment, *Implement in source*, `/import`, drift and `/code` were removed and replaced by **Spide Project** — see [`domain-package-source-cleanup.md`](domain-package-source-cleanup.md), Part 4. The unified decision workflow described here still applies.
+
 ## Context
 Improve member hover readability, eliminate repetitive scrolling during review, unify proposals and decisions, and make ongoing source/design synchronization a first-class workflow without losing pure-design use.
 

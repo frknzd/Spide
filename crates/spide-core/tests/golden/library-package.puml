@@ -41,11 +41,9 @@ skinparam note {
 package ui #line:C084FC {
   class LoanController
 }
-note bottom of ui : I=0.67 A=0.00 D=0.33
 package application #line:60A5FA {
   class LendingService
 }
-note bottom of application : I=0.67 A=0.00 D=0.33
 package domain #line:34D399 {
   class Catalog
   class Book
@@ -53,19 +51,17 @@ package domain #line:34D399 {
   class Member
   class Loan
 }
-note bottom of domain : I=0.25 A=0.00 D=0.75
 package infrastructure #line:F472B6 {
   class LoanRepository
   class NotificationLog
 }
-note bottom of infrastructure : I=0.50 A=0.00 D=0.50
 hide members
 hide circle
 
-application .[#FF5C6C,bold].> domain : 4
-application .[#FF5C6C,bold].> infrastructure : 1
-domain .[#FF5C6C,bold].> ui : 1
-infrastructure .[#FF5C6C,bold].> domain : 2
-ui .[#FF5C6C,bold].> application : 1
-ui .[#FF5C6C,bold].> domain : 1
+application ..> domain
+application ..> infrastructure
+domain ..> ui
+infrastructure ..> domain
+ui ..> application
+ui ..> domain
 @enduml

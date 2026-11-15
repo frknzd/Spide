@@ -132,10 +132,6 @@ struct Shown {
     hidden_attrs: BTreeSet<String>,
 }
 
-fn class_block(out: &mut String, c: &Class, methods: bool, indent: &str) {
-    class_block_at(out, c, methods, indent, &Shown { level: 4, ..Default::default() })
-}
-
 fn class_block_at(out: &mut String, c: &Class, methods: bool, indent: &str, sh: &Shown) {
     let kw = if c.is_enum() {
         "enum"
@@ -337,15 +333,20 @@ pub fn class_diagram(d: &Design, m: &Metrics, layout: &Layout) -> String {
 pub fn domain_model(d: &Design, layout: &Layout) -> String {
     let mut out = header(&format!("{} — Domain model", d.name), "domain model");
     out.push_str("hide methods\nhide empty members\n\n");
-    let dm = derive::domain_model(d);
-    for c in dm.classes.iter().filter(|c| shown(c.status)) {
-        let full = d.class(&c.name).cloned().unwrap_or_default();
-        let concept = Class { methods: vec![], package: None, ..full };
-        class_block(&mut out, &concept, false, "");
+    let (classes, relations) = d.domain.as_class_model();
+    let live: BTreeSet<&str> = classes.iter().filter(|c| shown(c.status)).map(|c| c.name.as_str()).collect();
+    for c in d.domain.concepts.iter().filter(|c| shown(c.status)) {
+        let _ = writeln!(out, "class {} {{", id(&c.name));
+        for a in &c.attributes {
+            let ty = a.ty.as_deref().filter(|t| !t.is_empty()).map(|t| format!(" : {}", esc(t))).unwrap_or_default();
+            let m = a.multiplicity.as_deref().filter(|m| !m.is_empty()).map(|m| format!(" [{}]", esc(m))).unwrap_or_default();
+            let _ = writeln!(out, "  {}{ty}{m}", esc(&a.name));
+        }
+        let _ = writeln!(out, "}}");
     }
     out.push('\n');
-    let lay = layout.get("domain").or_else(|| layout.get("class"));
-    for r in dm.relations.iter().filter(|r| shown(r.status)) {
+    let lay = layout.get("domain");
+    for r in relations.iter().filter(|r| shown(r.status) && live.contains(r.from.as_str()) && live.contains(r.to.as_str())) {
         let _ = writeln!(out, "{}", relation_line(r, None, lay));
     }
     out.push_str("@enduml\n");
@@ -356,24 +357,20 @@ pub fn package_diagram(d: &Design, m: &Metrics) -> String {
     let mut out = header(&format!("{} — Package diagram", d.name), "package diagram");
     let pv = derive::package_view(d);
     for p in pv.packages.iter().filter(|p| shown(p.status)) {
-        let pm = m.packages.iter().find(|x| x.name == p.name);
         let st = p.layer.filter(|l| format!("{l:?}").to_lowercase() != p.name).map(|l| format!(" <<{}>>", format!("{l:?}").to_lowercase())).unwrap_or_default();
         let color = p.layer.map(|l| format!(" #line:{}", &layer_color(l)[1..])).unwrap_or_default();
         let _ = writeln!(out, "package {}{st}{color} {{", id(&p.name));
         for c in &p.classes {
-            if d.live_class(c).is_some() {
-                let _ = writeln!(out, "  class {}", id(c));
+            if let Some(cl) = d.live_class(c) {
+                let kw = if cl.stereotype.as_deref() == Some("interface") { "interface" } else if cl.is_abstract { "abstract class" } else { "class" };
+                let _ = writeln!(out, "  {kw} {}", id(c));
             }
         }
         let _ = writeln!(out, "}}");
-        if let Some(pm) = pm {
-            let _ = writeln!(out, "note bottom of {} : I={:.2} A={:.2} D={:.2}", id(&p.name), pm.instability, pm.abstractness, pm.distance);
-        }
     }
     out.push_str("hide members\nhide circle\n\n");
-    for dep in &m.package_deps {
-        let style = if dep.in_cycle { format!("[{RED},bold]") } else if dep.layer_violation { format!("[{AMBER},bold]") } else { String::new() };
-        let _ = writeln!(out, "{} .{style}.> {} : {}", id(&dep.from), id(&dep.to), dep.count);
+    for dep in m.package_deps.iter().filter(|d| d.from != d.to) {
+        let _ = writeln!(out, "{} ..> {}", id(&dep.from), id(&dep.to));
     }
     out.push_str("@enduml\n");
     out

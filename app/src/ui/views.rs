@@ -26,6 +26,7 @@ pub struct Views {
     pub scene: Scene,
     pub points: Vec<(Target, [f64; 2])>,
     pub asked_usecases: bool,
+    pub asked_domain: bool,
     last_seq: String,
     last_level: Option<C4Level>,
 }
@@ -159,6 +160,22 @@ impl Views {
         }
         self.scene = vs.scene;
         self.points = vs.points;
+    }
+
+    /// Domain tab banner (the canvas is the class canvas): generate once when empty, or regenerate when stale.
+    pub fn domain_banner(&mut self, ui: &mut egui::Ui, rect: Rect, snap: &Snapshot, out: &mut Vec<ViewOut>) {
+        let empty = snap.view.domain.is_empty();
+        if !self.asked_domain && empty && snap.pi_status == PiStatus::Idle && snap.view.classes.iter().any(|c| c.status != Status::Pruned) {
+            self.asked_domain = true;
+            out.push(ViewOut::Regenerate("domain", None));
+        }
+        if snap.derived.domain_stale || empty {
+            let busy = snap.pi_status == PiStatus::Busy;
+            let (at, text) = if empty { (rect.center() - Vec2::new(0.0, 20.0), "No domain model yet.") } else { (Pos2::new(rect.center().x, rect.top() + 8.0), "Out of date with the class model.") };
+            if banner(ui, at, empty, text, busy, Some(if empty { "↻ generate" } else { "↻ regenerate" })) {
+                out.push(ViewOut::Regenerate("domain", None));
+            }
+        }
     }
 
     pub fn usecase(&mut self, ui: &mut egui::Ui, rect: Rect, snap: &Snapshot, m: &EguiMeasure, out: &mut Vec<ViewOut>) {

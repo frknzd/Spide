@@ -397,7 +397,8 @@ pub fn class_box(m: &dyn Measure, c: &BoxInput, methods: bool, level: u8, ctx: &
         if design && !is_enum && !kept && (ctx.inherited.is_some_and(|s| s.contains(&a.name)) || ctx.associations.is_some_and(|s| s.contains(&a.name))) {
             continue;
         }
-        let text = if is_enum { a.name.clone() } else { attr_text(a) };
+        // without methods (conceptual domain model) attributes carry no visibility
+        let text = if is_enum { a.name.clone() } else if methods { attr_text(a) } else { attr_text(a).split_once(' ').map(|x| x.1.to_string()).unwrap_or_default() };
         push(&mut rows, &mut y, &mut w, Row { text, kind: RowKind::Attribute, name: a.name.clone(), status: a.status, is_static: a.is_static && !is_enum, is_abstract: false, y: 0.0, cont: false }, f::MEMBER);
     }
     if rows.is_empty() {

@@ -16,14 +16,12 @@ pub struct CardCtx<'a> {
     pub snap: &'a Snapshot,
     pub design: &'a Design,
     pub metrics: &'a Metrics,
-    pub drift: Option<&'a crate::commands::DriftReport>,
 }
 
 pub enum CardAction {
     Close,
     /// show another method's facts inside the evidence section
     Select(Option<String>),
-    Code { class: String, method: String },
 }
 
 fn c32(c: spide_diagram::visuals::Rgb) -> Color32 {
@@ -52,15 +50,14 @@ fn line_color(st: Status) -> Color32 {
     }
 }
 
-/// "What is it for?": the agent's purpose, the role Spide reads and why, misplaced methods → home, what the code says.
+/// "What is it for?": the agent's purpose, the role Spide reads and why, misplaced methods → home.
 fn purpose_section(ui: &mut Ui, name: &str, cx: &CardCtx) {
     let cr = cx.metrics.responsibility.classes.get(name);
     let role = cr.and_then(|c| c.role.as_ref());
     let a = cx.design.assessments.get(name);
     let marks = method_marks(Some(cx.metrics));
     let marks = marks.get(name);
-    let code: Vec<_> = cx.drift.map(|d| d.findings.disagreements.iter().filter(|x| x.class == name).collect()).unwrap_or_default();
-    if role.is_none() && a.is_none() && marks.is_none() && code.is_empty() {
+    if role.is_none() && a.is_none() && marks.is_none() {
         return;
     }
     ui.add_space(6.0);
@@ -104,12 +101,20 @@ fn purpose_section(ui: &mut Ui, name: &str, cx: &CardCtx) {
             widgets::rich(ui, &[(&format!("{m}()"), mono(12.0), css::WARN), (&kind, sans(12.0), css::FAINT), (&home, bold(12.0), css::WARN)]);
         }
     }
-    for d in code {
-        wrap(ui, format!("code says: {}", d.code), 12.0, css::BAD);
-    }
-    if cx.drift.is_some() {
-        widgets::small_faint(ui, format!("/code {name} shows the implementation"));
-    }
+}
+
+/// Spide Project: where the class is in the code and whether it is in sync.
+fn code_line(ui: &mut Ui, name: &str, cx: &CardCtx) {
+    let Some(r) = cx.snap.project.as_ref().and_then(|p| p.report.as_ref()) else { return };
+    let Some(cs) = r.classes.get(name) else { return };
+    let status = cs.status.unwrap_or(spide_core::sync::SyncStatus::InSync);
+    let place = match (&cs.symbol, &cs.file) {
+        (Some(s), Some(f)) => format!("code: {s} · {f}:{}", cs.line.unwrap_or(0)),
+        _ => "not in the code yet".to_string(),
+    };
+    let st = if cs.differences > 0 { format!(" · {} ({})", status.label(), cs.differences) } else { format!(" · {}", status.label()) };
+    ui.add_space(3.0);
+    widgets::rich(ui, &[(&place, mono(11.5), css::DIM), (&st, sans(11.5), super::project::status_color(status))]);
 }
 
 const fn kind_text(k: &str) -> &str {
@@ -291,11 +296,6 @@ fn member_evidence(ui: &mut Ui, member: &spide_core::model::Method, qualified: &
     let find = |key: &str| -> Vec<&spide_core::model::Method> { cx.design.classes.iter().flat_map(|c| c.methods.iter().filter(move |m| format!("{}.{}", c.name, m.name) == key)).collect() };
     egui::CollapsingHeader::new(RichText::new("Code facts & similarity").font(sans(12.5)).color(css::DIM)).id_salt(("evidence", qualified)).show(ui, |ui| {
         facts(ui, member);
-        if let Some(class) = qualified.strip_suffix(&format!(".{}", member.name)) {
-            if widgets::link(ui, "Open source implementation").clicked() {
-                actions.push(CardAction::Code { class: class.into(), method: member.name.clone() });
-            }
-        }
         widgets::small_faint(ui, "Similarity covers the loaded/imported model; it is not the probability of a defect.");
         if pairs.is_empty() {
             widgets::faint(ui, "No reported similarity matches.");
@@ -332,11 +332,17 @@ pub fn body(ui: &mut Ui, key: &str, cx: &CardCtx, pinned: bool, selected: &Optio
     let Some((kind, rest)) = key.split_once(':') else { return false };
     let design = cx.design;
     let metrics = cx.metrics;
-    if cx.snap.source.attachment.is_some() && cx.snap.source.status != "current" {
-        wrap(ui, format!("Source evidence is {} — current code-length health evidence unavailable", cx.snap.source.status), 12.0, css::WARN);
-    }
     match kind {
         "class" => {
+            // a code-only class (sync lens ghost)
+            if !design.classes.iter().any(|x| x.name == rest) {
+                let Some(p) = cx.snap.project.as_ref() else { return false };
+                let Some(c) = p.phantoms.iter().find(|x| x.name == rest) else { return false };
+                widgets::rich(ui, &[(&c.name, bold(14.0), css::TEXT), ("  only in the code", sans(11.0), css::FAINT)]);
+                code_line(ui, rest, cx);
+                wrap(ui, format!("{} field(s) · {} method(s). Readjust (Project panel) proposes it for the design.", c.attributes.len(), c.methods.len()), 12.0, css::DIM);
+                return true;
+            }
             let Some(c) = design.classes.iter().find(|x| x.name == rest) else { return false };
             let m = metrics.classes.get(rest).or(cx.snap.ghost_metrics.as_ref().and_then(|g| g.classes.get(rest)));
             let pkg = c.package.as_ref().and_then(|p| design.packages.iter().find(|x| &x.name == p));
@@ -365,6 +371,7 @@ pub fn body(ui: &mut Ui, key: &str, cx: &CardCtx, pinned: bool, selected: &Optio
             if let Some(r) = &c.rationale {
                 rat(ui, r);
             }
+            code_line(ui, &c.name, cx);
             if c.status != Status::Proposed && !c.external {
                 purpose_section(ui, &c.name, cx);
             }
@@ -625,24 +632,55 @@ pub fn body(ui: &mut Ui, key: &str, cx: &CardCtx, pinned: bool, selected: &Optio
                 rat(ui, d);
             }
             if let Some(pm) = pm {
-                ui.add_space(9.0);
-                widgets::hline(ui);
-                ui.add_space(6.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 4.0);
-                    metric(ui, "classes", pm.classes.to_string(), "");
-                    metric(ui, "Ca", pm.fan_in.to_string(), "");
-                    metric(ui, "Ce", pm.fan_out.to_string(), "");
-                    metric(ui, "I", format!("{:.2}", pm.instability), "instability");
-                    metric(ui, "A", format!("{:.2}", pm.abstractness), "abstractness");
-                    let dc = super::chrome::hc(100.0 - pm.distance * 100.0);
-                    let r = widgets::rich(ui, &[("D ", sans(11.5), css::DIM), (&format!("{:.2}", pm.distance), bold(11.5), dc)]);
-                    r.on_hover_text("distance from the main sequence");
-                });
+                let deps = |out: bool| -> Vec<&str> {
+                    metrics.package_deps.iter().filter(|d| if out { d.from == rest } else { d.to == rest }).map(|d| if out { d.to.as_str() } else { d.from.as_str() }).collect()
+                };
+                let (uses, used_by) = (deps(true), deps(false));
+                wrap(ui, format!("{} class{}", pm.classes, if pm.classes == 1 { "" } else { "es" }), 12.5, css::TEXT);
+                if !uses.is_empty() {
+                    wrap(ui, format!("depends on {}", uses.join(", ")), 12.0, css::DIM);
+                }
+                if !used_by.is_empty() {
+                    wrap(ui, format!("used by {}", used_by.join(", ")), 12.0, css::DIM);
+                }
             }
-            if pm.is_some_and(|p| p.in_cycle) {
-                wrap(ui, "⟲ part of a package cycle", 12.5, css::BAD);
+        }
+        "concept" => {
+            let Some(c) = design.domain.concepts.iter().find(|x| x.name == rest) else { return false };
+            widgets::rich(ui, &[(&c.name, bold(14.0), css::TEXT), ("  domain concept", sans(11.0), css::FAINT)]);
+            if let Some(d) = &c.description {
+                rat(ui, d);
             }
+            for a in &c.attributes {
+                let mut t = a.name.clone();
+                if let Some(ty) = a.ty.as_deref().filter(|t| !t.is_empty()) {
+                    t += &format!(": {ty}");
+                }
+                if let Some(m) = a.multiplicity.as_deref().filter(|m| !m.is_empty()) {
+                    t += &format!(" [{m}]");
+                }
+                ui.label(RichText::new(t).font(mono(12.0)).color(css::TEXT));
+            }
+            let links: Vec<String> = design
+                .domain
+                .associations
+                .iter()
+                .filter(|a| a.status != Status::Pruned && (a.from == c.name || a.to == c.name))
+                .map(|a| format!("{} {} {}", a.from, a.label.as_deref().unwrap_or(a.kind.as_str()), a.to))
+                .collect();
+            if !links.is_empty() {
+                ui.add_space(4.0);
+                wrap(ui, links.join(" · "), 12.0, css::DIM);
+            }
+            if c.status == Status::Pruned {
+                wrap(ui, "pruned — click to restore", 12.0, css::FAINT);
+            }
+        }
+        "concept_link" => {
+            let Some(a) = design.domain.associations.iter().find(|x| x.id == rest) else { return false };
+            let mult = |m: &Option<String>| m.as_deref().map(|m| format!(" [{m}]")).unwrap_or_default();
+            widgets::rich(ui, &[(&format!("{}{} — {}{}", a.from, mult(&a.from_mult), a.to, mult(&a.to_mult)), bold(13.0), css::TEXT)]);
+            wrap(ui, format!("{}{}", a.kind.as_str(), a.label.as_deref().map(|l| format!(": {l}")).unwrap_or_default()), 12.5, css::DIM);
         }
         "actor" => {
             let Some(a) = design.use_cases.actors.iter().find(|x| x.name == rest) else { return false };

@@ -5,7 +5,7 @@ use crate::class_view::{chip, edge_parts, EdgeKind, EdgeSpec, EdgeStyle};
 use crate::layout::{self, Direction, LayoutEdge, LayoutNode, Positions};
 use crate::route::{Deco, PathCmd, RBox, REdge, RouteCache};
 use crate::scene::{paint, solid, stroke, tag, Anchor, Anim, Group, Hit, HitShape, HitTarget, Prim, Scene};
-use crate::visuals::{c, f, health_color, layer_color, layer_name, wrap_all, FontSpec, Measure, Rect, Rgb};
+use crate::visuals::{c, f, layer_color, layer_name, wrap_all, FontSpec, Measure, Rect, Rgb};
 use spide_core::metrics::Metrics;
 use spide_core::model::{Actor, Interaction, MessageKind, RelationKind, Sequence, Status, UseCase};
 use spide_core::Target;
@@ -57,128 +57,125 @@ pub struct PackageState {
     pub routes: RouteCache,
 }
 
+/// UML package diagram: folders (name, «layer», contained classes) and plain dashed dependencies.
+/// Deliberately no metrics, counts or diagnostic colours.
 pub fn package_scene(m: &dyn Measure, d: &spide_core::derive::Derived, metrics: &Metrics, st: &mut PackageState) -> ViewScene {
     let pkgs = &d.packages.packages;
-    let deps = &metrics.package_deps;
+    let deps: Vec<_> = metrics.package_deps.iter().filter(|x| x.from != x.to).collect();
+    const ROW: f64 = 18.0;
+    let stereo = |p: &spide_core::derive::PackageNode| p.layer.map(layer_name).filter(|l| *l != p.name).map(|l| format!("«{l}»"));
+    let tab_size = |p: &spide_core::derive::PackageNode| -> (f64, f64) {
+        let mut w = m.width(&p.name, f::NAME);
+        if let Some(s) = stereo(p) {
+            w = w.max(m.width(&s, f::STEREO));
+        }
+        ((w + 24.0).ceil(), if stereo(p).is_some() { 36.0 } else { 22.0 })
+    };
     let mut boxes: HashMap<&str, (f64, f64)> = HashMap::new();
     for p in pkgs {
-        let label = match p.layer {
-            Some(l) if layer_name(l) != p.name => format!("{}  ·  {}", p.name, layer_name(l)),
-            _ => p.name.clone(),
-        };
-        let mut w = m.width(&label, f::NAME) + 40.0;
+        let (tw, _) = tab_size(p);
+        let mut w = tw + 30.0;
         for cl in &p.classes {
-            w = w.max(m.width(cl, f::MEMBER) + 36.0);
+            w = w.max(m.width(cl, f::MEMBER) + 32.0);
         }
-        boxes.insert(&p.name, (w.ceil().max(170.0), 52.0 + p.classes.len() as f64 * 17.0 + 14.0));
+        let body = if p.classes.is_empty() { 34.0 } else { 14.0 + p.classes.len() as f64 * ROW };
+        boxes.insert(&p.name, (w.ceil().max(140.0), body.max(34.0)));
     }
-    let key = format!("{:?}|{:?}", pkgs.iter().map(|p| (&p.name, boxes[p.name.as_str()].0 as i64, boxes[p.name.as_str()].1 as i64)).collect::<Vec<_>>(), deps.iter().map(|d| format!("{}{}", d.from, d.to)).collect::<Vec<_>>());
+    let key = format!("{:?}|{:?}", pkgs.iter().map(|p| (&p.name, boxes[p.name.as_str()].0 as i64, boxes[p.name.as_str()].1 as i64, tab_size(p).1 as i64)).collect::<Vec<_>>(), deps.iter().map(|d| format!("{}>{}", d.from, d.to)).collect::<Vec<_>>());
     let pos = st
         .layout
         .get(key, || {
-            let nodes: Vec<LayoutNode> = pkgs.iter().map(|p| LayoutNode { id: p.name.clone(), w: boxes[p.name.as_str()].0, h: boxes[p.name.as_str()].1 + 22.0, group: None, external: false }).collect();
+            let nodes: Vec<LayoutNode> = pkgs.iter().map(|p| LayoutNode { id: p.name.clone(), w: boxes[p.name.as_str()].0, h: boxes[p.name.as_str()].1 + tab_size(p).1, group: None, external: false }).collect();
             let edges: Vec<LayoutEdge> = deps.iter().map(|d| LayoutEdge { from: d.from.clone(), to: d.to.clone(), kind: "dependency".into() }).collect();
             layout::layered(&nodes, &edges, Direction::Down)
         })
         .clone();
-    let rect = |n: &str| -> Option<Rect> {
-        let p = pos.get(n)?;
-        let b = boxes.get(n)?;
-        Some(Rect { x: p[0], y: p[1], w: b.0, h: b.1 })
+    // body rectangle (the tab sits on top of it, inside the laid-out node)
+    let rect = |p: &spide_core::derive::PackageNode| -> Option<Rect> {
+        let c = pos.get(&p.name)?;
+        let b = boxes.get(p.name.as_str())?;
+        let th = tab_size(p).1;
+        Some(Rect { x: c[0], y: c[1] + th / 2.0, w: b.0, h: b.1 })
     };
-    // routing boxes include the folder tab above and the metric chips below
-    let r_boxes: Vec<RBox> = pkgs.iter().filter_map(|p| rect(&p.name).map(|r| RBox::new(p.name.clone(), r.x, r.y + 6.0, r.w, r.h + 40.0))).collect();
-    let r_edges: Vec<REdge> = deps.iter().filter(|d| d.from != d.to).map(|d| REdge::new(format!("{}>{}", d.from, d.to), &d.from, &d.to).deco(Deco::None, Deco::Arrow, false)).collect();
+    let by_name: HashMap<&str, &spide_core::derive::PackageNode> = pkgs.iter().map(|p| (p.name.as_str(), p)).collect();
+    let rect_of = |n: &str| by_name.get(n).and_then(|p| rect(p));
+    // routing boxes cover the folder tab too
+    let r_boxes: Vec<RBox> = pkgs
+        .iter()
+        .filter_map(|p| {
+            let r = rect(p)?;
+            let th = tab_size(p).1;
+            Some(RBox::new(p.name.clone(), r.x, r.y - th / 2.0, r.w, r.h + th))
+        })
+        .collect();
+    let r_edges: Vec<REdge> = deps.iter().map(|d| REdge::new(format!("{}>{}", d.from, d.to), &d.from, &d.to).deco(Deco::None, Deco::Arrow, false)).collect();
     let routes = st.routes.update(&r_boxes, &r_edges, &[], 0).clone();
     let mut scene = Scene::default();
     let mut hits = vec![];
     let mut points = vec![];
     let mut edges = Group::new();
     let mut labels = Group::new();
-    for dep in deps {
-        let (Some(a), Some(b)) = (rect(&dep.from), rect(&dep.to)) else { continue };
-        let color = if dep.in_cycle {
-            c::CYCLE
-        } else if dep.layer_violation {
-            c::WARN
-        } else {
-            c::EDGE
-        };
+    for dep in &deps {
+        let (Some(a), Some(b)) = (rect_of(&dep.from), rect_of(&dep.to)) else { continue };
         let id = format!("{}>{}", dep.from, dep.to);
         let spec = EdgeSpec {
             from: a,
             to: b,
             kind: EdgeKind::Rel(RelationKind::Dependency),
-            directed: false,
-            label: Some(dep.count.to_string()),
+            directed: true,
+            label: None,
             from_mult: None,
             to_mult: None,
             bend: if deps.iter().any(|x| x.from == dep.to && x.to == dep.from) { 1.0 } else { 0.0 },
-            style: EdgeStyle { strained: dep.in_cycle, ..EdgeStyle::new(color, if dep.in_cycle { 2.4 } else { 1.5 }, 1.0) },
+            style: EdgeStyle::new(c::EDGE, 1.4, 1.0),
             target: None,
             hover: None,
-            warn: if dep.layer_violation {
-                Some("layer ↑".into())
-            } else if dep.in_cycle {
-                Some("cycle".into())
-            } else {
-                None
-            },
+            warn: None,
             route: routes.get(&id),
             status: None,
             key: id.clone(),
             label_at: None,
         };
-        {
-            let (l, t) = edge_parts(m, &spec, &mut hits);
-            edges.add(l);
-            labels.add(t);
-        }
+        let (l, t) = edge_parts(m, &spec, &mut hits);
+        edges.add(l);
+        labels.add(t);
     }
     scene.root.add(edges);
     let mut nodes = Group::new();
     for p in pkgs {
-        let Some(r) = rect(&p.name) else { continue };
-        let pm = metrics.packages.iter().find(|x| x.name == p.name);
+        let Some(r) = rect(p) else { continue };
         let color = p.layer.map(layer_color).unwrap_or(c::EDGE);
         let (x, y) = (r.x - r.w / 2.0, r.y - r.h / 2.0);
-        let tab_w = (r.w * 0.55).min(m.width(&p.name, f::NAME) + 28.0);
-        let label = match p.layer {
-            Some(l) if layer_name(l) != p.name => format!("{}  ·  {}", p.name, layer_name(l)),
-            _ => p.name.clone(),
-        };
+        let (tab_w, tab_h) = tab_size(p);
+        let tab_w = tab_w.min(r.w);
         let ghost = p.status == Status::Proposed;
         let mut outer = Group::at(x, y).opacity(if ghost { 0.6 } else { 1.0 });
         if ghost {
             outer = outer.tags(tag::PROPOSED);
         }
         let mut g = Group::new().anim(Anim::Enter(format!("pkg:{}", p.name)));
-        if pm.is_some_and(|m| m.in_cycle) {
-            let mut dg = Group::new().tags(tag::DIAG);
-            glow(&mut dg, -4.0, -18.0, r.w + 8.0, r.h + 22.0, 10.0);
-            g.add(dg);
-        }
         let s = stroke(color, 1.4);
+        // folder: tab on top-left, body below
+        g.rect(0.0, -tab_h, tab_w, tab_h, 0.0, Some(solid(c::NODE)), None);
         g.rect(0.0, 0.0, r.w, r.h, 0.0, Some(solid(c::NODE)), None);
-        g.rect(0.0, -14.0, tab_w, 14.0, 0.0, Some(solid(c::NODE)), None);
-        g.poly(vec![[0.0, -14.0], [tab_w, -14.0], [tab_w, 0.0], [r.w, 0.0], [r.w, r.h], [0.0, r.h]], true, None, Some(if ghost { s.dash(6.0, 4.0) } else { s }));
-        g.rect(0.0, -14.0, tab_w, 14.0, 0.0, Some(paint(color, 0.18)), None);
-        g.text(14.0, 20.0, label, f::NAME, c::TEXT, Anchor::Start);
-        g.line([0.0, 32.0], [r.w, 32.0], stroke(color, 1.0).opacity(0.4));
-        for (i, cl) in p.classes.iter().enumerate() {
-            g.text(16.0, 50.0 + i as f64 * 17.0, format!("▫ {cl}"), f::MEMBER, c::DIM, Anchor::Start);
+        g.rect(0.0, -tab_h, tab_w, tab_h, 0.0, Some(paint(color, 0.18)), None);
+        g.poly(vec![[0.0, -tab_h], [tab_w, -tab_h], [tab_w, 0.0], [r.w, 0.0], [r.w, r.h], [0.0, r.h]], true, None, Some(if ghost { s.dash(6.0, 4.0) } else { s }));
+        g.line([0.0, 0.0], [tab_w, 0.0], stroke(color, 1.0).opacity(0.6));
+        let mut ty = -tab_h + 15.0;
+        if let Some(st) = stereo(p) {
+            g.text(12.0, ty, st, f::STEREO, c::DIM, Anchor::Start);
+            ty += 15.0;
         }
-        if let Some(pm) = pm {
-            let mut cg = Group::at(0.0, r.h + 6.0);
-            chip(m, &mut cg, 0.0, 0.0, &format!("I {:.2}", pm.instability), c::DIM, false);
-            chip(m, &mut cg, 56.0, 0.0, &format!("A {:.2}", pm.abstractness), c::DIM, false);
-            chip(m, &mut cg, 112.0, 0.0, &format!("D {:.2}", pm.distance), health_color(100.0 - pm.distance * 100.0), false);
-            g.add(cg);
+        g.text(12.0, ty, p.name.clone(), f::NAME, c::TEXT, Anchor::Start);
+        for (i, cl) in p.classes.iter().enumerate() {
+            let italic = p.abstract_classes.contains(cl);
+            let font = if italic { f::MEMBER.italic() } else { f::MEMBER };
+            g.text(14.0, 20.0 + i as f64 * ROW, cl.clone(), font, c::TEXT, Anchor::Start);
         }
         outer.add(g);
         nodes.add(outer);
         let t = Target::Package { name: p.name.clone() };
-        hits.push(Hit { shape: HitShape::Rect { x1: x, y1: y - 14.0, x2: x + r.w, y2: y + r.h }, target: HitTarget::Target(t.clone()), hover: Some(format!("package:{}", p.name)), node: None, title: None });
+        hits.push(Hit { shape: HitShape::Rect { x1: x, y1: y - tab_h, x2: x + r.w, y2: y + r.h }, target: HitTarget::Target(t.clone()), hover: Some(format!("package:{}", p.name)), node: None, title: None });
         points.push((t, [r.x, r.y]));
     }
     scene.root.add(nodes);

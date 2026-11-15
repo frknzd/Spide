@@ -471,10 +471,10 @@ pub struct NodeProps<'a> {
     /// part of the spotlit ghost proposal: draw at full strength
     pub spotlit: bool,
     pub focus: bool,
-    /// outline colour (stress test, drift)
+    /// outline colour (stress test, sync lens)
     pub ring: Option<Rgb>,
     pub ring_dashed: bool,
-    /// exists only in the code (drift view)
+    /// exists only in the code (sync lens)
     pub phantom: bool,
     pub pinned: bool,
     pub show_methods: bool,
@@ -485,6 +485,8 @@ pub struct NodeProps<'a> {
     pub compact: bool,
     pub marks: Option<&'a HashMap<String, crate::insights::MethodMark>>,
     pub concerns: Option<&'a HashMap<String, String>>,
+    /// sync lens: member rows that differ from the code
+    pub sync_rows: Option<&'a HashMap<String, Rgb>>,
     pub chips: Option<&'a Vec<String>>,
     pub members: Option<&'a HashMap<String, crate::insights::MemberDiagnosis>>,
     pub revealed: bool,
@@ -651,6 +653,9 @@ pub fn class_node(ms: &dyn Measure, p: &NodeProps, parent: Xf, hits: &mut Vec<Hi
             if let Some(cn) = concern {
                 rg.rect(3.0, r.y - 11.0, 3.0, 14.0, 1.5, Some(solid(concern_color(cn).unwrap_or(c::DIM))), None);
             }
+            if let Some(sc) = p.sync_rows.and_then(|m| m.get(&row_key)) {
+                rg.rect(3.0, r.y - 7.0, 6.0, 6.0, 3.0, Some(solid(*sc)), None);
+            }
             if let Some(mk) = mark {
                 let mut mg = Group::new().tags(tag::DIAG);
                 // inside the row's reserved right end: never drawn over a neighbour or an edge
@@ -755,6 +760,8 @@ pub enum Lens {
     None,
     Concerns,
     Overlap,
+    /// Spide Project: design ↔ code sync
+    Sync,
 }
 
 #[derive(Default)]
@@ -763,12 +770,28 @@ pub struct Stress {
     pub ripple: HashSet<String>,
 }
 
+/// Design ↔ code sync status per class (Spide Project sync lens).
 #[derive(Default)]
-pub struct DriftSets {
-    pub missing: HashSet<String>,
-    pub drifted: HashSet<String>,
+pub struct SyncSets {
+    /// the design changed: implement in the code
+    pub design_ahead: HashSet<String>,
+    /// the code changed: readjust the design
+    pub code_ahead: HashSet<String>,
+    /// both changed
+    pub conflict: HashSet<String>,
+    /// no baseline yet, or only on one side
+    pub unreconciled: HashSet<String>,
+    /// classes drawn from the code only (ghosts)
     pub phantom: HashSet<String>,
+    /// class → member row (`attribute:x` / `method:x`) → status colour
+    pub rows: HashMap<String, HashMap<String, Rgb>>,
 }
+
+/// Sync lens colours.
+pub const SYNC_DESIGN_AHEAD: Rgb = c::GHOST;
+pub const SYNC_CODE_AHEAD: Rgb = Rgb::hex(0xa78bfa);
+pub const SYNC_CONFLICT: Rgb = c::CYCLE;
+pub const SYNC_UNRECONCILED: Rgb = c::WARN;
 
 #[derive(Default)]
 pub struct Opts<'a> {
@@ -781,7 +804,7 @@ pub struct Opts<'a> {
     /// classes to highlight (e.g. preview focus)
     pub highlight: Option<&'a HashSet<String>>,
     pub stress: Option<&'a Stress>,
-    pub drift: Option<&'a DriftSets>,
+    pub sync: Option<&'a SyncSets>,
     pub pinned: HashSet<String>,
     /// package focus: everything outside dims
     pub focus_set: Option<&'a HashSet<String>>,
@@ -1274,10 +1297,14 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
             Some(c::CYCLE)
         } else if o.stress.is_some_and(|s| s.ripple.contains(n)) {
             Some(c::WARN)
-        } else if o.drift.is_some_and(|s| s.missing.contains(n)) {
-            Some(c::CYCLE)
-        } else if o.drift.is_some_and(|s| s.drifted.contains(n)) {
-            Some(c::WARN)
+        } else if o.sync.is_some_and(|s| s.conflict.contains(n)) {
+            Some(SYNC_CONFLICT)
+        } else if o.sync.is_some_and(|s| s.design_ahead.contains(n)) {
+            Some(SYNC_DESIGN_AHEAD)
+        } else if o.sync.is_some_and(|s| s.code_ahead.contains(n)) {
+            Some(SYNC_CODE_AHEAD)
+        } else if o.sync.is_some_and(|s| s.unreconciled.contains(n)) {
+            Some(SYNC_UNRECONCILED)
         } else {
             None
         };
@@ -1292,8 +1319,8 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
             spotlit: pf.is_some_and(|f| f.changed.contains(n)),
             focus: focus == Some(n) || o.highlight.is_some_and(|h| h.contains(n)) || pf.is_some_and(|f| f.anchors.contains(n)),
             ring,
-            ring_dashed: o.drift.is_some_and(|s| s.missing.contains(n)) || pf.is_some_and(|f| f.changed.contains(n)),
-            phantom: o.drift.is_some_and(|s| s.phantom.contains(n)),
+            ring_dashed: o.sync.is_some_and(|s| s.unreconciled.contains(n)) || pf.is_some_and(|f| f.changed.contains(n)),
+            phantom: o.sync.is_some_and(|s| s.phantom.contains(n)),
             pinned: o.pinned.contains(n),
             show_methods: o.show_methods,
             still: o.still,
@@ -1301,6 +1328,7 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
             compact: cap <= 1 && level >= 2,
             marks: if level >= 3 && !o.plain { o.marks.and_then(|m| m.get(n)) } else { None },
             concerns: if o.lens == Lens::Concerns { o.concerns.and_then(|m| m.get(n)) } else { None },
+            sync_rows: o.sync.and_then(|s| s.rows.get(n)),
             chips: if o.lens == Lens::Overlap { o.scattered.and_then(|m| m.get(n)) } else { None },
             members: if o.plain || cap <= 1 { None } else { o.members.and_then(|m| m.get(n)) },
             revealed: o.revealed.is_some_and(|r| r.contains(n)),

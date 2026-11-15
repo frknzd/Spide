@@ -119,7 +119,7 @@ impl Control {
                             Some("context") => {
                                 let s = st.lock();
                                 let tab = self.tab.lock().unwrap();
-                                Ok(json!({"text": format!("{}\n[spide source context]\n{}", crate::prompts::user_prompt(payload["text"].as_str().unwrap_or(""), &tab, &s.store.design), crate::source_tracking::context(&s))}))
+                                Ok(json!({"text": crate::prompts::user_prompt(payload["text"].as_str().unwrap_or(""), &tab, &s.store.design)}))
                             }
                             Some("command") => {
                                 let project = st.lock().project_dir.display().to_string();
@@ -138,9 +138,10 @@ impl Control {
                         let _ = self.send(&r);
                     }
                     Some("event") => match v["event"].as_str() {
-                        Some("busy") => { st.lock().pi_status = PiStatus::Busy; st.emit(); }
+                        Some("busy") => { { let mut s = st.lock(); s.pi_status = PiStatus::Busy; crate::project::on_agent_busy(&mut s); } st.emit(); }
                         Some("settled") => {
                             st.lock().pi_status = PiStatus::Idle;
+                            crate::project::on_agent_settled(&st);
                             let stuck = st.lock().store.release_stuck_evaluations();
                             if stuck > 0 { st.changed(); st.toast("error", "A legacy decision was reopened for review; no defence is required."); }
                             else { st.emit(); }

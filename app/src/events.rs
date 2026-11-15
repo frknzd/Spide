@@ -22,6 +22,7 @@ pub enum UiEvent {
 pub enum MenuAction {
     Export,
     ExportAgain,
+    OpenProject,
 }
 
 #[derive(Clone)]

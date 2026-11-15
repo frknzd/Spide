@@ -41,5 +41,25 @@
     {"id": "Loan->BookCopy:association", "from": "Loan", "to": "BookCopy", "kind": "association", "directed": true, "to_mult": "1", "label": "lends"},
     {"id": "Member->Loan:association", "from": "Member", "to": "Loan", "kind": "association", "directed": false, "from_mult": "1", "to_mult": "0..5", "label": "holds"},
     {"id": "Member->LoanController:dependency", "from": "Member", "to": "LoanController", "kind": "dependency"}
-  ]
+  ],
+  "domain": {
+    "generated_rev": 0,
+    "concepts": [
+      {"name": "Catalog", "description": "The titles the library can lend."},
+      {"name": "Book", "description": "A title, independent of its physical copies.",
+       "attributes": [{"name": "isbn", "type": "String"}, {"name": "title", "type": "String"}, {"name": "author", "type": "String"}]},
+      {"name": "BookCopy", "description": "One physical copy that can be lent.",
+       "attributes": [{"name": "barcode", "type": "String"}, {"name": "available", "type": "Boolean"}]},
+      {"name": "Member", "description": "A person allowed to borrow copies.",
+       "attributes": [{"name": "id", "type": "String"}, {"name": "name", "type": "String"}]},
+      {"name": "Loan", "description": "A copy lent to a member until it is due.",
+       "attributes": [{"name": "due", "type": "Date"}, {"name": "returned", "type": "Boolean"}]}
+    ],
+    "associations": [
+      {"id": "Catalog-composition-Book", "from": "Catalog", "to": "Book", "kind": "composition", "label": "lists", "from_mult": "1", "to_mult": "*"},
+      {"id": "Book-composition-BookCopy", "from": "Book", "to": "BookCopy", "kind": "composition", "label": "exists as", "from_mult": "1", "to_mult": "1..*"},
+      {"id": "Loan-association-BookCopy", "from": "Loan", "to": "BookCopy", "kind": "association", "label": "lends", "from_mult": "0..1", "to_mult": "1"},
+      {"id": "Member-association-Loan", "from": "Member", "to": "Loan", "kind": "association", "label": "holds", "from_mult": "1", "to_mult": "0..5"}
+    ]
+  }
 }

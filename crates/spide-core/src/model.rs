@@ -513,6 +513,120 @@ pub struct UseCaseModel {
     pub generated_rev: Option<u64>,
 }
 
+/// A concept of the problem domain (conceptual class): attributes only, no behaviour.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Concept {
+    pub name: String,
+    pub description: Option<String>,
+    pub attributes: Vec<ConceptAttribute>,
+    pub status: Status,
+    pub feedback: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ConceptAttribute {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: Option<String>,
+    pub multiplicity: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConceptLinkKind {
+    #[default]
+    Association,
+    Generalization,
+    Composition,
+    Aggregation,
+}
+
+impl ConceptLinkKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ConceptLinkKind::Association => "association",
+            ConceptLinkKind::Generalization => "generalization",
+            ConceptLinkKind::Composition => "composition",
+            ConceptLinkKind::Aggregation => "aggregation",
+        }
+    }
+}
+
+/// An association between concepts. Generalization: from = specific, to = general.
+/// Composition/aggregation: from = whole, to = part.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ConceptLink {
+    pub id: String,
+    pub from: String,
+    pub to: String,
+    pub kind: ConceptLinkKind,
+    /// Verb phrase, e.g. "records".
+    pub label: Option<String>,
+    pub from_mult: Option<String>,
+    pub to_mult: Option<String>,
+    pub status: Status,
+    pub feedback: Option<String>,
+}
+
+/// The conceptual domain model, built by the agent. Separate from the class design: no references to it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct DomainModel {
+    pub concepts: Vec<Concept>,
+    pub associations: Vec<ConceptLink>,
+    /// Class-model revision this was generated from.
+    pub generated_rev: Option<u64>,
+}
+
+impl DomainModel {
+    pub fn is_empty(&self) -> bool {
+        !self.concepts.iter().any(|c| c.status != Status::Pruned)
+    }
+    /// The model as plain classes and relations for drawing (descriptions become the one
+    /// responsibility line; generalization → inheritance).
+    pub fn as_class_model(&self) -> (Vec<Class>, Vec<Relation>) {
+        let classes = self
+            .concepts
+            .iter()
+            .map(|c| Class {
+                name: c.name.clone(),
+                attributes: c
+                    .attributes
+                    .iter()
+                    .map(|a| Attribute { name: a.name.clone(), ty: a.ty.clone().unwrap_or_default(), multiplicity: a.multiplicity.clone(), status: Status::Accepted, ..Default::default() })
+                    .collect(),
+                responsibilities: c.description.iter().cloned().collect(),
+                status: c.status,
+                ..Default::default()
+            })
+            .collect();
+        let relations = self
+            .associations
+            .iter()
+            .map(|a| Relation {
+                id: a.id.clone(),
+                from: a.from.clone(),
+                to: a.to.clone(),
+                kind: match a.kind {
+                    ConceptLinkKind::Association => RelationKind::Association,
+                    ConceptLinkKind::Generalization => RelationKind::Inheritance,
+                    ConceptLinkKind::Composition => RelationKind::Composition,
+                    ConceptLinkKind::Aggregation => RelationKind::Aggregation,
+                },
+                label: a.label.clone(),
+                from_mult: a.from_mult.clone(),
+                to_mult: a.to_mult.clone(),
+                status: a.status,
+                ..Default::default()
+            })
+            .collect();
+        (classes, relations)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageKind {
@@ -706,6 +820,9 @@ pub struct Design {
     pub proposals: Vec<Proposal>,
     pub decisions: Vec<Decision>,
     pub use_cases: UseCaseModel,
+    /// The conceptual domain model (agent-built, independent of the classes).
+    #[serde(default)]
+    pub domain: DomainModel,
     pub sequences: Vec<Sequence>,
     pub change_scenarios: Vec<ChangeScenario>,
     pub feedback: Vec<Feedback>,
@@ -738,6 +855,7 @@ impl Default for Design {
             proposals: vec![],
             decisions: vec![],
             use_cases: UseCaseModel::default(),
+            domain: DomainModel::default(),
             sequences: vec![],
             change_scenarios: vec![],
             feedback: vec![],

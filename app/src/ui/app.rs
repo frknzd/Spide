@@ -6,7 +6,7 @@ use super::canvas::{CanvasInput, CanvasOut, ClassCanvas};
 use super::chrome::{self, HealthAction, HealthState, Tab, Toast, TAB_ORDER};
 use super::decisions::{self, CompareCol, CompareUi, DecisionUi};
 use super::export::{self, DialogOut, ExportDialog, ExportSettings, ExportState, Format};
-use super::export_jobs::{self, BatchRun, BatchSettings, ExportView, JobResult};
+use super::export_jobs::{self, BatchPhase, BatchRun, BatchSettings, ExportView, JobResult};
 use super::hover_card::{self, CardAction, CardCtx};
 use super::overlays::{self, InlineAction, InlineEdit, InlineKind, Palette, PaletteAction, PruneAction, PruneState};
 use super::paint::EguiMeasure;
@@ -15,18 +15,18 @@ use super::state::hover::{HoverStore, Point};
 use super::state::proposal_review::PlanDrafts;
 use super::terminal::{self, PaneAction, TermSession};
 use super::theme::{bold, css, sans};
-use super::timeline::{self, DriftOut, TimelineOut, TimelineUi};
+use super::timeline::{self, TimelineOut, TimelineUi};
 use super::views::{ViewOut, Views};
 use super::widgets;
 use crate::backend::Backend;
-use crate::commands::DriftReport;
 use crate::events::{MenuAction, UiEvent};
-use crate::state::Snapshot;
+use crate::state::{PiStatus, Snapshot};
 use egui::{Color32, Key, Margin, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use serde_json::json;
 use spide_core::model::{Class, Design, DecisionState, Package, Relation, Status};
 use spide_core::Target;
-use spide_diagram::class_view::{DriftSets, Lens, Stress};
+use spide_diagram::class_view::{Lens, Stress, SyncSets};
+use spide_core::sync::SyncStatus;
 use spide_diagram::scene::Scene;
 use spide_diagram::svg::{build_export_svg, ExportMeta, ExportOptions, LegendKey, LEGEND_ORDER};
 use spide_diagram::views::C4Level;
@@ -60,7 +60,7 @@ pub struct BranchCmp {
     pub cols: Vec<CompareCol>,
 }
 
-/// The class-diagram data shown right now (live, preview, review or with code-only phantoms).
+/// The class-diagram data shown right now (live, preview or review).
 pub struct ClassData {
     pub key: u64,
     pub classes: Vec<Class>,
@@ -94,7 +94,6 @@ pub struct SpideApp {
     pub palette: Option<Palette>,
     pub prune: Option<PruneState>,
     pub inline: Option<InlineEdit>,
-    pub code_view: Option<(String, String)>,
     pub brief: bool,
     pub brief_ui: BriefUi,
     pub compare: Option<String>,
@@ -102,14 +101,15 @@ pub struct SpideApp {
     pub branch_cmp: Option<BranchCmp>,
     pub stress: Option<String>,
     pub review_active: bool,
-    pub source_open: bool,
-    pub source_ui: super::source::SourceUi,
     pub selected_proposal: Option<String>,
     pub proposal_canvas: Option<Design>,
     pub proposal_ui: ProposalUi,
     pub shown_decision: Option<String>,
     /// the inspector lists resolved decisions (read-only history)
     pub history_open: bool,
+    /// the Project rail (Spide Project / sync)
+    pub project_open: bool,
+    pub project_ui: super::project::ProjectUi,
     /// fit the canvas to this plan's changes once its review has loaded (deliberate navigation)
     pub review_locate: Option<(String, f64)>,
     /// plans whose review layout has been shown: keep positions when toggling before/after or alternatives
@@ -118,8 +118,6 @@ pub struct SpideApp {
     review_pos: std::collections::BTreeMap<String, spide_core::model::Pos>,
     pub timeline: bool,
     pub timeline_ui: TimelineUi,
-    pub drift: Option<DriftReport>,
-    drift_rev: Option<u64>,
     pub preview: Option<Arc<Design>>,
     pub preview_source: PreviewSource,
     preview_gen: u64,
@@ -203,9 +201,45 @@ fn is_pruned(d: &Design, t: &Target) -> bool {
         Target::System { name } => d.systems.iter().find(|a| &a.name == name).map(|a| a.status),
         Target::Container { name } => d.containers.iter().find(|a| &a.name == name).map(|a| a.status),
         Target::Link { id } => d.links.iter().find(|l| &format!("{}->{}", l.from, l.to) == id).map(|l| l.status),
+        Target::Concept { name } => d.domain.concepts.iter().find(|c| &c.name == name).map(|c| c.status),
+        Target::ConceptLink { id } => d.domain.associations.iter().find(|a| &a.id == id).map(|a| a.status),
         _ => None,
     };
     st == Some(Status::Pruned)
+}
+
+/// Domain tab: the class canvas draws concepts as classes. Map its targets/hover keys onto the
+/// domain model so nothing reaches the design's classes (that may share a name).
+fn domain_target(t: Target) -> Option<Target> {
+    match t {
+        Target::Class { name } => Some(Target::Concept { name }),
+        Target::Relation { id } => Some(Target::ConceptLink { id }),
+        _ => None,
+    }
+}
+
+fn domain_hover_key(k: &str) -> Option<String> {
+    let (kind, rest) = k.split_once(':')?;
+    match kind {
+        "class" => Some(format!("concept:{rest}")),
+        "relation" => Some(format!("concept_link:{rest}")),
+        "attribute" => rest.split_once('.').map(|(c, _)| format!("concept:{c}")),
+        _ => None,
+    }
+}
+
+pub(super) fn domain_canvas_out(o: CanvasOut) -> Option<CanvasOut> {
+    match o {
+        CanvasOut::Hover(k, p) => Some(CanvasOut::Hover(k.and_then(|k| domain_hover_key(&k)), p)),
+        CanvasOut::Prune(ts, p) => {
+            let ts: Vec<Target> = ts.into_iter().filter_map(domain_target).collect();
+            (!ts.is_empty()).then_some(CanvasOut::Prune(ts, p))
+        }
+        CanvasOut::Click(t, p) => domain_target(t).map(|t| CanvasOut::Click(t, p)),
+        // no renames, no packages in the domain model
+        CanvasOut::DoubleClick(..) | CanvasOut::MoveToPackage(..) => None,
+        o @ CanvasOut::SaveLayout(_) => Some(o),
+    }
 }
 
 /// Origin (decision / proposal / user) of a clicked element.
@@ -265,7 +299,6 @@ impl SpideApp {
             palette: None,
             prune: None,
             inline: None,
-            code_view: None,
             brief: false,
             brief_ui: BriefUi::default(),
             compare: None,
@@ -273,20 +306,18 @@ impl SpideApp {
             branch_cmp: None,
             stress: None,
             review_active: false,
-            source_open: false,
-            source_ui: Default::default(),
             selected_proposal: None,
             proposal_canvas: None,
             proposal_ui: ProposalUi { drafts, ..Default::default() },
             shown_decision: None,
             history_open: false,
+            project_open: false,
+            project_ui: Default::default(),
             review_locate: None,
             review_seen: HashSet::new(),
             review_pos: Default::default(),
             timeline: false,
             timeline_ui: TimelineUi::default(),
-            drift: None,
-            drift_rev: None,
             preview: None,
             preview_source: PreviewSource::Option,
             preview_gen: 0,
@@ -386,12 +417,11 @@ impl SpideApp {
         }
         self.review_active = true;
         self.history_open = false;
-        self.source_open = false;
+        self.project_open = false;
         self.shown_decision = None;
         self.set_preview(None, PreviewSource::Option);
         self.compare = None;
         self.branch_cmp = None;
-        self.drift = None;
         self.timeline = false;
         self.brief = false;
         self.inline = None;
@@ -462,17 +492,6 @@ impl SpideApp {
                     // ignore stale snapshots of the same project
                     let keep_old = self.snap.as_ref().is_some_and(|p| p.project_dir == s.project_dir && p.rev > s.rev && p.pi_status == s.pi_status);
                     if !keep_old {
-                        let source_changed = self.snap.as_ref().is_some_and(|p| p.rev != s.rev || p.source.generation != s.source.generation || p.source.status != s.source.status);
-                        if self.drift.is_some() && source_changed {
-                            if self.snap.as_ref().is_some_and(|p| p.source.attachment.is_some()) && s.source.attachment.is_none() {
-                                self.drift = None;
-                            } else {
-                                let (project, generation, rev) = (s.project_dir.clone(), s.source.generation, s.rev);
-                                self.backend.call(|st, _| crate::commands::drift(st), move |app, result| {
-                                    if app.snap.as_ref().is_some_and(|snap| snap.project_dir == project && snap.source.generation == generation && snap.rev == rev) { app.drift = result.ok(); app.class_data = None; }
-                                });
-                            }
-                        }
                         self.snap = Some(s);
                         self.class_data = None;
                         self.domain_data = None;
@@ -482,6 +501,7 @@ impl SpideApp {
                 UiEvent::Task(f) => f(self),
                 UiEvent::Menu(MenuAction::Export) => self.open_export(),
                 UiEvent::Menu(MenuAction::ExportAgain) => self.export_again(),
+                UiEvent::Menu(MenuAction::OpenProject) => self.open_project_dialog(),
                 UiEvent::SpideCommand { id, generation, project, command } => {
                     if self.snap.as_ref().map(|s| s.project_dir.as_str()) != Some(project.as_str()) {
                         continue;
@@ -506,23 +526,20 @@ impl SpideApp {
 
     fn class_data(&mut self) -> Option<Arc<ClassData>> {
         let snap = self.snap.clone()?;
-        let key = hash_of((snap.rev, snap.source.generation, &snap.source.status, &snap.project_dir, self.preview_gen, self.review_active, self.drift.is_some(), self.proposal_canvas.as_ref().map(|d| d.rev)));
+        let phantoms = if self.lens == Lens::Sync { snap.project.as_ref().map(|p| p.phantoms.iter().map(|c| c.name.clone()).collect::<Vec<_>>()) } else { None };
+        let key = hash_of((snap.rev, &snap.project_dir, self.preview_gen, self.review_active, self.proposal_canvas.as_ref().map(|d| d.rev), phantoms));
         if let Some(d) = self.class_data.as_ref().filter(|d| d.key == key) {
             return Some(d.clone());
         }
         let view = &snap.view;
         let d: &Design = if self.review_active { self.proposal_canvas.as_ref().unwrap_or(view) } else { self.preview.as_deref().unwrap_or(view) };
         let mut cd = ClassData { key, classes: d.classes.clone(), relations: d.relations.clone(), packages: d.packages.clone(), implicit: vec![], saved: self.preview.as_deref().unwrap_or(view).layout.get("class").cloned() };
-        if let (Some(dr), None, false) = (&self.drift, &self.preview, self.review_active) {
-            // code-only classes join the canvas as phantoms
-            let phantom: HashSet<&String> = dr.drift.extra_in_code.iter().collect();
-            let extra: Vec<Class> = dr.reality.classes.iter().filter(|c| phantom.contains(&c.name)).cloned().collect();
-            let names: HashSet<String> = cd.classes.iter().map(|c| c.name.clone()).chain(extra.iter().map(|c| c.name.clone())).collect();
-            let rels: Vec<Relation> = dr.reality.relations.iter().filter(|r| (phantom.contains(&r.from) || phantom.contains(&r.to)) && names.contains(&r.from) && names.contains(&r.to)).cloned().collect();
-            cd.classes.extend(extra);
-            cd.relations.extend(rels);
-            cd.implicit = snap.metrics.implicit_edges.clone();
-        } else if self.preview.is_none() && !self.review_active {
+        // sync lens: code-only classes join the canvas as "only in code" ghosts
+        if let (Lens::Sync, None, false, Some(p)) = (self.lens, &self.preview, self.review_active, snap.project.as_ref()) {
+            cd.classes.extend(p.phantoms.iter().cloned());
+            cd.relations.extend(p.phantom_relations.iter().cloned());
+        }
+        if self.preview.is_none() && !self.review_active {
             cd.implicit = snap.metrics.implicit_edges.clone();
         }
         let a = Arc::new(cd);
@@ -536,27 +553,51 @@ impl SpideApp {
         if let Some(d) = self.domain_data.as_ref().filter(|d| d.key == key) {
             return Some(d.clone());
         }
-        let dm = &snap.derived.domain;
-        let classes = dm.classes.iter().map(|c| Class { name: c.name.clone(), stereotype: c.stereotype.clone(), attributes: c.attributes.clone(), status: c.status, ..Default::default() }).collect();
-        let saved = snap.view.layout.get("domain").or(snap.view.layout.get("class")).cloned();
-        let a = Arc::new(ClassData { key, classes, relations: dm.relations.clone(), packages: vec![], implicit: vec![], saved });
+        // the agent-built conceptual model (no link to the design's classes)
+        let (classes, relations) = snap.view.domain.as_class_model();
+        let saved = snap.view.layout.get("domain").cloned();
+        let a = Arc::new(ClassData { key, classes, relations, packages: vec![], implicit: vec![], saved });
         self.domain_data = Some(a.clone());
         Some(a)
+    }
+
+    /// Sync lens: class rings, member dots and code-only ghosts from the project's report.
+    fn sync_sets(&self) -> Option<SyncSets> {
+        if self.lens != Lens::Sync {
+            return None;
+        }
+        let p = self.snap.as_ref()?.project.as_ref()?;
+        let r = p.report.as_ref()?;
+        let mut out = SyncSets::default();
+        for (name, c) in &r.classes {
+            match c.status {
+                Some(SyncStatus::Conflict) => out.conflict.insert(name.clone()),
+                Some(SyncStatus::DesignAhead) => out.design_ahead.insert(name.clone()),
+                Some(SyncStatus::CodeAhead) => out.code_ahead.insert(name.clone()),
+                Some(SyncStatus::Unreconciled) => out.unreconciled.insert(name.clone()),
+                _ => false,
+            };
+        }
+        out.phantom = p.phantoms.iter().map(|c| c.name.clone()).collect();
+        for it in &r.items {
+            let (Some(name), "field" | "method") = (&it.design_name, it.kind.as_str()) else { continue };
+            let color = match it.status {
+                SyncStatus::Conflict => spide_diagram::class_view::SYNC_CONFLICT,
+                SyncStatus::DesignAhead => spide_diagram::class_view::SYNC_DESIGN_AHEAD,
+                SyncStatus::CodeAhead => spide_diagram::class_view::SYNC_CODE_AHEAD,
+                SyncStatus::Unreconciled => spide_diagram::class_view::SYNC_UNRECONCILED,
+                _ => continue,
+            };
+            let row = format!("{}:{name}", if it.kind == "field" { "attribute" } else { "method" });
+            out.rows.entry(it.class.clone()).or_default().insert(row, color);
+        }
+        Some(out)
     }
 
     fn stress_sets(&self) -> Option<Stress> {
         let snap = self.snap.as_ref()?;
         let c = snap.metrics.changes.iter().find(|x| Some(&x.name) == self.stress.as_ref())?;
         Some(Stress { impacted: c.impacted.iter().cloned().collect(), ripple: c.ripple.iter().cloned().collect() })
-    }
-
-    fn drift_sets(&self) -> Option<DriftSets> {
-        let d = &self.drift.as_ref()?.drift;
-        Some(DriftSets {
-            missing: d.missing_in_code.iter().cloned().collect(),
-            drifted: d.members.iter().map(|m| m.class.clone()).chain(d.packages.iter().map(|p| p.class.clone())).collect(),
-            phantom: d.extra_in_code.iter().cloned().collect(),
-        })
     }
 
     // ------------------------------------------------------------------ actions
@@ -568,8 +609,8 @@ impl SpideApp {
         if let Some(id) = targets.iter().find_map(|t| if let Target::Proposal { id } = t { Some(id.clone()) } else { None }) {
             return self.open_proposal_review(Some(id));
         }
-        // phantoms (code-only classes in the drift view) can't be pruned
-        let phantom: HashSet<String> = self.drift.as_ref().map(|d| d.drift.extra_in_code.iter().cloned().collect()).unwrap_or_default();
+        // code-only ghosts (sync lens) aren't part of the design
+        let phantom: HashSet<String> = self.snap.as_ref().and_then(|s| s.project.as_ref()).map(|p| p.phantoms.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
         let rest: Vec<Target> = targets.iter().filter(|t| !matches!(t, Target::Proposal { .. }) && !matches!(t, Target::Class { name } if phantom.contains(name))).cloned().collect();
         let all = targets.clone();
         self.hover.clear();
@@ -705,32 +746,6 @@ impl SpideApp {
         self.run(move |s, pi| crate::commands::fix_issue(s, pi, message, rule, fix, Some(kind), Some(targets)));
     }
 
-    fn import_code(&mut self) {
-        let mut dlg = rfd::FileDialog::new().set_title("Java source folder to compare with the design");
-        if let Some(d) = self.snap.as_ref().and_then(|s| s.view.settings.code_dir.clone()) {
-            dlg = dlg.set_directory(d);
-        }
-        let Some(dir) = dlg.pick_folder() else { return };
-        let dir = dir.display().to_string();
-        self.backend.call(
-            move |s, pi| {
-                let sum = crate::commands::import_code(s, pi, dir)?;
-                let d = crate::commands::drift(s)?;
-                Ok((sum, d))
-            },
-            |app, r| match r {
-                Ok((s, d)) => {
-                    app.toast("info", format!("imported {} classes, {} relations from {} files{}", s.classes, s.relations, s.files, if s.skipped.is_empty() { String::new() } else { format!(" ({} skipped)", s.skipped.len()) }));
-                    app.drift = Some(d);
-                    app.tab = Tab::Class;
-                    app.brief = false;
-                    app.class_data = None;
-                }
-                Err(e) => app.toast("error", e),
-            },
-        );
-    }
-
     // ------------------------------------------------------------------ export
 
     fn legend_for(&self, tab: Tab) -> Vec<LegendKey> {
@@ -767,18 +782,12 @@ impl SpideApp {
                 }
             }
             Tab::Domain => {
-                for r in &snap.derived.domain.relations {
+                for r in view.domain.as_class_model().1.iter().filter(|r| r.status != Status::Pruned) {
                     keys.insert(rk(r));
                 }
             }
             Tab::Package => {
                 keys.insert(LegendKey::Dependency);
-                if metrics.package_deps.iter().any(|d| d.in_cycle) {
-                    keys.insert(LegendKey::Cycle);
-                }
-                if metrics.package_deps.iter().any(|d| d.layer_violation) {
-                    keys.insert(LegendKey::Violation);
-                }
             }
             Tab::System => {
                 keys.insert(LegendKey::Directed);
@@ -807,16 +816,18 @@ impl SpideApp {
         if !spide_diagram::views::system_empty(&snap.derived, C4Level::Container) {
             out.push(ExportView::SystemContainers);
         }
-        if d.classes.iter().any(|c| c.status != Status::Pruned) {
+        let has_classes = d.classes.iter().any(|c| c.status != Status::Pruned);
+        if has_classes {
             out.push(ExportView::Class);
         }
-        if !snap.derived.domain.classes.is_empty() {
+        // agent-built views also when still missing: a batch asks the agent to build them first
+        if !d.domain.is_empty() || has_classes {
             out.push(ExportView::Domain);
         }
         if !snap.derived.packages.packages.is_empty() {
             out.push(ExportView::Package);
         }
-        if d.use_cases.use_cases.iter().any(|u| u.status != Status::Pruned) {
+        if d.use_cases.use_cases.iter().any(|u| u.status != Status::Pruned) || has_classes {
             out.push(ExportView::Usecase);
         }
         for s in d.sequences.iter().filter(|s| s.status != Status::Pruned && !s.participants.is_empty()) {
@@ -934,6 +945,15 @@ impl SpideApp {
         let Some(job) = run.jobs.get(run.next).cloned() else { return };
         run.next += 1;
         let path = run.dir.join(&job.file);
+        let missing = match job.view {
+            ExportView::Domain => snap.view.domain.is_empty(),
+            ExportView::Usecase => !snap.view.use_cases.use_cases.iter().any(|u| u.status != Status::Pruned),
+            _ => false,
+        };
+        if missing {
+            run.results.push((job.file.clone(), JobResult::Skipped("not generated yet".into())));
+            return;
+        }
         let result = match job.format {
             Format::Puml => spide_core::plantuml::export(job.view.plantuml(), &snap.view, &snap.metrics, &snap.view.layout).and_then(|t| export_jobs::write_atomic(&path, t.as_bytes())),
             f => {
@@ -958,6 +978,52 @@ impl SpideApp {
             Ok(()) => JobResult::Written(path.display().to_string()),
             Err(e) => JobResult::Failed(e),
         }));
+    }
+
+    /// A batch waiting for the agent: start writing once the views are fresh, or let the user decide.
+    fn batch_regen_tick(&mut self, run: &mut BatchRun, batch: &BatchSettings) {
+        let Some(snap) = self.snap.clone() else { return };
+        let now = self.now();
+        let BatchPhase::Regenerating { pending, since, saw_busy } = &mut run.phase else { return };
+        if snap.pi_status == PiStatus::Busy {
+            *saw_busy = true;
+        }
+        let still = export_jobs::stale_views(pending, &[], &snap.derived);
+        if still.is_empty() && snap.pi_status != PiStatus::Busy {
+            self.batch_start_writing(run, batch);
+        } else if snap.pi_status == PiStatus::Offline {
+            run.phase = BatchPhase::Stuck { pending: still, reason: "pi isn't running, so the out-of-date diagrams can't be regenerated.".into() };
+        } else if snap.pi_status == PiStatus::Idle && (*saw_busy || now - *since > 8.0) {
+            let list = export_jobs::view_list(&still);
+            run.phase = BatchPhase::Stuck { pending: still, reason: format!("The agent didn't update: {list}.") };
+        }
+    }
+
+    /// Plan the files from the current revision and write from now on.
+    fn batch_start_writing(&mut self, run: &mut BatchRun, batch: &BatchSettings) {
+        let Some(snap) = self.snap.clone() else { return };
+        let views = self.export_views();
+        run.jobs = export_jobs::jobs(&views, batch, &run.profiles);
+        run.next = 0;
+        run.rev = snap.rev;
+        run.phase = BatchPhase::Writing;
+    }
+
+    /// Ask the agent to regenerate out-of-date views before a batch writes them.
+    fn regenerate_for_export(&mut self, stale: Vec<ExportView>) -> BatchPhase {
+        let since = self.now();
+        let views: Vec<String> = stale.iter().filter_map(|v| match v {
+            ExportView::Domain => Some("domain".to_string()),
+            ExportView::Usecase => Some("usecase".to_string()),
+            _ => None,
+        }).collect();
+        let sequences: Vec<String> = stale.iter().filter_map(|v| if let ExportView::Sequence(n) = v { Some(n.clone()) } else { None }).collect();
+        let st = self.backend.st.clone();
+        let pi = self.backend.pi.clone();
+        match crate::commands::regenerate_for_export(&st, &pi, views, sequences) {
+            Ok(()) => BatchPhase::Regenerating { pending: stale, since, saw_busy: false },
+            Err(e) => BatchPhase::Stuck { pending: stale, reason: format!("Couldn't ask the agent: {e}") },
+        }
     }
 
     fn settings_for_project(&self) -> ExportSettings {
@@ -1155,26 +1221,16 @@ impl SpideApp {
                 let msg = format!("{n}: {}", if ext { "ours again" } else { "external" });
                 self.run_ok(move |s, _| crate::commands::apply_user_ops(s, vec![brief::op(json!({"op": "update_class", "name": n, "external": !ext}))]), move |app| app.toast("info", msg));
             }
-            "/code" => {
-                if arg.is_empty() {
-                    return self.toast("error", "usage: /code <Class>[.method] — the imported implementation");
-                }
-                let (c, m) = match arg.split_once('.') {
-                    Some((c, m)) => (c.to_string(), Some(m.to_string()).filter(|m| !m.is_empty())),
-                    None => (arg.clone(), None),
-                };
-                let name = find_class(view, &c).unwrap_or(c);
-                let title = match &m {
-                    Some(m) => format!("{name}.{m}()"),
-                    None => name.clone(),
-                };
-                self.backend.run_then(move |s, _| crate::commands::code_snippet(s, name, m), move |app, text| app.code_view = Some((title, text)));
-            }
             "/lens" => {
                 let l = if arg.starts_with('c') {
                     Lens::Concerns
                 } else if arg.starts_with('o') {
                     Lens::Overlap
+                } else if arg.starts_with('s') {
+                    if snap.project.is_none() {
+                        return self.toast("error", "the sync lens needs a Spide Project (/project)");
+                    }
+                    Lens::Sync
                 } else {
                     Lens::None
                 };
@@ -1195,6 +1251,7 @@ impl SpideApp {
                     match l {
                         Lens::Concerns => "lens: method rows coloured by what they do",
                         Lens::Overlap => "lens: duplicated behaviour and scattered concepts",
+                        Lens::Sync => "lens: design ↔ code sync (teal design ahead · violet code ahead · red conflict · amber unreconciled)",
                         Lens::None => "lens off",
                     },
                 );
@@ -1332,7 +1389,6 @@ impl SpideApp {
             "/stop" => self.run(|_, pi| crate::commands::abort_agent(pi)),
             "/agent" => self.run_ok(|s, pi| crate::commands::restart_agent(s, pi), |app| app.toast("info", "agent restarted")),
             "/folder" => self.run(|s, _| crate::commands::reveal_project(s)),
-            "/import" => self.import_code(),
             "/add" => {
                 let mut w = arg.split_whitespace();
                 let (name, a2, a3) = (w.next(), w.next(), w.next());
@@ -1354,21 +1410,6 @@ impl SpideApp {
                 }
                 let msg = format!("added {name}");
                 self.run_ok(move |s, _| crate::commands::apply_user_ops(s, vec![brief::op(o)]), move |app| app.toast("info", msg));
-            }
-            "/drift" => {
-                if self.drift.take().is_some() {
-                    self.class_data = None;
-                    return;
-                }
-                self.backend.run_then(
-                    |s, _| crate::commands::drift(s),
-                    |app, r| {
-                        app.tab = Tab::Class;
-                        app.brief = false;
-                        app.drift = Some(r);
-                        app.class_data = None;
-                    },
-                );
             }
             "/coderoot" => {
                 let msg = if arg.is_empty() { "code root cleared".to_string() } else { format!("code root: {arg}") };
@@ -1410,6 +1451,26 @@ impl SpideApp {
                     self.run_ok(move |s, _| crate::commands::save_as(s, path), move |app| app.toast("info", msg));
                 }
             }
+            "/project" => self.open_project_rail(),
+            "/readjust" => {
+                let classes: Vec<String> = arg.split_whitespace().map(|c| find_class(view, c).unwrap_or_else(|| c.to_string())).collect();
+                self.run(move |s, pi| crate::commands::readjust(s, pi, classes));
+            }
+            "/implement" => {
+                let classes: Vec<String> = arg.split_whitespace().map(|c| find_class(view, c).unwrap_or_else(|| c.to_string())).collect();
+                self.run(move |s, pi| crate::commands::implement(s, pi, classes, false));
+                self.open_project_rail();
+            }
+            "/verify" => self.run(|s, pi| crate::commands::verify(s, pi)),
+            "/synced" => {
+                if snap.project.is_none() {
+                    return self.toast("error", "not a Spide Project (/project)");
+                }
+                self.open_project_rail();
+                self.project_ui.confirm_mark = true;
+            }
+            "/reindex" => self.run(|s, _| crate::commands::reindex(s)),
+            "/open" if arg.starts_with("project") => self.open_project_dialog(),
             "/open" => {
                 if let Some(path) = rfd::FileDialog::new().add_filter("Spide design", &["json"]).pick_file() {
                     let path = path.display().to_string();
@@ -1529,7 +1590,7 @@ impl SpideApp {
                     _ => {}
                 }
             }
-            if key == Key::Escape && self.export.is_none() && self.palette.is_none() && self.code_view.is_none() && self.compare.is_none() && self.branch_cmp.is_none() {
+            if key == Key::Escape && self.export.is_none() && self.palette.is_none() && self.compare.is_none() && self.branch_cmp.is_none() {
                 if !in_field {
                     self.focus_canvas(None);
                     self.brief = false;
@@ -1563,10 +1624,10 @@ impl SpideApp {
             read_only: class && (self.preview.is_some() || self.review_active),
             review_focus: None,
             stress: None,
-            drift: None,
+            sync: None,
             hovered,
             spotlight: None,
-            can_move_to_package: class && self.preview.is_none() && self.drift.is_none() && !self.review_active,
+            can_move_to_package: class && self.preview.is_none() && !self.review_active,
             can_edit: !(class && (self.preview.is_some() || self.review_active)),
             pickable: class && self.review_active && self.preview.is_none(),
             highlight: None,
@@ -1624,16 +1685,6 @@ impl SpideApp {
             }
             if !self.hover.snapshot().is_some_and(|h| h.pinned) {
                 self.hover.clear();
-            }
-            // keep the drift report current while it's open
-            if self.drift.is_some() && self.drift_rev != Some(snap.rev) {
-                self.drift_rev = Some(snap.rev);
-                self.backend.call(|s, _| crate::commands::drift(s), |app, r| {
-                    if let (Ok(d), true) = (r, app.drift.is_some()) {
-                        app.drift = Some(d);
-                        app.class_data = None;
-                    }
-                });
             }
         }
         // titlebar (drag region)
@@ -1833,18 +1884,21 @@ impl SpideApp {
                     ui.add(egui::Button::new(RichText::new(text).font(sans(12.5)).color(if on { css::GHOST } else { css::TEXT })).fill(if on { css::RAISED } else { Color32::TRANSPARENT }).stroke(Stroke::NONE).corner_radius(6).min_size(Vec2::new(0.0, 26.0)))
                 };
                 let review_label = if pending > 0 { format!("Review ({pending})") } else { "Review".into() };
-                if mode(ui, review_label, !self.source_open && !history_mode).on_hover_text("Pending changes, shown on the diagram").clicked() {
+                if mode(ui, review_label, !history_mode && !self.project_open).on_hover_text("Pending changes, shown on the diagram").clicked() {
                     self.open_proposal_review(None);
                 }
-                if mode(ui, "Source".into(), self.source_open).on_hover_text("Attach Java source and implement approved decisions").clicked() && self.leave_proposal_review() {
-                    self.source_open = true;
-                    self.history_open = false;
-                    self.shown_decision = None;
-                    self.review_active = false;
-                    self.refresh_proposal_canvas();
+                let project_label = match snap.project.as_ref().and_then(|p| p.report.as_ref()) {
+                    Some(r) => {
+                        let n = r.count(SyncStatus::Conflict) + r.count(SyncStatus::DesignAhead) + r.count(SyncStatus::CodeAhead) + r.count(SyncStatus::Unreconciled);
+                        if n > 0 { format!("Project ({n})") } else { "Project ✓".to_string() }
+                    }
+                    None => "Project".to_string(),
+                };
+                if mode(ui, project_label, self.project_open).on_hover_text("Spide Project: the design with its code — sync, readjust, implement").clicked() {
+                    self.open_project_rail();
                 }
-                if mode(ui, format!("History ({resolved})"), history_mode && !self.source_open).on_hover_text("Resolved decisions (read-only)").clicked() && self.leave_proposal_review() {
-                    self.source_open = false;
+                if mode(ui, format!("History ({resolved})"), history_mode && !self.project_open).on_hover_text("Resolved decisions (read-only)").clicked() && self.leave_proposal_review() {
+                    self.project_open = false;
                     self.history_open = true;
                     self.shown_decision = None;
                     self.review_active = false;
@@ -1855,8 +1909,10 @@ impl SpideApp {
         let body = Rect::from_min_max(Pos2::new(r.left(), nav.bottom()), r.max);
         ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
             ui.set_clip_rect(body);
-            if self.source_open {
-                super::source::show(ui, &mut self.source_ui, snap, &self.backend);
+            if self.project_open {
+                for o in super::project::show(ui, &mut self.project_ui, snap, &self.backend) {
+                    self.project_out(o);
+                }
             } else if let Some(id) = self.shown_decision.clone() {
                 if decisions::history(ui, &snap.view, &id) {
                     self.shown_decision = None;
@@ -1910,6 +1966,61 @@ impl SpideApp {
         });
     }
 
+    /// Show the Project rail (create/open a project in design-only mode).
+    fn open_project_rail(&mut self) {
+        if !self.leave_proposal_review() {
+            return;
+        }
+        self.project_open = true;
+        self.history_open = false;
+        self.shown_decision = None;
+        self.review_active = false;
+        self.workspace.right_open = true;
+        self.drawer = true;
+        self.refresh_proposal_canvas();
+    }
+
+    fn project_out(&mut self, o: super::project::ProjectOut) {
+        use super::project::ProjectOut;
+        match o {
+            ProjectOut::Focus(c) => {
+                self.tab = Tab::Class;
+                self.later(0.15, move |app| {
+                    if !app.focus_canvas(Some(&c)) {
+                        app.lens = Lens::Sync;
+                        app.class_data = None;
+                        app.later(0.3, move |app| {
+                            app.focus_canvas(Some(&c));
+                        });
+                    }
+                });
+            }
+            ProjectOut::Lens => {
+                self.lens = Lens::Sync;
+                self.tab = Tab::Class;
+                self.class_data = None;
+            }
+            ProjectOut::CreateIn => {
+                let Some(dir) = rfd::FileDialog::new().set_title("Module folder for the Spide Project (where the code lives)").pick_folder() else { return };
+                if spide_core::project::is_project(&dir) {
+                    let d = dir.display().to_string();
+                    return self.run(move |s, pi| crate::commands::open_project(s, pi, d));
+                }
+                let name = self.snap.as_ref().map(|s| s.view.name.clone()).filter(|n| n != "Untitled design").unwrap_or_else(|| dir.file_name().and_then(|n| n.to_str()).unwrap_or("project").to_string());
+                let m = crate::project::suggest_manifest(&dir, &name);
+                self.project_ui.form = Some(super::project::Form::new(dir, &m, false));
+            }
+            ProjectOut::Open => self.open_project_dialog(),
+        }
+    }
+
+    fn open_project_dialog(&mut self) {
+        if let Some(dir) = rfd::FileDialog::new().set_title("Spide Project folder (contains spide/project.json)").pick_folder() {
+            let d = dir.display().to_string();
+            self.run(move |s, pi| crate::commands::open_project(s, pi, d));
+        }
+    }
+
     fn next_step(&mut self, n: proposal::NextStep) {
         use proposal::NextStep;
         match n {
@@ -1919,15 +2030,12 @@ impl SpideApp {
                 self.review_active = false;
                 self.refresh_proposal_canvas();
             }
-            NextStep::Source => {
-                self.source_open = true;
-                self.history_open = false;
-                self.review_active = false;
-                self.refresh_proposal_canvas();
-            }
             NextStep::History => {
                 self.history_open = true;
-                self.source_open = false;
+            }
+            NextStep::Implement => {
+                self.open_project_rail();
+                self.run(|s, pi| crate::commands::implement(s, pi, vec![], false));
             }
             NextStep::FocusPi => {
                 self.workspace.left_open = true;
@@ -1964,12 +2072,12 @@ impl SpideApp {
                     }
                     let review_focus = if self.review_active { super::state::proposal_review::review_footprint(self.proposal_ui.review.as_ref(), self.selected_proposal.as_deref()) } else { None };
                     let stress = self.stress_sets();
-                    let drift = self.drift_sets();
+                    let sync = self.sync_sets();
                     let level = snap.view.settings.detail_for("class");
                     let mut inp = self.canvas_input(&data, snap, Some(&snap.metrics), level, hovered.as_deref());
                     inp.review_focus = review_focus.as_ref();
                     inp.stress = stress.as_ref();
-                    inp.drift = drift.as_ref();
+                    inp.sync = sync.as_ref();
                     inp.spotlight = self.spotlight.as_ref().map(|s| s.as_deref());
                     inp.saved = if self.preview.is_some() { self.preview.as_ref().and_then(|p| p.layout.get("class")) } else { data.saved.as_ref() };
                     // review: elements keep their place across before/after and alternatives
@@ -2016,9 +2124,13 @@ impl SpideApp {
                         self.domain_canvas = Some(ClassCanvas::new(key, "domain"));
                     }
                     let level = snap.view.settings.detail_for("domain");
-                    let inp = self.canvas_input(&data, snap, None, level, hovered.as_deref());
+                    let hov = hovered.as_deref().map(|k| if let Some(n) = k.strip_prefix("concept:") { format!("class:{n}") } else if let Some(n) = k.strip_prefix("concept_link:") { format!("relation:{n}") } else { k.to_string() });
+                    let inp = self.canvas_input(&data, snap, None, level, hov.as_deref());
                     self.domain_canvas.as_mut().unwrap().show(ui, stage, &self.measure, &inp, &mut canvas_out);
                 }
+                self.views.domain_banner(ui, stage, snap, &mut view_out);
+                // the canvas speaks in class terms: translate to the domain model's own targets
+                canvas_out = canvas_out.into_iter().filter_map(domain_canvas_out).collect();
             }
             Tab::Package => self.views.package(ui, stage, snap, &self.measure, &mut view_out),
             Tab::System => self.views.system(ui, stage, snap, &self.measure, &mut view_out),
@@ -2086,6 +2198,10 @@ impl SpideApp {
                     if self.preview.is_some() {
                         let t = if self.preview_source == PreviewSource::History { "Past revision · read-only" } else { "Option preview · read-only" };
                         widgets::pill(ui, t, css::GHOST, Color32::from_rgba_unmultiplied(94, 234, 212, 102), Color32::from_rgba_unmultiplied(94, 234, 212, 18), sans(11.0));
+                    }
+                    if self.lens == Lens::Sync {
+                        widgets::pill(ui, "sync lens", css::GHOST, Color32::from_rgba_unmultiplied(94, 234, 212, 102), Color32::from_rgba_unmultiplied(94, 234, 212, 18), sans(11.0))
+                            .on_hover_text("teal: design ahead · violet: code ahead · red: conflict · amber dashed: unreconciled · faded: only in the code · dots mark members · /lens off");
                     }
                     if self.lens == Lens::Overlap {
                         widgets::pill(ui, "overlap: dashed = duplicated behaviour · ⁂ = scattered concept", css::ACCENT, Color32::from_rgba_unmultiplied(196, 181, 253, 102), Color32::from_rgba_unmultiplied(196, 181, 253, 18), sans(11.0)).on_hover_text("/lens off");
@@ -2210,32 +2326,7 @@ impl SpideApp {
             }
         }
         // side panels
-        if let Some(report) = self.drift.clone() {
-            match timeline::drift_panel(&ctx, r, &report, &self.backend) {
-                Some(DriftOut::Close) => {
-                    self.drift = None;
-                    self.class_data = None;
-                }
-                Some(DriftOut::Reimport) => {
-                    if let Some(dir) = view.settings.code_dir.clone() {
-                        self.backend.run_then(
-                            move |s, pi| {
-                                crate::commands::import_code(s, pi, dir)?;
-                                crate::commands::drift(s)
-                            },
-                            |app, d| {
-                                app.drift = Some(d);
-                                app.class_data = None;
-                            },
-                        );
-                    }
-                }
-                Some(DriftOut::Find(c)) => {
-                    self.focus_canvas(Some(&c));
-                }
-                None => {}
-            }
-        } else if self.brief {
+        if self.brief {
             match brief::panel(&ctx, r, &mut self.brief_ui, view, metrics, self.stress.as_deref(), &self.backend) {
                 Some(BriefOut::Close) => self.brief = false,
                 Some(BriefOut::Stress(s)) => {
@@ -2346,17 +2437,11 @@ impl SpideApp {
                 None => {}
             }
         }
-        // code view
-        if let Some((t, text)) = self.code_view.clone() {
-            if overlays::code_view(&ctx, r, &t, &text) {
-                self.code_view = None;
-            }
-        }
         // hover card
         if self.prune.is_none() {
             if let Some(h) = self.hover.snapshot().cloned() {
                 let design: &Design = if self.review_active { self.proposal_canvas.as_ref().unwrap_or(view) } else { self.preview.as_deref().unwrap_or(view) };
-                let cx = CardCtx { snap, design, metrics, drift: self.drift.as_ref() };
+                let cx = CardCtx { snap, design, metrics };
                 let mut actions = vec![];
                 let shown = hover_card::show(&ctx, &h.key, h.at, h.pinned, stage, &cx, &self.card_selected, &mut actions);
                 if shown.is_none() {
@@ -2366,10 +2451,6 @@ impl SpideApp {
                     match a {
                         CardAction::Close => self.hover.clear(),
                         CardAction::Select(s) => self.card_selected = s,
-                        CardAction::Code { class, method } => {
-                            let title = format!("{class}.{method}");
-                            self.backend.run_then(move |s, _| crate::commands::code_snippet(s, class, Some(method)), move |app, text| app.code_view = Some((title, text)));
-                        }
                     }
                 }
                 if h.pinned && ctx.input(|i| i.key_pressed(Key::Escape)) {
@@ -2415,7 +2496,11 @@ impl SpideApp {
             let views = self.export_views();
             // a running batch writes one file per frame: progress stays visible and Stop works
             if let Some(run) = dlg.run.as_mut().filter(|r| !r.done()) {
-                self.batch_step(run);
+                match run.phase {
+                    BatchPhase::Writing => self.batch_step(run),
+                    BatchPhase::Regenerating { .. } => self.batch_regen_tick(run, &dlg.settings.batch),
+                    BatchPhase::Stuck { .. } => {}
+                }
                 ctx.request_repaint();
             }
             let out = export::dialog(&ctx, &mut dlg, title, &views, &mut |o| self.export_svg(o));
@@ -2433,11 +2518,24 @@ impl SpideApp {
                     if let Some(parent) = rfd::FileDialog::new().set_title("Folder for the exported diagrams").set_directory(&snap.project_dir).pick_folder() {
                         let stamp = chrono_stamp();
                         match export_jobs::output_dir(&parent, &snap.view.name, &stamp) {
-                            Ok(dir) => dlg.run = Some(BatchRun { dir, jobs, profiles, next: 0, results: vec![], cancelled: false, rev: snap.rev }),
+                            Ok(dir) => {
+                                let mut run = BatchRun::new(dir, jobs, profiles, snap.rev);
+                                let stale = export_jobs::stale_views(&views, &dlg.settings.batch.excluded, &snap.derived);
+                                if !stale.is_empty() {
+                                    run.phase = self.regenerate_for_export(stale);
+                                }
+                                dlg.run = Some(run);
+                            }
                             Err(e) => self.toast("error", format!("export folder: {e}")),
                         }
                     }
                     self.export_settings.insert(snap.project_dir.clone(), dlg.settings.clone());
+                }
+                Some(DialogOut::BatchExportAnyway) => {
+                    if let Some(mut run) = dlg.run.take() {
+                        self.batch_start_writing(&mut run, &dlg.settings.batch);
+                        dlg.run = Some(run);
+                    }
                 }
                 Some(DialogOut::Changed) => {
                     self.export_settings.insert(snap.project_dir.clone(), dlg.settings.clone());
@@ -2553,6 +2651,53 @@ mod export_tests {
     }
 
     #[test]
+    fn batch_regenerates_out_of_date_views_or_lets_the_user_decide() {
+        let dir = project("rest-extraction");
+        let mut h = harness(dir.path(), (1440.0, 900.0));
+        steps(&mut h, 30);
+        let snap = h.state().snap.clone().unwrap();
+        let views = h.state().export_views();
+        assert!(views.contains(&ExportView::Domain), "missing domain model is still offered: {views:?}");
+        let stale = export_jobs::stale_views(&views, &[], &snap.derived);
+        assert!(stale.contains(&ExportView::Domain), "{stale:?}");
+        let batch = BatchSettings { levels: vec![1], formats: vec![Format::Svg], ..Default::default() };
+        let profiles = vec![export_jobs::Profile::default()];
+        let out = tempfile::tempdir().unwrap();
+        let mut run = BatchRun::new(out.path().to_path_buf(), export_jobs::jobs(&views, &batch, &profiles), profiles, snap.rev);
+        // pi isn't running in tests: the batch can't regenerate and waits for the user's choice
+        run.phase = h.state_mut().regenerate_for_export(stale);
+        assert!(matches!(run.phase, BatchPhase::Stuck { .. }), "{:?}", run.phase);
+        assert!(!run.done(), "nothing is written before the user decides");
+        // a regenerating batch whose agent went offline gets stuck too
+        run.phase = BatchPhase::Regenerating { pending: vec![ExportView::Domain], since: 0.0, saw_busy: false };
+        h.state().backend.st.lock().pi_status = PiStatus::Offline;
+        h.state().backend.st.emit();
+        steps(&mut h, 2);
+        h.state_mut().batch_regen_tick(&mut run, &batch);
+        assert!(matches!(&run.phase, BatchPhase::Stuck { reason, .. } if reason.contains("pi isn't running")), "{:?}", run.phase);
+        // Export anyway writes what exists; the missing domain model is skipped, not drawn empty
+        h.state_mut().batch_start_writing(&mut run, &batch);
+        while !run.done() {
+            h.state_mut().batch_step(&mut run);
+        }
+        assert!(run.results.iter().any(|(f, r)| f.starts_with("domain") && matches!(r, JobResult::Skipped(_))), "{:?}", run.results);
+        assert!(run.results.iter().any(|(f, r)| f.starts_with("class") && matches!(r, JobResult::Written(_))));
+        // once the agent has delivered and pi is idle, the batch starts writing by itself
+        {
+            let st = h.state().backend.st.clone();
+            st.lock().store.set_domain_model(serde_json::from_value(json!({"concepts": [{"name": "Endpoint"}]})).unwrap()).unwrap();
+            st.lock().pi_status = PiStatus::Idle;
+            st.changed();
+        }
+        steps(&mut h, 2);
+        let mut run = BatchRun::new(out.path().to_path_buf(), vec![], vec![export_jobs::Profile::default()], 0);
+        run.phase = BatchPhase::Regenerating { pending: vec![ExportView::Domain], since: 0.0, saw_busy: true };
+        h.state_mut().batch_regen_tick(&mut run, &batch);
+        assert_eq!(run.phase, BatchPhase::Writing);
+        assert!(!run.jobs.is_empty() && run.rev == h.state().snap.as_ref().unwrap().rev);
+    }
+
+    #[test]
     fn batch_exports_every_diagram_level_and_format_without_touching_the_canvas() {
         let dir = project("library");
         let mut h = harness(dir.path(), (1440.0, 900.0));
@@ -2567,7 +2712,7 @@ mod export_tests {
         let jobs = export_jobs::jobs(&views, &batch, &profiles);
         let out = tempfile::tempdir().unwrap();
         let rev = h.state().snap.as_ref().unwrap().rev;
-        let mut run = BatchRun { dir: out.path().to_path_buf(), jobs: jobs.clone(), profiles, next: 0, results: vec![], cancelled: false, rev };
+        let mut run = BatchRun::new(out.path().to_path_buf(), jobs.clone(), profiles, rev);
         while !run.done() {
             h.state_mut().batch_step(&mut run);
         }
@@ -2597,7 +2742,7 @@ mod export_tests {
         let batch_one = h.state_mut().export_svg_for(&ExportView::Class, Some(detail), &o).unwrap().0;
         assert_eq!(single, batch_one);
         // cancelling stops between jobs and keeps finished files
-        let mut run2 = BatchRun { dir: tempfile::tempdir().unwrap().keep(), jobs, profiles: vec![export_jobs::Profile::default()], next: 0, results: vec![], cancelled: false, rev };
+        let mut run2 = BatchRun::new(tempfile::tempdir().unwrap().keep(), jobs, vec![export_jobs::Profile::default()], rev);
         h.state_mut().batch_step(&mut run2);
         run2.cancelled = true;
         assert!(run2.done());

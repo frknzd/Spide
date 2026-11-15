@@ -1,4 +1,4 @@
-//! macOS menu bar: app menu, File › Export… / Export Again, Window. Other platforms rely on the
+//! macOS menu bar: app menu, File › Open Spide Project… / Export… / Export Again, Window. Other platforms rely on the
 //! same keyboard shortcuts handled in the UI.
 
 use crate::events::Events;
@@ -29,7 +29,8 @@ pub fn install(events: &Events) {
         )?;
         let export = MenuItem::with_id("export", "Export…", true, Accelerator::from_str("CmdOrCtrl+E").ok());
         let again = MenuItem::with_id("export-again", "Export Again", true, Accelerator::from_str("CmdOrCtrl+Shift+E").ok());
-        let file = Submenu::with_items("File", true, &[&export, &again, &PredefinedMenuItem::separator(), &PredefinedMenuItem::close_window(None)])?;
+        let open_project = MenuItem::with_id("open-project", "Open Spide Project…", true, None);
+        let file = Submenu::with_items("File", true, &[&open_project, &PredefinedMenuItem::separator(), &export, &again, &PredefinedMenuItem::separator(), &PredefinedMenuItem::close_window(None)])?;
         let window = Submenu::with_items(
             "Window",
             true,
@@ -51,6 +52,7 @@ pub fn install(events: &Events) {
         let action = match e.id().0.as_str() {
             "export" => MenuAction::Export,
             "export-again" => MenuAction::ExportAgain,
+            "open-project" => MenuAction::OpenProject,
             _ => return,
         };
         events.send(UiEvent::Menu(action));
