@@ -1,4 +1,5 @@
 //! Diagram scene model, layout, physics, routing and SVG export (GUI-independent).
+pub mod canvas;
 pub mod class_view;
 pub mod focus;
 pub mod insights;

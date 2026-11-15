@@ -1,4 +1,4 @@
-//! File › Export…: PNG, SVG, PDF (from the diagram scene), PlantUML, design JSON, ADRs, ArchUnit;
+//! File › Export…: PNG, SVG, PDF and Obsidian Canvas (from the diagram scene), PlantUML, design JSON, ADRs, ArchUnit;
 //! a live preview of exactly what will be written; settings persisted per project.
 
 use super::theme::{bold, css, mono, sans};
@@ -15,6 +15,8 @@ pub enum Format {
     Png,
     Svg,
     Pdf,
+    /// Obsidian Canvas (JSON Canvas 1.0): editable cards and labelled arrows in the export layout
+    Canvas,
     Puml,
     Json,
     Adr,
@@ -29,10 +31,11 @@ pub struct FormatInfo {
     pub image: bool,
 }
 
-pub const FORMATS: [FormatInfo; 7] = [
+pub const FORMATS: [FormatInfo; 8] = [
     FormatInfo { id: Format::Png, label: "PNG", help: "Pixel image, sharp at any scale you choose", ext: "png", image: true },
     FormatInfo { id: Format::Svg, label: "SVG", help: "Vector image for the web and design tools", ext: "svg", image: true },
     FormatInfo { id: Format::Pdf, label: "PDF", help: "Vector document with selectable text, for print and reports", ext: "pdf", image: true },
+    FormatInfo { id: Format::Canvas, label: "Canvas", help: "Obsidian Canvas: editable cards and arrows in the same layout, UML notation spelled out in the arrow labels", ext: "canvas", image: false },
     FormatInfo { id: Format::Puml, label: "PlantUML", help: "Text diagram of this view (PlantUML lays it out itself)", ext: "puml", image: false },
     FormatInfo { id: Format::Json, label: "Design JSON", help: "The whole design, to open in Spide again", ext: "json", image: false },
     FormatInfo { id: Format::Adr, label: "ADRs", help: "One Markdown decision record per decided decision", ext: "", image: false },
@@ -41,6 +44,11 @@ pub const FORMATS: [FormatInfo; 7] = [
 
 pub fn info(f: Format) -> &'static FormatInfo {
     FORMATS.iter().find(|x| x.id == f).unwrap()
+}
+
+/// Formats drawn from the diagram scene (the dialog previews them; batch exports offer them).
+pub fn from_scene(f: Format) -> bool {
+    info(f).image || f == Format::Canvas
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -100,6 +108,11 @@ pub enum DialogOut {
     BatchExportAnyway,
 }
 
+/// What an Obsidian Canvas shows of the export options (the preview draws the same).
+pub fn canvas_preview_options(o: &ExportOptions) -> ExportOptions {
+    ExportOptions { diagnostics: false, legend: false, health: false, ..o.clone() }
+}
+
 /// The profiles a batch uses: the saved ones, or the current settings.
 pub fn effective_profiles(s: &ExportSettings) -> Vec<Profile> {
     if s.batch.profiles.is_empty() {
@@ -114,9 +127,14 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views
     let mut out = None;
     let now = ctx.input(|i| i.time);
     let f = info(d.settings.format);
+    let scene_based = from_scene(d.settings.format);
     // live preview of exactly what will be written (debounced)
-    if f.image || d.batch_mode {
-        let key = serde_json::to_string(&d.settings.options).unwrap_or_default();
+    if scene_based || d.batch_mode {
+        // the screen's pixel density is part of the key: moving to a Retina display re-renders sharply
+        let ppp = ctx.pixels_per_point();
+        // a canvas has the same layout, but no diagnostics, legend or health score
+        let shown = if d.settings.format == Format::Canvas && !d.batch_mode { canvas_preview_options(&d.settings.options) } else { d.settings.options.clone() };
+        let key = format!("{}@{ppp}", serde_json::to_string(&shown).unwrap_or_default());
         if key != d.preview_key {
             if d.preview_at == 0.0 {
                 d.preview_at = now + 0.12;
@@ -124,9 +142,10 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views
             if now >= d.preview_at {
                 d.preview_key = key;
                 d.preview_at = 0.0;
-                match svg(&d.settings.options) {
+                match svg(&shown) {
                     Some((s, w, h)) => {
-                        let scale = (1100.0 / w.max(h) as f32).min(2.0);
+                        // rasterize in physical pixels (points × pixels_per_point): sharp on Retina
+                        let scale = (1100.0 / w.max(h) as f32).min(2.0) * ppp;
                         match spide_core::png::render_rgba(&s, scale) {
                             Ok((pw, ph, px)) => {
                                 let img = egui::ColorImage::from_rgba_premultiplied([pw as usize, ph as usize], &px);
@@ -209,7 +228,7 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views
                         row += 1;
                     }
                     p.vline(pr.right(), pr.y_range(), Stroke::new(1.0, css::LINE));
-                    if f.image || d.batch_mode {
+                    if scene_based || d.batch_mode {
                         match &d.preview {
                             Some((tex, iw, ih)) => {
                                 let avail = pr.shrink(22.0);
@@ -229,7 +248,7 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views
                     // the size label drawn properly (on top of its plate)
                     if let (true, Some((_, iw, ih))) = (f.image && !d.batch_mode, &d.preview) {
                         let size_text = match d.settings.format {
-                            Format::Png => format!("{} × {} px", (*iw as f32 * d.settings.scale as f32).round(), (*ih as f32 * d.settings.scale as f32).round()),
+                            Format::Png => format!("{} × {} px · {} dpi", (*iw as f32 * d.settings.scale as f32).round(), (*ih as f32 * d.settings.scale as f32).round(), spide_core::png::dpi(d.settings.scale as f32)),
                             Format::Pdf => format!("{} × {} mm page", ((*iw as f32 / 96.0) * 25.4).round(), ((*ih as f32 / 96.0) * 25.4).round()),
                             _ => format!("{iw} × {ih} px canvas"),
                         };
@@ -269,8 +288,9 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views
                                     }
                                 });
                                 widgets::para(ui, f.help, 12.0, css::DIM);
-                                if f.image {
+                                if scene_based {
                                     let o = &mut d.settings.options;
+                                    let canvas = d.settings.format == Format::Canvas;
                                     let mut changed = false;
                                     let row = |ui: &mut egui::Ui, label: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
                                         ui.horizontal(|ui| {
@@ -278,13 +298,15 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views
                                             add(ui);
                                         });
                                     };
-                                    row(ui, "Theme", &mut |ui| {
-                                        if let Some(v) = segmented(ui, &o.theme, &[("light".to_string(), "Light (print)"), ("dark".to_string(), "Dark")]) {
-                                            o.theme = v;
-                                            changed = true;
-                                        }
-                                    });
-                                    if d.settings.format != Format::Pdf {
+                                    if !canvas {
+                                        row(ui, "Theme", &mut |ui| {
+                                            if let Some(v) = segmented(ui, &o.theme, &[("light".to_string(), "Light (print)"), ("dark".to_string(), "Dark")]) {
+                                                o.theme = v;
+                                                changed = true;
+                                            }
+                                        });
+                                    }
+                                    if !canvas && d.settings.format != Format::Pdf {
                                         row(ui, "Background", &mut |ui| {
                                             if let Some(v) = segmented(ui, &o.background, &[("solid".to_string(), "Solid"), ("transparent".to_string(), "Transparent")]) {
                                                 o.background = v;
@@ -304,12 +326,14 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views
                                             out = Some(DialogOut::Changed);
                                         }
                                     }
-                                    row(ui, "Margins", &mut |ui| {
-                                        if let Some(v) = segmented(ui, &o.padding, &[("compact".to_string(), "Compact"), ("comfortable".to_string(), "Comfortable")]) {
-                                            o.padding = v;
-                                            changed = true;
-                                        }
-                                    });
+                                    if !canvas {
+                                        row(ui, "Margins", &mut |ui| {
+                                            if let Some(v) = segmented(ui, &o.padding, &[("compact".to_string(), "Compact"), ("comfortable".to_string(), "Comfortable")]) {
+                                                o.padding = v;
+                                                changed = true;
+                                            }
+                                        });
+                                    }
                                     ui.horizontal_top(|ui| {
                                         ui.add_sized(Vec2::new(92.0, 20.0), egui::Label::new(RichText::new("INCLUDE").font(bold(11.0)).color(css::FAINT)));
                                         egui::Grid::new("includes").num_columns(2).spacing(Vec2::new(12.0, 6.0)).show(ui, |ui| {
@@ -322,7 +346,9 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views
                                                 (&mut o.ghosts, "Ghost proposals", "Proposed but not yet accepted changes"),
                                                 (&mut o.diagnostics, "Diagnostics", "Heat halos, issue chips, member finding markers, cycle glow and rule warnings. Off: clean UML shapes"),
                                             ];
-                                            for (i, (v, label, help)) in items.into_iter().enumerate() {
+                                            // a canvas has no legend or health score and never shows diagnostics
+                                            let items = items.into_iter().filter(|(_, label, _)| !canvas || matches!(*label, "Title" | "Date" | "Package frames" | "Ghost proposals"));
+                                            for (i, (v, label, help)) in items.enumerate() {
                                                 let r = ui.checkbox(v, RichText::new(label).font(sans(12.5)).color(css::TEXT));
                                                 let r = if help.is_empty() { r } else { r.on_hover_text(help) };
                                                 if r.changed() {
@@ -374,7 +400,7 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views
                             } else {
                                 "Export…"
                             };
-                            if primary_enabled(ui, !busy && (!f.image || d.preview.is_some()), label).clicked() {
+                            if primary_enabled(ui, !busy && (!scene_based || d.preview.is_some()), label).clicked() {
                                 out = Some(DialogOut::Export);
                             }
                             if button(ui, if matches!(d.state, ExportState::Done(_)) { "Done" } else { "Cancel" }).clicked() {
@@ -446,9 +472,10 @@ fn batch_panel(ui: &mut egui::Ui, d: &mut ExportDialog, views: &[ExportView]) ->
             label_col(ui, "Formats");
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
-                    for f in [Format::Png, Format::Svg, Format::Pdf] {
+                    for f in [Format::Png, Format::Svg, Format::Pdf, Format::Canvas] {
                         let mut on = b.formats.contains(&f);
-                        if ui.checkbox(&mut on, RichText::new(info(f).label).font(sans(12.5)).color(css::TEXT)).changed() {
+                        let r = ui.checkbox(&mut on, RichText::new(info(f).label).font(sans(12.5)).color(css::TEXT));
+                        if r.on_hover_text(info(f).help).changed() {
                             b.formats.retain(|x| *x != f);
                             if on {
                                 b.formats.push(f);

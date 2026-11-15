@@ -4612,6 +4612,7 @@ name = "spide-core"
 version = "0.1.0"
 dependencies = [
  "petgraph",
+ "png 0.18.1",
  "resvg 0.50.0",
  "serde",
  "serde_json",

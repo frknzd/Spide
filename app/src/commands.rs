@@ -367,7 +367,12 @@ pub fn export_pdf(svg: String, path: String) -> R {
 }
 
 pub fn export_svg(svg: String, path: String) -> R {
-    std::fs::write(path, svg).map_err(|e| e.to_string())
+    export_text(svg, path)
+}
+
+/// A text export (SVG, Obsidian canvas JSON).
+pub fn export_text(text: String, path: String) -> R {
+    std::fs::write(path, text).map_err(|e| e.to_string())
 }
 
 pub fn reveal_path(path: String) -> R {

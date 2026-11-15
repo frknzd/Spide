@@ -156,6 +156,34 @@ fn png_render_works() {
     // 2x scale → 400px wide (IHDR width at bytes 16..20)
     let w = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
     assert_eq!(w, 400);
+    // the resolution is declared: 2× → 144 dpi (5669 px/m), so viewers show it at 1× size, sharp
+    let d = png_decode(&png);
+    let dims = d.info().pixel_dims.expect("pHYs chunk");
+    assert_eq!(dims.unit, ::png::Unit::Meter);
+    assert_eq!((dims.xppu, dims.yppu), (5669, 5669));
+    assert_eq!(png::dpi(2.0), 144.0);
+    let one = png_decode(&png::render(svg, 1.0).unwrap()).info().pixel_dims.unwrap();
+    assert_eq!(one.xppu, 2835);
+}
+
+fn png_decode(bytes: &[u8]) -> ::png::Reader<std::io::Cursor<Vec<u8>>> {
+    ::png::Decoder::new(std::io::Cursor::new(bytes.to_vec())).read_info().unwrap()
+}
+
+#[test]
+fn png_keeps_transparency_and_straight_colours() {
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10" viewBox="0 0 20 10">
+      <rect width="10" height="10" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
+    let mut r = png_decode(&png::render(svg, 1.0).unwrap());
+    let mut buf = vec![0; r.output_buffer_size().unwrap()];
+    let info = r.next_frame(&mut buf).unwrap();
+    assert_eq!(info.color_type, ::png::ColorType::Rgba);
+    let px = |x: usize, y: usize| &buf[(y * 20 + x) * 4..(y * 20 + x) * 4 + 4];
+    // transparent background stays transparent
+    assert_eq!(px(15, 5)[3], 0);
+    // half-transparent red is stored straight (not premultiplied)
+    let p = px(5, 5);
+    assert!(p[0] >= 250 && p[1] == 0 && (120..=135).contains(&p[3]), "{p:?}");
 }
 
 #[test]

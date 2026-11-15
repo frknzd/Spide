@@ -944,6 +944,49 @@ impl SpideApp {
         self.export_svg_for(&v, None, o)
     }
 
+    /// One diagram as an Obsidian canvas (JSON Canvas): the same export scene, never diagnostics.
+    fn export_canvas_for(&mut self, v: &ExportView, level: Option<u8>, o: &ExportOptions) -> Option<String> {
+        use spide_diagram::canvas::{self, CanvasOptions, Source};
+        let snap = self.snap.clone()?;
+        let o = export::canvas_preview_options(o);
+        let level = level.or_else(|| v.has_detail().then(|| snap.view.settings.detail_for(if *v == ExportView::Class { "class" } else { "domain" })));
+        let mut view_title = v.title();
+        if let (true, Some(l)) = (v.has_detail(), level) {
+            view_title = format!("{view_title} · {}", DETAIL_LABELS[l.min(4) as usize]);
+        }
+        let header = (o.title || o.date).then(|| {
+            let mut h = String::new();
+            if o.title {
+                h += &format!("## {}\n", snap.view.name.trim());
+            }
+            let date = super::format_date_today();
+            let sub: Vec<&str> = [Some(view_title.as_str()), o.date.then_some(date.as_str())].into_iter().flatten().collect();
+            h += &sub.join(" · ");
+            h
+        });
+        let scene = self.export_scene(v, level, &o)?;
+        let opts = CanvasOptions { ghosts: o.ghosts, packages: o.packages, header };
+        let actors: Vec<&str> = snap.view.use_cases.actors.iter().map(|a| a.name.as_str()).collect();
+        let is_actor = |n: &str| actors.contains(&n);
+        let data = match v {
+            ExportView::Class => Some(self.class_data()?),
+            ExportView::Domain => Some(self.domain_data()?),
+            _ => None,
+        };
+        let src = match v {
+            ExportView::Class | ExportView::Domain => {
+                let d = data.as_deref()?;
+                Source::Classes { classes: &d.classes, relations: &d.relations, packages: &d.packages, package_deps: &snap.metrics.package_deps, conceptual: *v == ExportView::Domain }
+            }
+            ExportView::Package => Source::Packages { packages: &snap.derived.packages.packages, deps: &snap.metrics.package_deps },
+            ExportView::SystemContext => Source::System { view: &snap.derived.system, level: C4Level::Context },
+            ExportView::SystemContainers => Source::System { view: &snap.derived.system, level: C4Level::Container },
+            ExportView::Usecase => Source::UseCases { design: &snap.view },
+            ExportView::Sequence(name) => Source::Sequence { seq: snap.view.sequences.iter().find(|s| &s.name == name && s.status != Status::Pruned)?, is_actor: &is_actor },
+        };
+        canvas::to_json_canvas(&scene, &self.measure, &src, &opts)
+    }
+
     /// Write the batch's next file (one immutable design revision: a change stops the batch).
     fn batch_step(&mut self, run: &mut BatchRun) {
         let Some(snap) = self.snap.clone() else { return };
@@ -965,6 +1008,17 @@ impl SpideApp {
             return;
         }
         let result = match job.format {
+            Format::Canvas => {
+                let p = &run.profiles[job.profile.min(run.profiles.len() - 1)];
+                let o = p.options.clone();
+                match self.export_canvas_for(&job.view, job.level, &o) {
+                    None => {
+                        run.results.push((job.file.clone(), JobResult::Skipped("nothing to draw".into())));
+                        return;
+                    }
+                    Some(json) => export_jobs::write_atomic(&path, json.as_bytes()),
+                }
+            }
             Format::Puml => spide_core::plantuml::export(job.view.plantuml(), &snap.view, &snap.metrics, &snap.view.layout).and_then(|t| export_jobs::write_atomic(&path, t.as_bytes())),
             f => {
                 let p = &run.profiles[job.profile.min(run.profiles.len() - 1)];
@@ -1063,6 +1117,11 @@ impl SpideApp {
                     Format::Svg => crate::commands::export_svg(svg, target.clone())?,
                     _ => crate::commands::export_pdf(svg, target.clone())?,
                 }
+            }
+            Format::Canvas => {
+                let v = self.current_export_view();
+                let json = self.export_canvas_for(&v, None, &s.options).ok_or("This view has nothing to export yet.")?;
+                crate::commands::export_text(json, target.clone())?;
             }
             Format::Puml => crate::commands::export_plantuml(&st, self.tab.key().into(), target.clone())?,
             Format::Json => crate::commands::save_as(&st, target.clone())?,
@@ -2650,6 +2709,7 @@ mod export_tests {
             (Format::Png, "png", b"\x89PNG".as_slice()),
             (Format::Pdf, "pdf", b"%PDF".as_slice()),
             (Format::Puml, "puml", b"@startuml".as_slice()),
+            (Format::Canvas, "canvas", b"\"nodes\"".as_slice()),
         ] {
             let path = dir.path().join(format!("test.{ext}"));
             let settings = ExportSettings { format, ..Default::default() };
@@ -2658,6 +2718,25 @@ mod export_tests {
             assert!(data.len() > 100);
             assert!(data.windows(magic.len()).any(|w| w == magic), "{ext} signature");
         }
+        // PNGs declare their resolution: 2× is 144 dpi, so viewers show it at 1× size, sharp
+        let png = std::fs::read(dir.path().join("test.png")).unwrap();
+        let at = png.windows(4).position(|w| w == b"pHYs").expect("pHYs chunk") + 4;
+        assert_eq!(&png[at..at + 4], 5669u32.to_be_bytes().as_slice());
+        // the canvas: valid JSON Canvas, one card per class, no diagnostics, edges with UML labels
+        let canvas: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.path().join("test.canvas")).unwrap()).unwrap();
+        let nodes = canvas["nodes"].as_array().unwrap();
+        let classes = h.state().snap.as_ref().unwrap().view.classes.len();
+        assert_eq!(nodes.iter().filter(|n| n["id"].as_str().unwrap().starts_with("class:")).count(), classes);
+        assert!(nodes.iter().any(|n| n["type"] == "group" && n["color"].is_string()));
+        assert!(!canvas.to_string().contains("rule ✗") && !canvas.to_string().contains("\"cycle"));
+        assert!(canvas["edges"].as_array().unwrap().iter().any(|e| e["label"].as_str().is_some_and(|l| l.starts_with("◆ composed of"))));
+        // the dialog previews a canvas (same layout)
+        h.state_mut().open_export();
+        h.state_mut().export.as_mut().unwrap().settings.format = Format::Canvas;
+        steps(&mut h, 20);
+        assert!(h.state().export.as_ref().unwrap().preview.is_some());
+        shot(&mut h, "export-canvas");
+        h.state_mut().export = None;
     }
 
     #[test]
@@ -2717,7 +2796,7 @@ mod export_tests {
         let before = h.state().class_canvas.as_ref().map(|c| c.layout.positions());
         let views = h.state().export_views();
         assert!(views.contains(&ExportView::Class) && views.contains(&ExportView::Domain), "{views:?}");
-        let batch = BatchSettings { levels: vec![0, 1, 2, 3, 4], formats: vec![Format::Svg, Format::Png, Format::Pdf], plantuml: true, ..Default::default() };
+        let batch = BatchSettings { levels: vec![0, 1, 2, 3, 4], formats: vec![Format::Svg, Format::Png, Format::Pdf, Format::Canvas], plantuml: true, ..Default::default() };
         let profiles = vec![export_jobs::Profile::default(), export_jobs::Profile { name: "dark".into(), options: ExportOptions { theme: "dark".into(), diagnostics: true, ..Default::default() }, scale: 1 }];
         let jobs = export_jobs::jobs(&views, &batch, &profiles);
         let out = tempfile::tempdir().unwrap();
@@ -2740,6 +2819,12 @@ mod export_tests {
         let a = std::fs::read_to_string(out.path().join("class-1-names-current.svg")).unwrap();
         let b = std::fs::read_to_string(out.path().join("class-4-full-current.svg")).unwrap();
         assert_ne!(a, b);
+        // canvases too, valid JSON at every level
+        for l in ["0-packages", "1-names", "4-full"] {
+            let t = std::fs::read_to_string(out.path().join(format!("class-{l}-current.canvas"))).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&t).unwrap();
+            assert!(!v["nodes"].as_array().unwrap().is_empty(), "{l}");
+        }
         // nothing on screen changed: tab, saved detail level, canvas layout
         assert_eq!(h.state().tab, tab);
         assert_eq!(h.state().snap.as_ref().unwrap().view.settings.detail_for("class"), detail);

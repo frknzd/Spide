@@ -104,7 +104,7 @@ pub struct BatchSettings {
     pub excluded: Vec<String>,
     /// detail levels for Class and Domain
     pub levels: Vec<u8>,
-    /// image formats (PNG, SVG, PDF)
+    /// scene formats (PNG, SVG, PDF, Obsidian Canvas)
     pub formats: Vec<Format>,
     /// also one PlantUML file per view (its own layout, full model)
     pub plantuml: bool,
@@ -157,7 +157,7 @@ pub fn jobs(views: &[ExportView], b: &BatchSettings, profiles: &[Profile]) -> Ve
     let mut levels: Vec<u8> = b.levels.iter().copied().filter(|l| *l <= 4).collect();
     levels.sort();
     levels.dedup();
-    let formats: Vec<Format> = [Format::Png, Format::Svg, Format::Pdf].into_iter().filter(|f| b.formats.contains(f)).collect();
+    let formats: Vec<Format> = [Format::Png, Format::Svg, Format::Pdf, Format::Canvas].into_iter().filter(|f| b.formats.contains(f)).collect();
     let chosen: Vec<&ExportView> = views.iter().filter(|v| !b.excluded.contains(&v.key())).collect();
     let profile_names: Vec<String> = {
         let mut seen = HashSet::new();
@@ -320,6 +320,20 @@ mod tests {
         // the two scenarios with the same slug don't overwrite each other
         assert!(js.iter().any(|j| j.file == "sequence-borrow-a-book-current.svg"));
         assert!(js.iter().any(|j| j.file == "sequence-borrow-a-book-current-2.svg"));
+    }
+
+    #[test]
+    fn canvas_joins_the_scene_formats() {
+        let b = BatchSettings { levels: vec![1, 4], formats: vec![Format::Canvas, Format::Png], ..Default::default() };
+        let js = jobs(&views(), &b, &[Profile::default()]);
+        // 2 detail views × 2 levels + 6 others, × 2 formats
+        assert_eq!(js.len(), (2 * 2 + 6) * 2);
+        assert!(js.iter().any(|j| j.file == "class-4-full.canvas"));
+        assert!(js.iter().any(|j| j.file == "sequence-borrow-a-book.canvas"));
+        assert!(js.iter().any(|j| j.file == "system-containers.canvas"));
+        // formats come in a fixed order whatever order they were ticked in
+        let first: Vec<Format> = js.iter().take(2).map(|j| j.format).collect();
+        assert_eq!(first, vec![Format::Png, Format::Canvas]);
     }
 
     #[test]
