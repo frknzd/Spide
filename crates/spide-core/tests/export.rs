@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn fixture() -> Design {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/library.json");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/library.json");
     let mut d = Design::from_json(&std::fs::read_to_string(root).unwrap()).unwrap();
     d.use_cases = serde_json::from_str(
         r#"{"system":"Library","actors":[{"name":"Member"},{"name":"Librarian"}],

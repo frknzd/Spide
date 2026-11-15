@@ -3,7 +3,7 @@ use spide_core::*;
 
 #[test]
 fn snapshot_metrics_timing() {
-    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/rest-extraction.json");
+    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/rest-extraction.json");
     let d = Design::from_json(&std::fs::read_to_string(p).unwrap()).unwrap();
     let t = std::time::Instant::now();
     let _ = metrics::compute(&d, false);
@@ -31,7 +31,7 @@ fn snapshot_metrics_timing() {
 
 #[test]
 fn snapshot_like_work_timing() {
-    let p = std::env::var("SPIDE_TIMING_DESIGN").unwrap_or_else(|_| format!("{}/../../examples/rest-extraction.json", env!("CARGO_MANIFEST_DIR")));
+    let p = std::env::var("SPIDE_TIMING_DESIGN").unwrap_or_else(|_| format!("{}/../../tests/fixtures/rest-extraction.json", env!("CARGO_MANIFEST_DIR")));
     let d = Design::from_json(&std::fs::read_to_string(p).unwrap()).unwrap();
     let store = Store::new(d);
     let t = std::time::Instant::now();

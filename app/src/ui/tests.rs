@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 pub fn project(example: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    let src = format!("{}/../examples/{example}.json", env!("CARGO_MANIFEST_DIR"));
+    let src = format!("{}/../tests/fixtures/{example}.json", env!("CARGO_MANIFEST_DIR"));
     std::fs::copy(src, dir.path().join("design.json")).unwrap();
     dir
 }
@@ -482,7 +482,7 @@ fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
 fn library_project() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     copy_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/spide-import/tests/fixtures/library/src"), &dir.path().join("src"));
-    let design: spide_core::Design = serde_json::from_str(&std::fs::read_to_string(format!("{}/../examples/library.json", env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
+    let design: spide_core::Design = serde_json::from_str(&std::fs::read_to_string(format!("{}/../tests/fixtures/library.json", env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
     let m = spide_core::project::Manifest { name: "Library".into(), code_root: Some("org.acme.library".into()), ..Default::default() };
     crate::project::create(dir.path(), &m, &design, None, false).unwrap();
     dir

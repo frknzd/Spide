@@ -9,7 +9,7 @@ use spide_diagram::visuals::{ApproxMeasure, ClassBox};
 use std::collections::{HashMap, HashSet};
 
 fn example(name: &str) -> Design {
-    let text = std::fs::read_to_string(format!("{}/../../examples/{name}.json", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let text = std::fs::read_to_string(format!("{}/../../tests/fixtures/{name}.json", env!("CARGO_MANIFEST_DIR"))).unwrap();
     let mut s = Store::default();
     s.load(Design::from_json(&text).unwrap());
     s.view()

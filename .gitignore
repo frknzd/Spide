@@ -10,3 +10,6 @@ target/
 app/tests/snapshots/**/*.diff.png
 app/tests/snapshots/**/*.new.png
 app/tests/snapshots/**/*.old.png
+/PLAN.md
+/plans/
+/examples/

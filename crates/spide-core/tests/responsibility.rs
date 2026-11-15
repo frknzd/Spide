@@ -23,7 +23,7 @@ fn role_and_concern_are_validated_and_stored() {
 }
 
 pub fn rest_extraction() -> Design {
-    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/rest-extraction.json");
+    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/rest-extraction.json");
     let mut d = Design::from_json(&std::fs::read_to_string(p).unwrap()).unwrap();
     for p in d.packages.iter_mut().filter(|p| p.name == "zap" || p.name == "swing") {
         p.external = true;

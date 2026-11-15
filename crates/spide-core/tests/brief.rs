@@ -8,7 +8,7 @@ fn ops(json: &str) -> Vec<Op> {
 
 #[test]
 fn v1_design_loads_with_defaults() {
-    let text = include_str!("../../../examples/library.json");
+    let text = include_str!("../../../tests/fixtures/library.json");
     let d = Design::from_json(text).expect("v1 parses");
     assert!(d.forces.is_empty());
     assert_eq!(d.settings.partner, PartnerMode::Examiner);
