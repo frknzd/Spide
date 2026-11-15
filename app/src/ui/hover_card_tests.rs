@@ -18,9 +18,11 @@ fn hover_cards_reserve_height_even_for_short_content_and_fit_small_canvases() {
             let mut card = None;
             for _ in 0..4 {
                 let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 1000.0))), ..Default::default() };
-                let _ = ctx.run_pass(input, |ctx| {
+                let mut output = ctx.run_pass(input, |ctx| {
                     card = show(ctx, key, Point { x: bounds.right() - 10.0, y: bounds.bottom() - 10.0 }, false, bounds, &cx, &None, &mut vec![]);
                 });
+                // This geometry-only test has no renderer to consume texture updates.
+                output.textures_delta.clear();
             }
             let rect = card.unwrap();
             let expected = 250.0f32.min(height - 16.0);
