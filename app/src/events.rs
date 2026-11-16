@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub type UiTask = Box<dyn FnOnce(&mut crate::ui::app::SpideApp) + Send>;
 
 pub enum UiEvent {
+    OpenPaths(Vec<std::path::PathBuf>),
+    RaiseWindow,
     Snapshot(Arc<Snapshot>),
     Toast { kind: String, text: String },
     /// `/spide <command>` typed in pi (routed through the extension's control socket).
@@ -28,11 +30,14 @@ pub enum UiEvent {
     AssessmentRequested { dimensions: Vec<String>, reason: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuAction {
-    Export,
-    ExportAgain,
-    OpenProject,
+    /// an item of the action registry (`ui::actions`)
+    Run(crate::ui::actions::ActionId),
+    OpenRecent(String),
+    ClearRecent,
+    /// ⌘Q: guarded like closing the window
+    Quit,
 }
 
 #[derive(Clone)]

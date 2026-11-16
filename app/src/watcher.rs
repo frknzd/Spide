@@ -11,6 +11,11 @@ use std::time::Duration;
 
 static WATCHER: Mutex<Option<RecommendedWatcher>> = Mutex::new(None);
 
+/// Stop watching (project closed).
+pub fn stop() {
+    *WATCHER.lock().unwrap() = None;
+}
+
 pub fn watch(st: &AppState, target: &Path) {
     let (tx, rx) = channel::<()>();
     let target = target.to_path_buf();
@@ -38,6 +43,7 @@ pub fn watch(st: &AppState, target: &Path) {
     *WATCHER.lock().unwrap() = Some(watcher); // drops the previous watcher → its thread ends
 
     let st = st.clone();
+    let epoch = st.epoch();
     std::thread::spawn(move || loop {
         // wait for an event, then debounce
         if rx.recv().is_err() {
@@ -50,6 +56,9 @@ pub fn watch(st: &AppState, target: &Path) {
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
+        if st.epoch() != epoch {
+            return; // a watcher of a previous workspace
+        }
         on_change(&st, &target);
     });
 }
@@ -58,7 +67,7 @@ fn on_change(st: &AppState, path: &Path) {
     let Ok(text) = std::fs::read_to_string(path) else { return };
     let ops = {
         let mut s = st.lock();
-        if s.design_path() != path || s.last_written.as_deref() == Some(text.as_str()) {
+        if s.require_writable().is_err() || s.design_path() != path || s.last_written.as_deref() == Some(text.as_str()) {
             return;
         }
         let ext = match Design::from_json(&text) {

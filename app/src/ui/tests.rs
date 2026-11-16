@@ -17,7 +17,15 @@ pub fn project(example: &str) -> tempfile::TempDir {
 
 pub fn harness(dir: &std::path::Path, size: (f32, f32)) -> Harness<'static, SpideApp> {
     let (events, rx) = Events::new();
-    let st = AppState::new(events.clone(), dir.to_path_buf());
+    let st = if crate::project::design_path(dir).exists() {
+        AppState::new(events.clone(), dir.to_path_buf())
+    } else {
+        AppState::create(events.clone(), dir.to_path_buf())
+    };
+    harness_with(st, events, rx, size)
+}
+
+pub fn harness_with(st: AppState, events: Events, rx: std::sync::mpsc::Receiver<crate::events::UiEvent>, size: (f32, f32)) -> Harness<'static, SpideApp> {
     let backend = Backend::new(st, Arc::new(PiBridge::new()), None);
     let mut rx = Some(rx);
     Harness::builder()
@@ -91,6 +99,17 @@ fn macos_view_snapshots() {
     }
 }
 
+/// A ⌘-shortcut as the platform delivers it: on macOS the native menu item owns the key (the
+/// raw key event reaches egui only when the item is disabled), elsewhere egui's key handler.
+pub fn shortcut(h: &mut Harness<'static, SpideApp>, m: egui::Modifiers, key: egui::Key) {
+    if cfg!(target_os = "macos") {
+        let id = super::actions::by_shortcut(key, m).expect("registered shortcut");
+        h.state_mut().perform(id);
+    } else {
+        h.key_press_modifiers(m, key);
+    }
+}
+
 #[test]
 fn workspace_shortcuts_and_narrow_drawer() {
     let dir = project("rest-extraction");
@@ -98,15 +117,28 @@ fn workspace_shortcuts_and_narrow_drawer() {
     steps(&mut h, 150);
     let cmd = egui::Modifiers::COMMAND;
     for (key, tab) in [(egui::Key::Num1, Tab::System), (egui::Key::Num2, Tab::Class), (egui::Key::Num3, Tab::Domain), (egui::Key::Num4, Tab::Package), (egui::Key::Num5, Tab::Usecase), (egui::Key::Num6, Tab::Sequence)] {
-        h.key_press_modifiers(cmd, key);
+        shortcut(&mut h, cmd, key);
         steps(&mut h, 5);
         assert_eq!(h.state().tab, tab);
     }
-    h.key_press_modifiers(cmd, egui::Key::B);
+    if cfg!(target_os = "macos") {
+        // exactly once: the raw key alone (menu already handled it) does nothing here
+        h.key_press_modifiers(cmd, egui::Key::Num1);
+        steps(&mut h, 5);
+        assert_eq!(h.state().tab, Tab::Sequence);
+    }
+    // a view switch is navigation: Back returns
+    shortcut(&mut h, cmd, egui::Key::OpenBracket);
+    steps(&mut h, 5);
+    assert_eq!(h.state().tab, Tab::Usecase);
+    shortcut(&mut h, cmd, egui::Key::CloseBracket);
+    steps(&mut h, 5);
+    assert_eq!(h.state().tab, Tab::Sequence);
+    shortcut(&mut h, cmd, egui::Key::B);
     steps(&mut h, 5);
     assert!(h.state().brief);
     shot(&mut h, "workspace-brief");
-    h.key_press_modifiers(cmd, egui::Key::B);
+    shortcut(&mut h, cmd, egui::Key::B);
     steps(&mut h, 5);
     assert!(!h.state().brief);
     h.state_mut().open_proposal_review(None);
@@ -199,17 +231,44 @@ fn canvas_hover_prune_and_rename() {
     steps(&mut h, 10);
     assert_eq!(h.state().hover.snapshot().map(|x| x.key.as_str()), Some("class:LendingService"));
     shot(&mut h, "interaction-hover");
-    // right-click → pruned, feedback popover
+    // right-click → selects and opens the context menu; nothing is removed
+    use egui_kittest::kittest::Queryable;
+    let status = |h: &Harness<'static, SpideApp>, n: &str| h.state().backend.st.lock().store.design.classes.iter().find(|c| c.name == n).map(|c| c.status);
     let p = class_pos(&h, "class:NotificationLog");
     click(&mut h, p, egui::PointerButton::Secondary);
     steps(&mut h, 10);
+    assert!(h.state().context.is_some(), "context menu opens");
+    assert_eq!(h.state().selected_target(), Some(spide_core::Target::Class { name: "NotificationLog".into() }));
+    assert_eq!(status(&h, "NotificationLog"), Some(spide_core::model::Status::Accepted));
+    shot(&mut h, "interaction-context-menu");
+    assert!(h.query_by_label_contains("Remove from Design").is_some());
+    assert!(h.query_by_label_contains("Edit Properties").is_some());
+    h.key_press(egui::Key::Escape);
+    steps(&mut h, 5);
+    assert!(h.state().context.is_none());
+    // Delete prunes the selection (reversible) and asks what you didn't like
+    h.key_press(egui::Key::Delete);
+    steps(&mut h, 10);
+    assert_eq!(status(&h, "NotificationLog"), Some(spide_core::model::Status::Pruned));
     assert!(h.state().prune.is_some(), "feedback popover opens");
-    let pruned = h.state().backend.st.lock().store.design.classes.iter().find(|c| c.name == "NotificationLog").map(|c| c.status);
-    assert_eq!(pruned, Some(spide_core::model::Status::Pruned));
     shot(&mut h, "interaction-prune");
     h.key_press(egui::Key::Escape);
     steps(&mut h, 5);
     assert!(h.state().prune.is_none());
+    // ⌥-right-click: the fast prune gesture
+    steps(&mut h, 30);
+    let p = class_pos(&h, "class:BookCopy");
+    let alt = egui::Modifiers { alt: true, ..Default::default() };
+    h.event(egui::Event::ModifiersChanged(alt));
+    h.event(egui::Event::PointerMoved(p));
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: true, modifiers: alt });
+    h.step();
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: false, modifiers: alt });
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    steps(&mut h, 10);
+    assert_eq!(status(&h, "BookCopy"), Some(spide_core::model::Status::Pruned));
+    h.key_press(egui::Key::Escape);
+    steps(&mut h, 5);
     // Simulate a real double-click, not the harness's default 250 ms frames.
     steps(&mut h, 30);
     let p = class_pos(&h, "class:Catalog");
@@ -599,4 +658,296 @@ fn uml_sequence_with_fragments_creation_destruction_and_refs() {
     let (svg, _, _) = spide_diagram::svg::build_export_svg(&scene, &h.state().measure, &meta, &o).unwrap();
     let png = spide_core::png::render(&svg, 1.5).unwrap();
     std::fs::write(format!("{}/../target/ui-shots/sequence-uml-export.png", env!("CARGO_MANIFEST_DIR")), png).unwrap();
+}
+
+#[test]
+fn failed_save_banner_survives_toast_expiry_and_retry_clears_it() {
+    use egui_kittest::kittest::Queryable;
+    let dir = project("library");
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    steps(&mut h, 2);
+    let st = h.state().backend.st.clone();
+    std::fs::create_dir(dir.path().join("design.json.tmp")).unwrap();
+    assert!(crate::commands::set_name(&st, "Work to keep".into()).is_err());
+    steps(&mut h, 500);
+    assert!(h.state().snap.as_ref().unwrap().save_status.error.is_some());
+    h.get_by_label("Retry save");
+    h.get_by_label("Save Design Copy…");
+    std::fs::remove_dir(dir.path().join("design.json.tmp")).unwrap();
+    h.get_by_label("Retry save").click();
+    steps(&mut h, 2);
+    assert!(h.state().snap.as_ref().unwrap().save_status.error.is_none());
+}
+
+#[test]
+fn leaving_requires_resolving_failed_saves_unsent_text_and_busy_agent() {
+    use super::leave::{LeaveIssue, LeaveReason};
+    let dir = project("library");
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    steps(&mut h, 2);
+    let st = h.state().backend.st.clone();
+    assert!(h.state().leave_issues().is_empty());
+    assert!(h.state_mut().confirm_leave(LeaveReason::CloseProject));
+
+    // failed save: cancel keeps us here; retry after the problem is fixed lets us leave
+    std::fs::create_dir(dir.path().join("design.json.tmp")).unwrap();
+    assert!(crate::commands::set_name(&st, "Keep me".into()).is_err());
+    assert!(matches!(h.state().leave_issues()[0], LeaveIssue::SaveFailed(_)));
+    h.state_mut().leave_answers = Some([None].into());
+    assert!(!h.state_mut().confirm_leave(LeaveReason::Quit));
+    h.state_mut().leave_answers = Some([Some(0)].into());
+    assert!(!h.state_mut().confirm_leave(LeaveReason::Quit), "retry still fails");
+    // save a copy instead: allowed to leave, the copy holds the unsaved work
+    let copy = dir.path().join("copy.json");
+    h.state_mut().leave_copy_path = Some(copy.display().to_string());
+    h.state_mut().leave_answers = Some([Some(1)].into());
+    assert!(h.state_mut().confirm_leave(LeaveReason::Quit));
+    assert!(std::fs::read_to_string(&copy).unwrap().contains("Keep me"));
+    std::fs::remove_dir(dir.path().join("design.json.tmp")).unwrap();
+    h.state_mut().leave_answers = Some([Some(0)].into());
+    assert!(h.state_mut().confirm_leave(LeaveReason::SwitchProject));
+    assert!(h.state().leave_issues().is_empty());
+
+    // unsent rename text is only discarded explicitly
+    h.state_mut().inline = Some(super::overlays::InlineEdit { at: egui::Pos2::ZERO, label: "Rename".into(), original: "Book".into(), value: "Volume".into(), focused: true, kind: super::overlays::InlineKind::RenameClass("Book".into()) });
+    h.state_mut().leave_answers = Some([None].into());
+    assert!(!h.state_mut().confirm_leave(LeaveReason::CloseWindow));
+    assert!(h.state().inline.is_some());
+    h.state_mut().leave_answers = Some([Some(1)].into()); // explicitly discard rather than keep locally
+    assert!(h.state_mut().confirm_leave(LeaveReason::CloseWindow));
+    assert!(h.state().inline.is_none());
+
+    // a busy agent needs an explicit stop
+    st.lock().pi_status = crate::state::PiStatus::Busy;
+    assert_eq!(h.state().leave_issues(), vec![LeaveIssue::AgentBusy]);
+    h.state_mut().leave_answers = Some([None].into());
+    assert!(!h.state_mut().confirm_leave(LeaveReason::SwitchProject));
+    h.state_mut().leave_answers = Some([Some(0)].into());
+    assert!(h.state_mut().confirm_leave(LeaveReason::SwitchProject));
+}
+
+#[test]
+fn welcome_new_close_recent_and_reopen_without_terminal_commands() {
+    use egui_kittest::kittest::Queryable;
+    let (events, rx) = Events::new();
+    let st = AppState::closed(events.clone());
+    let mut h = harness_with(st.clone(), events, rx, (1440.0, 900.0));
+    steps(&mut h, 3);
+    // nothing open: the welcome screen, no lock, no service
+    h.get_by_label("New Project…");
+    h.get_by_label("Recent Projects");
+    assert!(crate::service::get(&st).is_none());
+    shot(&mut h, "welcome-empty");
+
+    // New Project → a blank design workspace in a new folder
+    let root = tempfile::tempdir().unwrap();
+    let mut f = super::welcome::NewProject::new();
+    f.name = "Shop".into();
+    f.location = root.path().display().to_string();
+    f.validate().unwrap();
+    h.state_mut().create_new_project(f.clone());
+    steps(&mut h, 3);
+    let target = root.path().join("Shop").canonicalize().unwrap();
+    assert_eq!(st.lock().workspace_status, crate::state::WorkspaceStatus::Ready);
+    assert_eq!(st.lock().project_dir, target);
+    assert_eq!(st.lock().store.design.name, "Shop");
+    crate::commands::apply_user_ops(&st, serde_json::from_str(r#"[{"op":"add_class","name":"Order"}]"#).unwrap()).unwrap();
+    // the folder is now occupied: New refuses it rather than opening/overwriting
+    assert!(f.validate().is_err());
+
+    // Close Project → welcome; the lock is released; the project is in Recent Projects
+    h.state_mut().close_project();
+    steps(&mut h, 3);
+    assert_eq!(st.lock().workspace_status, crate::state::WorkspaceStatus::Closed);
+    h.get_by_label("New Project…");
+    assert!(crate::state::acquire_lock(&target).is_some(), "writer lock released on close");
+    let recent = h.state().prefs.recent.clone();
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0].path, target.display().to_string());
+    assert_eq!(h.state().prefs.last_project, None, "a manual close is honoured at startup");
+    h.get_by_label("Shop");
+    h.state_mut().new_project_dialog();
+    steps(&mut h, 3);
+    shot(&mut h, "welcome-recent-new-dialog");
+    h.state_mut().new_project = None;
+
+    // reopen it from Recent Projects: the edit is there
+    h.state_mut().open_recent(recent[0].path.clone());
+    steps(&mut h, 3);
+    assert_eq!(st.lock().project_dir, target);
+    assert!(st.lock().store.design.classes.iter().any(|c| c.name == "Order"));
+
+    // a failed open from the welcome screen keeps the welcome screen and says why
+    h.state_mut().close_project();
+    steps(&mut h, 2);
+    let broken = tempfile::tempdir().unwrap();
+    std::fs::write(broken.path().join("design.json"), "nope").unwrap();
+    let d = broken.path().display().to_string();
+    h.state_mut().backend.transition(move |s, pi| crate::commands::open_folder(s, pi, d), |app, r| if let Err(e) = r { app.open_error = Some(e) });
+    steps(&mut h, 3);
+    assert_eq!(st.lock().workspace_status, crate::state::WorkspaceStatus::Closed);
+    assert!(h.state().open_error.is_some());
+    assert_eq!(std::fs::read_to_string(broken.path().join("design.json")).unwrap(), "nope");
+}
+
+#[test]
+fn edit_actions_follow_focus_and_unavailable_actions_explain_why() {
+    use super::actions::{ActionId, EditFocus};
+    let dir = project("library");
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    steps(&mut h, 60);
+    let st = h.state().backend.st.clone();
+    assert_eq!(h.state().action_state(ActionId::Undo).reason, Some("Nothing to undo"));
+    let has = |st: &AppState| st.lock().store.design.classes.iter().any(|c| c.name == "Undoable");
+    crate::commands::apply_user_ops(&st, serde_json::from_str(r#"[{"op":"add_class","name":"Undoable"}]"#).unwrap()).unwrap();
+    steps(&mut h, 3);
+    assert!(h.state().action_state(ActionId::Undo).enabled);
+
+    // a text field has focus: Undo belongs to it, the design is untouched
+    h.state_mut().palette = Some(super::overlays::Palette::new("abc"));
+    steps(&mut h, 3);
+    assert_eq!(h.state().edit_focus(), EditFocus::Text);
+    h.state_mut().perform(ActionId::Undo);
+    steps(&mut h, 3);
+    assert!(has(&st));
+
+    // the canvas has focus: Undo is design undo
+    h.state_mut().palette = None;
+    steps(&mut h, 3);
+    assert_eq!(h.state().edit_focus(), EditFocus::Design);
+    h.state_mut().perform(ActionId::Undo);
+    steps(&mut h, 3);
+    assert!(!has(&st));
+
+    // Find in Design jumps to a member on the class diagram and Back returns
+    h.state_mut().go_to_tab(Tab::Package);
+    let item = super::search::index(&st.lock().store.design).into_iter().find(|i| i.kind == "Members").unwrap();
+    h.state_mut().go_to_item(&item);
+    steps(&mut h, 30);
+    assert_eq!(h.state().tab, Tab::Class);
+    assert_eq!(h.state().selected_target(), Some(item.target.clone()));
+    h.state_mut().perform(ActionId::Back);
+    steps(&mut h, 5);
+    assert_eq!(h.state().tab, Tab::Package);
+
+    // nothing open: project actions say why
+    h.state_mut().close_project();
+    steps(&mut h, 3);
+    assert_eq!(h.state().action_state(ActionId::Save).reason, Some("No project is open"));
+    assert!(h.state().action_state(ActionId::NewProject).enabled);
+    assert_eq!(h.state().action_state(ActionId::View(Tab::Class)).checked, Some(false));
+}
+
+#[test]
+fn find_in_design_lists_grouped_results_and_goes_to_them_on_any_view() {
+    use egui_kittest::kittest::Queryable;
+    let dir = project("library");
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    steps(&mut h, 60);
+    h.state_mut().perform(super::actions::ActionId::Find);
+    steps(&mut h, 3);
+    h.state_mut().find.as_mut().unwrap().query = "loan".into();
+    steps(&mut h, 3);
+    h.get_by_label("Classes");
+    shot(&mut h, "find-in-design");
+    // no results
+    h.state_mut().find.as_mut().unwrap().query = "zzzzqqq".into();
+    steps(&mut h, 3);
+    h.get_by_label("No matches. Try including pruned or proposed elements.");
+    // Escape closes the topmost overlay only
+    h.state_mut().brief = true;
+    h.key_press(egui::Key::Escape);
+    steps(&mut h, 3);
+    assert!(h.state().find.is_none());
+    assert!(h.state().brief, "Escape closed Find, not the brief behind it");
+    // a package on the package diagram
+    let st = h.state().backend.st.clone();
+    let pkg = super::search::index(&st.lock().store.design).into_iter().find(|i| i.kind == "Packages").unwrap();
+    h.state_mut().go_to_item(&pkg);
+    steps(&mut h, 40);
+    assert_eq!(h.state().tab, Tab::Package);
+    // Go to Element: the outline lists everything before typing
+    h.state_mut().perform(super::actions::ActionId::Outline);
+    steps(&mut h, 3);
+    assert!(h.state().find.as_ref().unwrap().outline);
+    shot(&mut h, "go-to-element");
+}
+
+#[test]
+fn branch_chooser_creates_switches_and_guards_unsaved_plan_drafts() {
+    use egui_kittest::kittest::Queryable;
+    let dir = project("library");
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    steps(&mut h, 30);
+    let st = h.state().backend.st.clone();
+    h.state_mut().perform(super::actions::ActionId::Branches);
+    steps(&mut h, 5);
+    h.get_by_label("Create from current");
+    shot(&mut h, "branches");
+    // create "experiment" through the chooser's own path (it switches to the new branch)
+    crate::commands::branch_create(&st, "experiment".into()).unwrap();
+    assert_eq!(st.lock().branch, "experiment");
+    // a busy agent: switching back asks first; cancelling keeps the branch
+    st.lock().pi_status = crate::state::PiStatus::Busy;
+    h.state_mut().leave_answers = Some([None].into());
+    h.state_mut().command("/switch main");
+    steps(&mut h, 5);
+    assert_eq!(st.lock().branch, "experiment");
+    st.lock().pi_status = crate::state::PiStatus::Idle;
+    h.state_mut().leave_answers = None;
+    h.state_mut().command("/switch main");
+    steps(&mut h, 5);
+    assert_eq!(st.lock().branch, "main");
+}
+
+#[test]
+fn copy_paste_duplicate_and_properties_without_an_agent() {
+    use super::actions::ActionId;
+    let dir = project("library");
+    let mut h = harness(dir.path(), (1440.0, 900.0));
+    steps(&mut h, 60);
+    let st = h.state().backend.st.clone();
+    let has = |n: &str| st.lock().store.design.classes.iter().any(|c| c.name == n && c.status == spide_core::model::Status::Accepted);
+    // New Class… through the form: one change, undoable
+    h.state_mut().perform(ActionId::NewClass);
+    steps(&mut h, 3);
+    {
+        let ed = h.state_mut().class_editor.as_mut().unwrap();
+        ed.name = "Invoice".into();
+        ed.attributes.push(super::properties::AttrRow { name: "total".into(), ty: "Money".into(), ..Default::default() });
+    }
+    let ops = h.state().class_editor.as_ref().unwrap().ops().unwrap();
+    crate::commands::apply_user_ops(&st, ops).unwrap();
+    h.state_mut().class_editor = None;
+    steps(&mut h, 3);
+    assert!(has("Invoice"));
+    // Duplicate (⌘D) keeps the clipboard alone; Copy + Paste pastes again with a fresh name
+    h.state_mut().selection = vec![spide_core::Target::Class { name: "Invoice".into() }];
+    h.state_mut().perform(ActionId::Duplicate);
+    steps(&mut h, 3);
+    assert!(has("InvoiceCopy"));
+    assert!(h.state().app_clipboard.is_none());
+    h.state_mut().selection = vec![spide_core::Target::Class { name: "Invoice".into() }];
+    h.state_mut().perform(ActionId::Copy);
+    h.state_mut().perform(ActionId::Paste);
+    steps(&mut h, 3);
+    assert!(has("InvoiceCopy2"));
+    // Edit Properties… of the selected class
+    h.state_mut().selection = vec![spide_core::Target::Class { name: "InvoiceCopy2".into() }];
+    h.state_mut().perform(ActionId::EditProperties);
+    steps(&mut h, 3);
+    assert_eq!(h.state().class_editor.as_ref().unwrap().name, "InvoiceCopy2");
+    shot(&mut h, "class-properties");
+    h.state_mut().class_editor = None;
+    // Cut removes only after the copy, and ⌘Z puts it back
+    h.state_mut().selection = vec![spide_core::Target::Class { name: "InvoiceCopy".into() }];
+    h.state_mut().perform(ActionId::Cut);
+    steps(&mut h, 3);
+    assert!(!has("InvoiceCopy"));
+    h.state_mut().perform(ActionId::Undo);
+    steps(&mut h, 3);
+    assert!(has("InvoiceCopy"));
+    // a package can't be copied: the action says why
+    h.state_mut().selection = vec![spide_core::Target::Package { name: "domain".into() }];
+    assert_eq!(h.state().action_state(ActionId::Copy).reason, Some("Only classes and their members can be copied"));
 }

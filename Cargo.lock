@@ -4594,6 +4594,7 @@ name = "spide"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "arboard",
  "axum",
  "dirs",
  "eframe",
@@ -4604,6 +4605,9 @@ dependencies = [
  "libc",
  "muda",
  "notify",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "portable-pty",
  "rfd",
  "serde",

@@ -59,6 +59,14 @@ fn encode(pixmap: tiny_skia::Pixmap, dpi: f32) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// Straight RGBA pixels for the system clipboard, from the same renderer as export previews.
+pub fn render_clipboard_rgba(svg: &str, scale: f32) -> Result<(u32, u32, Vec<u8>), String> {
+    let (w, h, bytes) = render_rgba(svg, scale)?;
+    let size = tiny_skia::IntSize::from_wh(w, h).ok_or("invalid clipboard image size")?;
+    let pixmap = tiny_skia::Pixmap::from_vec(bytes, size).ok_or("invalid RGBA image")?;
+    Ok((w, h, pixmap.take_demultiplied()))
+}
+
 /// Render an SVG string to premultiplied RGBA pixels (previews in the export dialog).
 pub fn render_rgba(svg: &str, scale: f32) -> Result<(u32, u32, Vec<u8>), String> {
     let opt = usvg::Options { fontdb: fontdb(), ..usvg::Options::default() };

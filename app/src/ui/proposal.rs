@@ -84,6 +84,7 @@ fn enum_values(f: &str) -> Option<&'static [&'static str]> {
     })
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct OpEditor {
     pub index: Option<usize>,
     pub op: Value,
@@ -278,6 +279,8 @@ pub struct ProposalUi {
     pub scroll_to_inspect: bool,
     /// clear the notes of this scope (after a sent request)
     pub clear_notes: Option<String>,
+    /// Unsent notes keyed by project/branch/decision scope (mirrored to local draft recovery).
+    pub notes: std::collections::HashMap<String, String>,
     pub notice: String,
     pub footer_h: f32,
 }
@@ -298,6 +301,13 @@ impl ProposalUi {
     }
     pub fn unsaved(&self) -> bool {
         self.dirty() || self.editing.is_some()
+    }
+    /// Explicit discard: drop the local draft of the open plan and any operation form.
+    pub fn discard_session(&mut self) {
+        if let Some(s) = self.session.take() {
+            self.drafts.store(PlanDraft { plan: s.original.clone(), ..s });
+        }
+        self.editing = None;
     }
     /// A diagram element was clicked during review: inspect it and toggle it as a request target.
     pub fn pick(&mut self, key: &str) {
@@ -708,8 +718,7 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
 
     let mut change: Option<Proposal> = None;
     let mut select: Option<String> = None;
-    let notes_id = egui::Id::new(("decision-notes", &scope));
-    let mut notes: String = ui.ctx().data_mut(|d| d.get_persisted(notes_id)).unwrap_or_default();
+    let mut notes = st.notes.get(&scope).cloned().unwrap_or_default();
     let owner = p.decision.as_ref().and_then(|id| snap.view.decisions.iter().find(|d| &d.id == id));
     let footer_h = st.footer_h.max(150.0);
     egui::ScrollArea::vertical().id_salt(("review-body", &scope)).max_height((ui.available_height() - footer_h).max(60.0)).auto_shrink([false, false]).show(ui, |ui| {
@@ -798,7 +807,7 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
         footer(ui, st, &p, &scope, snap, owner, &ids, &mut notes, dirty, conflict, valid_preview, backend);
     });
     st.footer_h = ui.cursor().top() - top + 4.0;
-    ui.ctx().data_mut(|d| d.insert_persisted(notes_id, notes));
+    if notes.is_empty() { st.notes.remove(&scope); } else { st.notes.insert(scope.clone(), notes); }
     if let Some(next) = change {
         if !st.busy {
             let original = st.session.as_ref().filter(|s| s.scope == scope).map(|s| s.original.clone()).or_else(|| saved.cloned()).unwrap_or(next.clone());

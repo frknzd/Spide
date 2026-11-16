@@ -132,6 +132,23 @@ pub fn open_element(st: &AppState, class: &str, method: Option<&str>) -> Result<
     if let Some(m) = method {
         args["method"] = json!(m);
     }
+    // Reuse the existing session-preference mechanism; no second editor bridge.
+    if st.lock().preferences.embedded_editor {
+        let root = st.lock().project_dir.clone();
+        embedded().start(&root)?;
+        st.events.send(UiEvent::ShowEditor);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(session) = svc.editors.list().into_iter().find(|s| s.kind == "embedded") {
+                svc.editors.prefer(Some(session.id))?;
+                break;
+            }
+            if Instant::now() >= deadline { return Err("Embedded Neovim did not connect. Check its pane or choose external Neovim in Settings.".into()); }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    } else {
+        svc.editors.prefer(None)?; // default: most recently active external session
+    }
     match svc.call_tool("open_source", &args, "user") {
         Ok(t) => Ok(serde_json::from_str(&t).unwrap_or(Value::Null)),
         Err(e) if e.contains("no Neovim attached") => {
@@ -153,8 +170,39 @@ pub fn open_element(st: &AppState, class: &str, method: Option<&str>) -> Result<
 
 /// Dirty buffers in the embedded Neovim (empty when it isn't running).
 pub fn embedded_dirty(st: &AppState) -> Vec<String> {
-    let Some(svc) = crate::service::get(st) else { return vec![] };
-    svc.editors.list().into_iter().filter(|s| s.kind == "embedded").flat_map(|s| svc.editors.dirty(&s.id).unwrap_or_default()).collect()
+    match embedded_status(st) {
+        EditorStatus::Dirty(d) => d,
+        _ => vec![],
+    }
+}
+
+/// Whether the embedded Neovim may be torn down. A running editor whose buffer
+/// state cannot be queried is `Unknown`, which callers must treat as unsafe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditorStatus {
+    NotRunning,
+    Clean,
+    Dirty(Vec<String>),
+    Unknown(String),
+}
+
+pub fn embedded_status(st: &AppState) -> EditorStatus {
+    if !embedded().running() {
+        return EditorStatus::NotRunning;
+    }
+    let Some(svc) = crate::service::get(st) else { return EditorStatus::Unknown("the editor service is unavailable".into()) };
+    let sessions: Vec<_> = svc.editors.list().into_iter().filter(|s| s.kind == "embedded").collect();
+    if sessions.is_empty() {
+        return EditorStatus::Unknown("Neovim has not connected to Spide".into());
+    }
+    let mut dirty = vec![];
+    for s in sessions {
+        match svc.editors.dirty(&s.id) {
+            Ok(d) => dirty.extend(d),
+            Err(e) => return EditorStatus::Unknown(e),
+        }
+    }
+    if dirty.is_empty() { EditorStatus::Clean } else { EditorStatus::Dirty(dirty) }
 }
 
 #[cfg(test)]

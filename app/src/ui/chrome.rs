@@ -461,7 +461,7 @@ pub fn zoom_group(ui: &mut Ui) -> Option<Zoom> {
             let b = |ui: &mut Ui, t: &str, tip: &str| {
                 ui.add(egui::Button::new(RichText::new(t).font(sans(12.0)).color(css::TEXT)).frame(false).min_size(Vec2::new(30.0, 30.0))).on_hover_text(tip)
             };
-            if b(ui, "−", "Zoom out").clicked() {
+            if b(ui, "−", "Zoom out (⌘−)").clicked() {
                 out = Some(Zoom::Out);
             }
             let sep = |ui: &mut Ui| {
@@ -469,11 +469,11 @@ pub fn zoom_group(ui: &mut Ui) -> Option<Zoom> {
                 ui.painter().vline(r.center().x, r.y_range(), Stroke::new(1.0, css::LINE));
             };
             sep(ui);
-            if b(ui, " Fit ", "Fit diagram · double-click canvas").clicked() {
+            if b(ui, " Fit ", "Zoom to fit (⌘9) · double-click canvas").clicked() {
                 out = Some(Zoom::Fit);
             }
             sep(ui);
-            if b(ui, "+", "Zoom in").clicked() {
+            if b(ui, "+", "Zoom in (⌘=)").clicked() {
                 out = Some(Zoom::In);
             }
         });
@@ -612,7 +612,7 @@ pub fn welcome(ui: &mut Ui, at: Rect, brief_open: bool) -> Option<WelcomeAction>
                 if brief_open && button(ui, "Skip brief").on_hover_text("Start designing right away (/skip)").clicked() {
                     out = Some(WelcomeAction::Skip);
                 }
-                if button(ui, "Open design…").clicked() {
+                if button(ui, "Open project…").clicked() {
                     out = Some(WelcomeAction::Open);
                 }
                 if button(ui, "Focus pi →").clicked() {

@@ -32,14 +32,42 @@ impl Backend {
     }
 
     /// Run `f` off the UI thread; `then` gets the result on the UI thread.
+    /// Scoped to the current workspace epoch: if the project is switched or closed before `f`
+    /// starts, `f` never runs; if it changes while `f` runs, the result is dropped.
     pub fn call<T: Send + 'static>(
         &self,
         f: impl FnOnce(&AppState, &PiBridge) -> Result<T, String> + Send + 'static,
         then: impl FnOnce(&mut SpideApp, Result<T, String>) + Send + 'static,
     ) {
+        let epoch = self.st.epoch();
         let (st, pi, ev) = (self.st.clone(), self.pi.clone(), self.events.clone());
         self.spawn(move || {
+            if st.epoch() != epoch {
+                return;
+            }
             let r = f(&st, &pi);
+            if st.epoch() != epoch {
+                return;
+            }
+            ev.task(move |app| {
+                if app.backend.st.epoch() == epoch {
+                    then(app, r)
+                }
+            });
+        });
+    }
+
+    /// A workspace transition (open/new/close): it changes the epoch itself, so its result is
+    /// always delivered. It still refuses to start if another transition already happened.
+    pub fn transition<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&AppState, &PiBridge) -> Result<T, String> + Send + 'static,
+        then: impl FnOnce(&mut SpideApp, Result<T, String>) + Send + 'static,
+    ) {
+        let epoch = self.st.epoch();
+        let (st, pi, ev) = (self.st.clone(), self.pi.clone(), self.events.clone());
+        self.spawn(move || {
+            let r = if st.epoch() != epoch { Err("The project changed before this request started; nothing was done.".to_string()) } else { f(&st, &pi) };
             ev.task(move |app| then(app, r));
         });
     }

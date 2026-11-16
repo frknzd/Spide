@@ -4,7 +4,7 @@
 use spide_core::model::{Decision, DecisionState};
 use std::collections::VecDeque;
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct DecisionDraft {
     pub choice: Option<String>,
     pub custom: String,
@@ -13,7 +13,7 @@ pub struct DecisionDraft {
     pub expanded: Vec<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Drafts {
     items: VecDeque<(String, DecisionDraft)>,
 }
@@ -23,6 +23,9 @@ fn key(project: &str, id: &str) -> String {
 }
 
 impl Drafts {
+    pub fn has_input(&self) -> bool {
+        self.items.iter().any(|(_, d)| !d.custom.trim().is_empty() || !d.defense.trim().is_empty())
+    }
     pub fn get(&self, project: &str, d: &Decision) -> DecisionDraft {
         let k = key(project, &d.id);
         if let Some((_, v)) = self.items.iter().find(|(x, _)| *x == k) {

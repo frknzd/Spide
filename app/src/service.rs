@@ -11,24 +11,42 @@ use spide_service::{Extension, Host, Service, StoreHost, ToolResult};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub struct DesktopStore(pub AppState);
+/// The desktop store as seen by one service instance. A service built for an earlier workspace
+/// epoch keeps its handle after a switch: it must never read from or write to the new store.
+pub struct DesktopStore(pub AppState, pub u64);
+
+impl DesktopStore {
+    pub fn new(st: &AppState) -> Self {
+        Self(st.clone(), st.epoch())
+    }
+    fn current(&self) -> bool {
+        self.0.epoch() == self.1
+    }
+}
 
 impl StoreHost for DesktopStore {
     fn root(&self) -> PathBuf {
         self.0.lock().project_dir.clone()
     }
     fn with(&self, f: &mut dyn FnMut(&mut Store)) {
-        f(&mut self.0.lock().store)
+        let mut s = self.0.lock();
+        if s.epoch == self.1 && s.require_writable().is_ok() {
+            f(&mut s.store);
+        } else {
+            // Read tools may normalize data internally; never let that modify a
+            // failed or read-only workspace, even through a retained service handle.
+            f(&mut s.store.clone());
+        }
     }
     fn commit(&self) -> Result<(), String> {
-        if self.0.lock().lock.is_none() {
-            return Err("another Spide process owns this workspace; attach to it instead".into());
+        if !self.current() {
+            return Err("The project changed; this request was cancelled.".into());
         }
-        self.0.changed();
-        Ok(())
+        self.0.persist_and_emit()
     }
     fn writer(&self) -> bool {
-        self.0.lock().lock.is_some()
+        let s = self.0.lock();
+        s.epoch == self.1 && s.require_writable().is_ok()
     }
     fn on_branch(&self, name: &str) {
         self.0.lock().branch = name.to_string();
@@ -47,10 +65,13 @@ impl StoreHost for DesktopStore {
 }
 
 /// Domain events → desktop (notices become toasts; reveal/open are handled by the editor bridge).
-pub struct DesktopSink(pub AppState);
+pub struct DesktopSink(pub AppState, pub u64);
 
 impl EventSink for DesktopSink {
     fn emit(&self, e: DomainEvent) {
+        if self.0.epoch() != self.1 {
+            return; // an event from a previous workspace's service
+        }
         match e {
             DomainEvent::Notice { kind, text } => self.0.toast(&kind, text),
             DomainEvent::Reveal { symbol, origin } => crate::editor::on_reveal(&self.0, &symbol, &origin),
@@ -63,7 +84,7 @@ impl EventSink for DesktopSink {
 }
 
 /// Spide Project tools (code index, sync) that only the desktop computes today.
-pub struct ProjectTools(pub AppState);
+pub struct ProjectTools(pub AppState, pub u64);
 
 impl Extension for ProjectTools {
     fn tools(&self) -> Vec<Value> {
@@ -76,6 +97,9 @@ impl Extension for ProjectTools {
 
     fn call(&self, _svc: &Service, name: &str, args: &Value) -> Option<Result<ToolResult, String>> {
         let st = &self.0;
+        if st.epoch() != self.1 {
+            return Some(Err("The project changed; this request was cancelled.".into()));
+        }
         Some(match name {
             "get_metrics" => Ok(ToolResult::text(serde_json::to_string(&st.snapshot().metrics).unwrap())),
             "get_project" => {
@@ -100,8 +124,9 @@ impl Extension for ProjectTools {
             "mark_in_sync" => crate::commands::mark_synced(st).map(|n| ToolResult::text(format!("{n} items marked in sync"))),
             "get_code" => crate::project::get_code(&st.lock(), args).map(ToolResult::text),
             "get_design" => {
-                let mut s = st.lock();
-                spide_core::tools::call(&mut s.store, name, args).map(|mut outcome| {
+                let s = st.lock();
+                let mut store = s.store.clone();
+                spide_core::tools::call(&mut store, name, args).map(|mut outcome| {
                     if s.project.is_some() {
                         if let Ok(mut value) = serde_json::from_str::<Value>(&outcome.text) {
                             value["project"] = crate::project::summary(&s);
@@ -118,9 +143,9 @@ impl Extension for ProjectTools {
 
 /// (Re)build the service for the current project (startup and project switches).
 pub fn install(st: &AppState) -> Arc<Service> {
-    let writer = st.lock().lock.is_some();
-    let svc = Arc::new(Service::new(Arc::new(DesktopStore(st.clone())), writer, Host::Desktop, Some(Arc::new(DesktopSink(st.clone())))));
-    svc.add_extension(Arc::new(ProjectTools(st.clone())));
+    let writer = st.lock().require_writable().is_ok();
+    let svc = Arc::new(Service::new(Arc::new(DesktopStore::new(st)), writer, Host::Desktop, Some(Arc::new(DesktopSink(st.clone(), st.epoch())))));
+    svc.add_extension(Arc::new(ProjectTools(st.clone(), st.epoch())));
     st.lock().evidence = Some(svc.evidence.clone());
     crate::editor::install_extension(st, &svc);
     *st.service.lock().unwrap_or_else(|e| e.into_inner()) = Some(svc.clone());
@@ -132,7 +157,7 @@ pub fn install(st: &AppState) -> Arc<Service> {
 pub fn publish(st: &AppState) {
     let (root, port, writer) = {
         let s = st.lock();
-        (s.project_dir.clone(), s.mcp_port, s.lock.is_some())
+        (s.project_dir.clone(), s.mcp_port, s.require_writable().is_ok())
     };
     if !writer || port == 0 {
         return;

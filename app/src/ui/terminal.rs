@@ -285,7 +285,8 @@ impl TermSession {
 
     /// Draw and drive the terminal in `rect`.
     pub fn show(&mut self, ui: &mut egui::Ui, rect: Rect) {
-        let font = FontId::new(12.0, FontFamily::Name(super::theme::MONO.into()));
+        let font_size = ui.ctx().data(|d| d.get_temp::<f32>(egui::Id::unique("terminal-font-size"))).unwrap_or(12.0);
+        let font = FontId::new(font_size, FontFamily::Name(super::theme::MONO.into()));
         let (cw, ch) = ui.ctx().fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
         let ch = ch.ceil().max(13.0);
         let pad = 4.0;
@@ -405,7 +406,7 @@ impl TermSession {
                     }
                 }
             }
-            paint(&painter, inner, cw, ch, &s, self.has_focus);
+            paint(&painter, inner, cw, ch, &s, self.has_focus, font_size);
         }
         if let Some(c) = copy.filter(|c| !c.is_empty()) {
             ui.ctx().copy_text(c);
@@ -491,17 +492,17 @@ fn resolve(c: AColor, colors: &alacritty_terminal::term::color::Colors) -> Color
     }
 }
 
-fn cell_font(flags: Flags) -> FontId {
+fn cell_font(flags: Flags, size: f32) -> FontId {
     let fam = match (flags.contains(Flags::BOLD), flags.contains(Flags::ITALIC)) {
         (true, true) => FontFamily::Name(MONO_BOLD_ITALIC.into()),
         (true, false) => FontFamily::Name(MONO_BOLD.into()),
         (false, true) => FontFamily::Name(MONO_ITALIC.into()),
         _ => FontFamily::Name(super::theme::MONO.into()),
     };
-    FontId::new(12.0, fam)
+    FontId::new(size, fam)
 }
 
-fn paint(p: &egui::Painter, inner: Rect, cw: f32, ch: f32, s: &TermState, focused: bool) {
+fn paint(p: &egui::Painter, inner: Rect, cw: f32, ch: f32, s: &TermState, focused: bool, font_size: f32) {
     let content = s.term.renderable_content();
     let colors = content.colors;
     let sel = content.selection;
@@ -559,7 +560,7 @@ fn paint(p: &egui::Painter, inner: Rect, cw: f32, ch: f32, s: &TermState, focuse
         }
     }
     for r in runs {
-        let font = cell_font(r.flags);
+        let font = cell_font(r.flags, font_size);
         let g = p.layout_no_wrap(r.text.clone(), font, r.color);
         let base = super::paint::galley_baseline(&g);
         let top = r.y + (ch * 0.78 - base).max(0.0);
@@ -693,6 +694,7 @@ fn encode_key(key: Key, m: Modifiers, mode: TermMode, modify_other_keys: bool) -
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaneAction {
+    Stop,
     Commands,
     Restart,
     Collapse,
@@ -715,8 +717,9 @@ pub fn header(ui: &mut egui::Ui, status: crate::state::PiStatus, restarting: boo
         ui.label(egui::RichText::new("pi").font(super::theme::bold(13.0)).color(css::TEXT));
         ui.add_space(6.0);
         let (r, _) = ui.allocate_exact_size(Vec2::splat(7.0), Sense::hover());
-        let a = if status == PiStatus::Busy { 0.35 + 0.45 * ((ui.input(|i| i.time) * std::f64::consts::TAU / 1.2).sin() * 0.5 + 0.5) as f32 } else { 1.0 };
-        if status == PiStatus::Busy {
+        let reduced = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::unique("reduced-motion"))).unwrap_or(false);
+        let a = if status == PiStatus::Busy && !reduced { 0.35 + 0.45 * ((ui.input(|i| i.time) * std::f64::consts::TAU / 1.2).sin() * 0.5 + 0.5) as f32 } else { 1.0 };
+        if status == PiStatus::Busy && !reduced {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
         ui.painter().circle_filled(r.center(), 3.5, dot.gamma_multiply(a));
@@ -735,6 +738,9 @@ pub fn header(ui: &mut egui::Ui, status: crate::state::PiStatus, restarting: boo
             }
             if ui.add_enabled(!restarting, egui::Button::new(egui::RichText::new(if restarting { "Restarting…" } else { "Restart" }).font(sans(12.0)).color(css::DIM)).frame(false)).clicked() {
                 *confirming = !*confirming;
+            }
+            if status == PiStatus::Busy && ui.button("Stop").on_hover_text("Interrupt the agent turn, keeping the terminal session").clicked() {
+                out = Some(PaneAction::Stop);
             }
             let cmd = egui::Button::new(egui::RichText::new("Commands").font(sans(12.0)).color(if palette_open { css::ACCENT } else { css::DIM })).frame(false);
             if ui.add(cmd).on_hover_text("Spide commands, including open, save and import").clicked() {

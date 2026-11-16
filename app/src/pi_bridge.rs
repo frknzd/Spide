@@ -23,7 +23,7 @@ impl PiBridge {
         if result.is_err() {
             let stuck = {
                 let mut s = st.lock();
-                if self.ticket() == generation { s.store.release_stuck_evaluations() } else { 0 }
+                if self.ticket() == generation && s.require_writable().is_ok() { s.store.release_stuck_evaluations() } else { 0 }
             };
             if stuck > 0 { st.changed(); }
         }
@@ -55,7 +55,10 @@ impl PiBridge {
     pub fn restart(&self, st: &AppState) -> Result<(), String> {
         let _guard = self.lifecycle.lock().unwrap();
         self.stop();
-        let released = st.lock().store.release_stuck_evaluations();
+        let released = {
+            let mut s = st.lock_writable()?;
+            s.store.release_stuck_evaluations()
+        };
         if released > 0 { st.changed(); }
         self.start_locked(st.clone())
     }
@@ -64,13 +67,14 @@ impl PiBridge {
         self.start_locked(st.clone())
     }
     fn start_locked(&self, st: AppState) -> Result<(), String> {
+        st.lock().require_writable()?;
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         { let mut s = st.lock(); s.pi_status = PiStatus::Starting; s.pi_error = None; s.pi_generation = generation; }
         st.emit();
         let result = self.spawn(&st, generation);
         match result {
             Ok(s) => { *self.session.lock().unwrap() = Some(s); Ok(()) }
-            Err(e) => { { let mut s = st.lock(); s.pi_status = PiStatus::Offline; s.pi_error = Some(e.clone()); } st.toast("error", &format!("Couldn't start pi: {e}")); st.emit(); Err(e) }
+            Err(e) => { { let mut s = st.lock(); s.pi_status = PiStatus::Offline; s.pi_error = Some(e.clone()); } st.toast("error", &format!("Couldn't start pi: {e}. The project is usable without it; use Restart to retry.")); st.emit(); Err(e) }
         }
     }
     fn spawn(&self, st: &AppState, generation: u64) -> Result<(Arc<Terminal>, Arc<Control>), String> {
@@ -135,6 +139,8 @@ fn write_mcp_config(project: &Path, port: u16) -> std::io::Result<()> {
     std::fs::write(path, serde_json::to_vec_pretty(&cfg)?)
 }
 fn pi_binary() -> PathBuf {
+    // unit tests never start the user's real pi (it would run in temp project folders)
+    if cfg!(test) { return PathBuf::from("/nonexistent/spide-test-pi"); }
     if let Ok(p) = std::env::var("SPIDE_PI") { return PathBuf::from(p); }
     if let Some(p) = which("pi") { return p; }
     if let Some(home) = std::env::var_os("HOME") {

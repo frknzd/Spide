@@ -62,11 +62,13 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("export all", "Export all PlantUML", "Export", "Export every non-empty diagram"),
     c("export adr", "Export ADRs", "Export", "Write decision records"),
     c("export archunit", "Export ArchUnit", "Export", "Write architecture tests"),
-    c("open", "Open design JSON…", "Project", "Open an existing design file"),
-    c("open project", "Open Spide Project…", "Project", "Open a code folder with spide/project.json"),
-    c("new", "New project folder…", "Project", "Create a design in a folder"),
-    c("save", "Save copy as…", "Project", "Save the current design as JSON"),
-    t("name", "Rename design", "Project", "Set the design title", "name ", true),
+    k(c("new", "New Project…", "Project", "Create a new design project (⌘N)"), "create"),
+    k(c("open project", "Open Project…", "Project", "Open a project folder: design.json or a Spide Project (⌘O)"), "folder"),
+    k(c("import", "Import Design JSON…", "Project", "Copy a design file into a new project folder"), "open json"),
+    k(c("close", "Close Project", "Project", "Back to the welcome screen (⇧⌘W)"), "welcome"),
+    c("save", "Save", "Project", "Save now (the design also autosaves) (⌘S)"),
+    c("save copy", "Save Design Copy…", "Project", "Write a copy of the design JSON elsewhere (⇧⌘S)"),
+    t("name", "Rename Design", "Project", "Set the design title (the folder keeps its name)", "name ", true),
     c("folder", "Reveal project folder", "Project", "Open the project in Finder"),
     c("agent", "Restart pi", "Project", "Restart the native pi session; the transcript display resets"),
 ];
@@ -105,6 +107,13 @@ pub fn matches(query: &str) -> Vec<&'static CommandInfo> {
     COMMANDS.iter().filter(|c| q.is_empty() || format!("{} {} {} {} {}", c.command, c.label, c.group, c.help, c.keywords).to_lowercase().contains(&first)).collect()
 }
 
+/// Pinned commands first, retaining the normal order within each group.
+pub fn matches_pinned(query: &str, pinned: &[String]) -> Vec<&'static CommandInfo> {
+    let mut found = matches(query);
+    found.sort_by_key(|c| !pinned.iter().any(|p| p == c.command));
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,6 +125,13 @@ mod tests {
         assert_eq!(normalize("/tidy").unwrap(), "tidy");
         assert_eq!(normalize("   ").unwrap_err(), "Enter a command.");
         assert!(normalize("add").unwrap_err().contains("class name"));
+    }
+
+    #[test]
+    fn pinned_commands_stay_searchable_and_rank_first() {
+        let found = matches_pinned("", &["timeline".into(), "export".into()]);
+        assert!(found[..2].iter().all(|c| matches!(c.command, "timeline" | "export")));
+        assert!(matches_pinned("timeline", &["export".into()]).iter().any(|c| c.command == "timeline"));
     }
 
     #[test]

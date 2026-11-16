@@ -40,10 +40,11 @@ const KINDS: [(ForceKind, &str, &str); 4] = [
 
 const PRIO: [&str; 4] = ["", "must", "should", "nice"];
 
-#[derive(Default)]
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct BriefUi {
-    add_text: HashMap<&'static str, String>,
-    add_error: HashMap<&'static str, String>,
+    add_text: HashMap<String, String>,
+    add_error: HashMap<String, String>,
     editing: Option<(String, String, String)>,
     edit_error: String,
     change_text: String,
@@ -53,7 +54,14 @@ pub struct BriefUi {
     ty: String,
     ty_layer: Option<Layer>,
     ty_error: String,
-    th: HashMap<&'static str, String>,
+    th: HashMap<String, String>,
+}
+
+impl BriefUi {
+    pub fn has_input(&self) -> bool {
+        self.add_text.values().any(|t| !t.trim().is_empty()) || self.editing.is_some()
+            || [&self.change_text, &self.dep, &self.ty].iter().any(|t| !t.trim().is_empty())
+    }
 }
 
 pub enum BriefOut {
@@ -168,13 +176,13 @@ fn force_group(ui: &mut Ui, st: &mut BriefUi, design: &Design, kind: ForceKind, 
     for f in &forces {
         force_row(ui, st, f, backend);
     }
-    let text = st.add_text.entry(title).or_default();
+    let text = st.add_text.entry(title.to_string()).or_default();
     if inline_add(ui, text, hint, title) {
         let name = text.trim().to_string();
         if name.is_empty() {
-            st.add_error.insert(title, "Enter a short description first.".into());
+            st.add_error.insert(title.into(), "Enter a short description first.".into());
         } else if forces.iter().any(|f| f.name.to_lowercase() == name.to_lowercase()) {
-            st.add_error.insert(title, "This item is already in the brief.".into());
+            st.add_error.insert(title.into(), "This item is already in the brief.".into());
         } else {
             st.add_error.remove(title);
             text.clear();
@@ -491,7 +499,7 @@ fn rules_section(ui: &mut Ui, st: &mut BriefUi, rules: &Rules, backend: &Backend
         ui.horizontal(|ui| {
             ui.label(RichText::new(label).font(sans(12.5)).color(css::DIM));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let text = st.th.entry(key).or_insert_with(|| value.to_string());
+                let text = st.th.entry(key.to_string()).or_insert_with(|| value.to_string());
                 let valid = text.parse::<usize>().is_ok_and(|v| (1..=99).contains(&v));
                 let r = ui.add(egui::TextEdit::singleline(text).font(sans(12.0)).desired_width(52.0).align(egui::Align2::RIGHT_CENTER).margin(Margin::symmetric(6, 3)).background_color(css::BG).text_color(if valid { css::TEXT } else { css::BAD }));
                 if r.lost_focus() {

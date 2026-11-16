@@ -1,16 +1,32 @@
 //! Native egui user interface.
+pub mod actions;
+pub mod activity;
 pub mod app;
+pub mod branches;
+pub mod backup;
 pub mod brief;
 pub mod canvas;
+pub mod clipboard;
 pub mod chrome;
 pub mod decisions;
+pub mod draft_recovery;
 pub mod export;
 pub mod export_jobs;
+pub mod help;
 pub mod hover_card;
+pub mod integrations;
+pub mod leave;
+pub mod navigate;
 pub mod overlays;
+pub mod opening;
 pub mod paint;
 pub mod project;
+pub mod properties;
 pub mod proposal;
+pub mod quick_export;
+pub mod search;
+pub mod selection;
+pub mod settings;
 pub mod state;
 
 pub mod terminal;
@@ -19,6 +35,8 @@ pub mod timeline;
 pub mod trace;
 pub mod viewport;
 pub mod views;
+pub mod welcome;
+pub mod workspace_memory;
 pub mod widgets;
 #[cfg(test)]
 mod tests;

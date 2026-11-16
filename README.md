@@ -60,7 +60,7 @@ Spide is written in Rust with [egui](https://github.com/emilk/egui). It uses nat
 cargo run -p spide
 ```
 
-By default Spide opens the project folder `~/Documents/Spide/untitled`. Set `SPIDE_PROJECT` to open a different folder:
+Spide starts on a welcome screen: **New Project…**, **Open Project…**, **Import Design JSON…** and your recent projects (pin, remove, locate moved ones). Tick *Reopen the last project at startup* to skip it. Set `SPIDE_PROJECT` to open a specific folder directly:
 
 ```sh
 project=$(mktemp -d)
@@ -70,7 +70,18 @@ SPIDE_PROJECT="$project" cargo run -p spide
 
 `tests/fixtures/library.json` is a small design with deliberate problems: a dependency cycle, layer violations and an orphan class. If you copy it into a project's `design.json` while Spide is running, it arrives as ghost proposals for review.
 
-Inside the app, use `/spide new` and `/spide open` in the pi terminal (or the terminal header's **Commands** button) to create or open projects.
+The **File** menu has New Project (⌘N), Open Project (⌘O), Open Recent, Close Project (⇧⌘W), Save (⌘S, the design also autosaves), Save Design Copy (⇧⌘S, writes a JSON copy; the project stays where it is), Import Design JSON, Export and Reveal Project in Finder. Leaving a project (switching, closing, ⌘W, ⌘Q) first asks about anything that would be lost: a failed save, unsaved plan drafts, unsaved Neovim buffers, a busy agent or a running export. If a design can't be saved, a banner stays until Retry or Save Design Copy succeeds; a design file that can't be read is never overwritten — **Recover a Copy…** builds a new project from the newest recovery copy (`.spide/recovery/`) or history.
+
+### Opening from Finder, drops and the command line
+
+Drop a project folder, `design.json`, `spide/project.json` or `.spideproject` shortcut onto the app. A standalone design JSON goes through the import preview; project files use the same validated, guarded opener as File → Open. Only one open request is processed at a time.
+
+```sh
+cargo run -p spide -- /path/to/project
+cargo run -p spide -- --project /path/to/project
+```
+
+**File → Save Project Shortcut…** writes a `.spideproject` reference to the current folder (it does not copy or relocate the project). The macOS bundle registers only this extension, not all JSON files; double-clicking the shortcut routes through the same opener. A moved project may need a new shortcut. Finder/Dock integration requires the bundled app.
 
 ### Build the macOS app
 
@@ -86,9 +97,16 @@ When launching the bundle, make sure `pi` is on `PATH`, or set `SPIDE_PI` to its
 
 ## Configuration
 
+**Spide → Settings… (⌘,)** controls reopen-last-project, the default new-project location, interface scale, terminal text size, reduced motion, automatic pi startup and embedded/external Neovim preference. Preferences and per-project pane/view/camera state are local, not committed with the design. Reset Workspace Layout is separate. Provider/model selection and credentials remain owned by pi (`/model`, `/settings`).
+
+Unsent decision notes and unfinished forms recover locally per project and branch; changed revisions are flagged and nothing is submitted automatically. A running pi session warns before leaving because its unsent terminal input cannot be inspected or preserved. Local `input-drafts.json` contains your draft text: treat it as private. Existing manual plan drafts continue to use `proposal-drafts.json`.
+
+**Help → Activity and Errors…** retains recent desktop errors/status changes, with Copy Details and safe, workspace-scoped retries. **Help → Integrations…** shows pi, MCP, Neovim and index/tool-discovery status and offers Start/Restart/Stop Agent and Re-index. Tool discovery does not run analysis or grant trust. Stop requests interrupt a turn; they do not certify completion. **Help → Open Logs** opens the local activity-log folder; these logs may include paths and error text, so review them before sharing. **Copy Diagnostics** deliberately omits paths, source, draft text, errors and tokens. About includes the version, source revision and build time; bundled documentation and shortcut reference work offline.
+
 | Variable | Purpose |
 |---|---|
-| `SPIDE_PROJECT` | Project folder to open (default `~/Documents/Spide/untitled`). |
+| `SPIDE_PROJECT` | Project folder to open at startup (default: the welcome screen). |
+| `SPIDE_PREFERENCES` | Local preferences file (default `~/Library/Application Support/Spide/preferences.json`): recent projects, reopen-last. |
 | `SPIDE_PI` | Absolute path to the `pi` binary. |
 | `SPIDE_SIGN_IDENTITY` | Code-signing identity used by the macOS scripts (default `Spide Local Signing`). |
 | `SPIDE_INSTALL_DIR` | Install location used by `install-macos.sh` (default `/Applications`). |
@@ -122,6 +140,13 @@ Older `design.json` files (schema 1) open unchanged. Files from the removed sour
 - **In this document, `/command` means `/spide command` in the terminal** (or the same entry under **Commands**). pi's built-in commands such as `/new`, `/model`, `/settings`, `/resume` and `/export` keep their usual meaning.
 - App-initiated requests (examiner, fixes, generation) reach the same session through an authenticated private Unix socket. They are never pasted into a draft you are typing. Terminal output never drives application or design state.
 
+### Everyday conveniences
+
+- **File → Copy Diagram as Image** copies the active diagram at 2× through the existing renderer. **Open Export Folder** opens the most recent export's parent folder for this project.
+- **File → Back Up Design State…** writes the current design, history and branches to a new folder outside the project. It does not copy source code, tooling configuration, sessions, credentials, endpoints, locks or local UI drafts. A code-backed backup opens as a design-only project; this is not a repository backup. Existing destinations and symlinks are refused, and any incomplete publication is reported. **Duplicate Design Project…** is available for design-only projects and offers opening the copy without moving the original.
+- Click the **☆/★** in either command palette to pin/unpin commands; pinned commands appear first and remain searchable.
+- **New Project** offers a blank design or a small **Layered starter** example. Templates create design elements only, never source files.
+
 ### Design workflow
 
 1. **Brief.** On an empty design, the agent asks one question at a time and records your answers as prioritised *forces*: goals, quality attributes, constraints and expected changes. ⌘B or `/brief` opens the brief panel for direct editing. `/skip` (or **Skip brief**) starts without a brief.
@@ -153,7 +178,8 @@ Older `design.json` files (schema 1) open unchanged. Files from the removed sour
 
 - **Ghost changes.** Click a ghost or **Review N changes on the diagram** to start reviewing. Direct edits are disabled during review; pan, zoom, focus and the brief remain available. There are no bulk actions. Legacy `/accept <plan-id>` and `/reject <plan-id>` require an explicit ID.
 - **Direct edits.** Double-click a name to rename it, and drag a class onto a package to move it. `/add <Class> [in <package>]` adds a class. ⌥-click pins a class in place (📌), including during `/tidy`. Direct edits apply immediately and can be undone.
-- **Prune.** Right-click an element, or right-drag a box around several, to remove them. You can say what you didn't like (⏎ sends it to the agent; Esc prunes silently). Pruned elements stay in the model, hidden (`/pruned` shows them), and the agent is told not to reintroduce them. Click a pruned element to restore it.
+- **Select and edit.** Click selects (⇧-click adds), right-drag a box to select several, ↑/↓ step through classes, Esc clears. Right-click opens the element menu: Inspect, Rename, Edit Properties (⌘I), Reveal in Editor, Pin, Move to Package, Copy Name, Copy/Cut/Paste/Duplicate (⌘C ⌘X ⌘V ⌘D), Remove/Restore. **Edit › New Class… (⇧⌘N)**, New Package, New External System and New Container add elements without the agent. Each save, paste or move is one change that ⌘Z undoes. These edit the design only; code changes go through Implement. Copies get fresh names (`OrderCopy`), keep relations between the copied classes, and never copy code links. Domain models, use cases and sequences are still built by the agent.
+- **Prune.** Delete/Backspace (or **Remove from Design**) prunes the selection; ⌥-right-click and ⌥-right-drag are the instant prune gestures. You can say what you didn't like (⏎ sends it to the agent; Esc prunes silently). Pruned elements stay in the model, hidden (`/pruned` shows them), and the agent is told not to reintroduce them. Click a pruned element (or ⌘Z) to restore it. Code is never touched.
 - **Detail levels.** The slider (or `/detail 0–4`) switches between five levels:
 
   | Level | Shows |

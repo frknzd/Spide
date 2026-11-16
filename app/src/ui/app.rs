@@ -3,7 +3,7 @@
 
 use super::brief::{self, BriefOut, BriefUi};
 use super::canvas::{CanvasInput, CanvasOut, ClassCanvas};
-use super::chrome::{self, HealthAction, HealthState, Tab, Toast, TAB_ORDER};
+use super::chrome::{self, HealthAction, HealthState, Tab, Toast};
 use super::decisions::{self, CompareCol, CompareUi, DecisionUi};
 use super::export::{self, DialogOut, ExportDialog, ExportSettings, ExportState, Format};
 use super::export_jobs::{self, BatchPhase, BatchRun, BatchSettings, ExportView, JobResult};
@@ -35,7 +35,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WorkspaceSettings {
     pub left: f32,
     pub right: f32,
@@ -73,7 +73,7 @@ pub struct ClassData {
 type Deferred = Box<dyn FnOnce(&mut SpideApp)>;
 
 pub struct SpideApp {
-    ctx: egui::Context,
+    pub ctx: egui::Context,
     pub backend: Backend,
     rx: Receiver<UiEvent>,
     pub snap: Option<Arc<Snapshot>>,
@@ -93,7 +93,7 @@ pub struct SpideApp {
     pub trace_ui: super::trace::TraceUi,
     pub editor_pane: bool,
     term_confirm: bool,
-    restarting: bool,
+    pub(super) restarting: bool,
     pane_palette: Option<Palette>,
     pub palette: Option<Palette>,
     pub prune: Option<PruneState>,
@@ -142,10 +142,56 @@ pub struct SpideApp {
     pub export_settings: HashMap<String, ExportSettings>,
     seen_commands: VecDeque<String>,
     deferred: Vec<(f64, Deferred)>,
-    canvas_rect: Rect,
+    pub(super) canvas_rect: Rect,
     last_tab: Tab,
     last_rev: Option<(u64, String)>,
     pub exit_requested: bool,
+    /// tests: scripted answers for leave questions (None = cancel)
+    pub leave_answers: Option<VecDeque<Option<usize>>>,
+    pub leave_copy_path: Option<String>,
+    /// the user confirmed closing the window: let the next close request through
+    close_confirmed: bool,
+    /// local preferences (recent projects, startup); None path: not persisted (tests)
+    pub prefs: crate::preferences::Preferences,
+    pub prefs_path: Option<std::path::PathBuf>,
+    pub new_project: Option<super::welcome::NewProject>,
+    /// why the last open from the welcome screen failed
+    pub open_error: Option<String>,
+    last_title: String,
+    /// Find in Design / Go to Element
+    pub find: Option<super::search::FindUi>,
+    /// back/forward over deliberate navigation
+    pub nav: super::search::NavHistory,
+    /// selected diagram elements (the last one is "the" selection)
+    pub selection: Vec<Target>,
+    pub show_shortcuts: bool,
+    pub settings_open: bool,
+    /// the branch chooser
+    pub branches: Option<super::branches::BranchUi>,
+    /// focus to give back when overlays close: 1 pi, 2 Neovim, 0 none
+    return_focus: Option<u8>,
+    /// right-click menu on diagram elements
+    pub context: Option<super::selection::ContextMenu>,
+    pub class_editor: Option<super::properties::ClassEditor>,
+    pub new_element: Option<super::properties::NewElement>,
+    /// the last copied elements (also on the system clipboard)
+    pub app_clipboard: Option<super::clipboard::Payload>,
+    pub pending_cameras: std::collections::BTreeMap<String, super::workspace_memory::Camera>,
+    last_workspace_save: f64,
+    pub input_drafts: super::draft_recovery::InputDrafts,
+    pub draft_notice: Option<String>,
+    pub recovered_feedback: Option<String>,
+    last_draft_save: f64,
+    pub activity: super::activity::ActivityLog,
+    pub activity_open: bool,
+    pub activity_errors_only: bool,
+    pub last_operation_status: String,
+    pub integrations: super::integrations::IntegrationUi,
+    pub documentation_open: bool,
+    pub documentation_query: String,
+    pub about_open: bool,
+    pub open_request_pending: bool,
+    pub copying_image: bool,
 }
 
 fn hash_of(v: impl std::hash::Hash) -> u64 {
@@ -240,6 +286,8 @@ pub(super) fn domain_canvas_out(o: CanvasOut) -> Option<CanvasOut> {
             (!ts.is_empty()).then_some(CanvasOut::Prune(ts, p))
         }
         CanvasOut::Click(t, p) => domain_target(t).map(|t| CanvasOut::Click(t, p)),
+        CanvasOut::Context(t, p) => domain_target(t).map(|t| CanvasOut::Context(t, p)),
+        CanvasOut::Select(ts, add) => Some(CanvasOut::Select(ts.into_iter().filter_map(domain_target).collect(), add)),
         // no renames, no packages in the domain model
         CanvasOut::DoubleClick(..) | CanvasOut::MoveToPackage(..) => None,
         o @ CanvasOut::SaveLayout(_) => Some(o),
@@ -269,6 +317,19 @@ impl SpideApp {
                 app.export_settings = e;
             }
         }
+        app.prefs_path = crate::preferences::default_path();
+        app.prefs = app.prefs_path.as_deref().map(crate::preferences::Preferences::load).unwrap_or_default();
+        if let Some(p) = app.prefs_path.as_ref().and_then(|p| p.parent()) {
+            app.activity = super::activity::ActivityLog::load(p.join("activity.json"));
+        }
+        app.input_drafts = match app.prefs_path.as_ref().and_then(|p| p.parent()) {
+            Some(p) => super::draft_recovery::InputDrafts::load(p.join("input-drafts.json")),
+            None => Default::default(),
+        };
+        app.apply_preferences();
+        app.restore_input_drafts();
+        app.restore_workspace();
+        app.record_recent();
         app
     }
 
@@ -347,26 +408,63 @@ impl SpideApp {
             last_tab: Tab::Class,
             last_rev: None,
             exit_requested: false,
+            leave_answers: None,
+            leave_copy_path: None,
+            close_confirmed: false,
+            prefs: Default::default(),
+            prefs_path: None,
+            new_project: None,
+            open_error: None,
+            last_title: String::new(),
+            find: None,
+            nav: Default::default(),
+            selection: vec![],
+            show_shortcuts: false,
+            settings_open: false,
+            branches: None,
+            return_focus: None,
+            context: None,
+            class_editor: None,
+            new_element: None,
+            app_clipboard: None,
+            pending_cameras: Default::default(),
+            last_workspace_save: 0.0,
+            input_drafts: Default::default(),
+            draft_notice: None,
+            recovered_feedback: None,
+            last_draft_save: 0.0,
+            activity: Default::default(),
+            activity_open: false,
+            activity_errors_only: false,
+            last_operation_status: String::new(),
+            integrations: Default::default(),
+            documentation_open: false,
+            documentation_query: String::new(),
+            about_open: false,
+            open_request_pending: false,
+            copying_image: false,
         }
     }
 
     // ------------------------------------------------------------------ small helpers
 
     pub fn toast(&mut self, kind: &str, text: impl Into<String>) {
+        let text = text.into();
+        self.record_activity(kind, text.clone(), None);
         self.toast_seq += 1;
         let until = self.now() + if kind == "error" { 9.0 } else { 5.0 };
-        self.toasts.push(Toast { id: self.toast_seq, kind: kind.to_string(), text: text.into(), until });
+        self.toasts.push(Toast { id: self.toast_seq, kind: kind.to_string(), text, until });
         if self.toasts.len() > 4 {
             self.toasts.remove(0);
         }
     }
 
-    fn now(&self) -> f64 {
+    pub(super) fn now(&self) -> f64 {
         self.ctx.input(|i| i.time)
     }
 
     /// Run `f` after `secs` (the old `setTimeout`).
-    fn later(&mut self, secs: f64, f: impl FnOnce(&mut SpideApp) + 'static) {
+    pub(super) fn later(&mut self, secs: f64, f: impl FnOnce(&mut SpideApp) + 'static) {
         let at = self.now() + secs;
         self.deferred.push((at, Box::new(f)));
     }
@@ -401,6 +499,324 @@ impl SpideApp {
 
     fn run(&self, f: impl FnOnce(&crate::state::AppState, &crate::pi_bridge::PiBridge) -> Result<(), String> + Send + 'static) {
         self.backend.run(f);
+    }
+
+    fn run_transition(&self, f: impl FnOnce(&crate::state::AppState, &crate::pi_bridge::PiBridge) -> Result<(), String> + Send + 'static) {
+        self.backend.transition(f, |app, r| match r {
+            Ok(()) => app.after_transition(),
+            Err(e) => app.transition_failed(e),
+        });
+    }
+
+    fn transition_failed(&mut self, e: String) {
+        if self.backend.st.lock().workspace_status == crate::state::WorkspaceStatus::Closed {
+            self.open_error = Some(e.clone());
+        }
+        self.toast("error", e);
+    }
+
+    /// A project was opened or created: fresh UI, remember it.
+    pub fn after_transition(&mut self) {
+        self.reset_workspace_ui();
+        self.restore_workspace();
+        self.restore_input_drafts();
+        self.open_error = None;
+        self.record_recent();
+    }
+
+    /// The open project (if any) goes to the top of Recent Projects.
+    fn record_recent(&mut self) {
+        let (open, root, name) = {
+            let s = self.backend.st.lock();
+            (matches!(s.workspace_status, crate::state::WorkspaceStatus::Ready | crate::state::WorkspaceStatus::ReadOnly), s.project_dir.clone(), s.store.design.name.clone())
+        };
+        if open {
+            self.prefs.opened(&root, &name, spide_core::store::now_ms());
+        }
+        self.save_prefs();
+    }
+
+    pub fn toggle_favorite_command(&mut self, command: String) {
+        if self.prefs.favorite_commands.contains(&command) {
+            self.prefs.favorite_commands.retain(|c| c != &command);
+        } else {
+            self.prefs.favorite_commands.push(command);
+        }
+        self.save_prefs();
+    }
+
+    pub fn save_prefs(&mut self) {
+        let items: Vec<(String, String, bool)> = self.prefs.sorted().into_iter().map(|r| { let ok = r.available(); (format!("{}{} — {}", if r.pinned { "📌 " } else { "" }, r.name, r.path), r.path, ok) }).collect();
+        crate::menu::set_recent(&items);
+        if let Some(p) = self.prefs_path.clone() {
+            if let Err(e) = self.prefs.save(&p) {
+                self.toast("error", e);
+            }
+        }
+    }
+
+    pub(super) fn workspace_open(&self) -> bool {
+        self.snap.as_ref().is_some_and(|s| matches!(s.workspace_status, crate::state::WorkspaceStatus::Ready | crate::state::WorkspaceStatus::ReadOnly))
+    }
+
+    pub fn new_project_dialog(&mut self) {
+        let mut form = super::welcome::NewProject::new();
+        form.location = self.prefs.new_project_location.clone();
+        self.new_project = Some(form);
+    }
+
+    pub fn create_new_project(&mut self, f: super::welcome::NewProject) {
+        match f.kind {
+            super::welcome::NewKind::Design => {
+                if !self.confirm_leave(super::leave::LeaveReason::SwitchProject) {
+                    return;
+                }
+                let (dir, name, template) = (f.target().display().to_string(), f.name.trim().to_string(), f.template);
+                self.run_transition(move |s, pi| crate::commands::new_project_template(s, pi, dir, name, template));
+            }
+            super::welcome::NewKind::Code => {
+                if self.workspace_open() {
+                    self.open_project_rail();
+                }
+                self.project_out(super::project::ProjectOut::CreateIn);
+            }
+        }
+    }
+
+    pub fn close_project(&mut self) {
+        if !self.workspace_open() && !matches!(self.snap.as_ref().map(|s| &s.workspace_status), Some(crate::state::WorkspaceStatus::Failed(_))) {
+            return;
+        }
+        if !self.confirm_leave(super::leave::LeaveReason::CloseProject) {
+            return;
+        }
+        self.backend.transition(crate::commands::close_project, |app, r| match r {
+            Ok(()) => {
+                app.reset_workspace_ui();
+                // a manual close is honoured at the next start
+                app.prefs.last_project = None;
+                app.save_prefs();
+            }
+            Err(e) => app.toast("error", e),
+        });
+    }
+
+    pub fn save_now(&mut self) {
+        if !self.workspace_open() {
+            return;
+        }
+        self.run_ok(|s, _| s.persist_and_emit(), |app| app.toast("info", "Saved"));
+    }
+
+    pub fn save_copy_dialog(&mut self) {
+        if !self.workspace_open() {
+            return self.toast("error", "No project is open.");
+        }
+        let name = self.snap.as_ref().map(|s| s.view.name.clone());
+        if let Some(path) = rfd::FileDialog::new().set_title("Save a copy of the design (the project stays where it is)").set_file_name(format!("{}.json", slug(name.as_deref()))).add_filter("Spide design", &["json"]).save_file() {
+            let path = path.display().to_string();
+            let msg = format!("Design copy saved to {path}");
+            self.run_ok(move |s, _| crate::commands::save_as(s, path), move |app| app.toast("info", msg));
+        }
+    }
+
+    pub fn open_recent(&mut self, path: String) {
+        let r = crate::preferences::Recent { path: path.clone(), ..Default::default() };
+        if !r.available() {
+            return self.toast("error", format!("{path} is missing or moved. Use Locate… on the welcome screen, or remove it."));
+        }
+        if !self.confirm_leave(super::leave::LeaveReason::SwitchProject) {
+            return;
+        }
+        self.run_transition(move |s, pi| crate::commands::open_folder(s, pi, path));
+    }
+
+    /// A recent project moved: open it from its new place and forget the old entry.
+    fn locate_recent(&mut self, old: String) {
+        let Some(dir) = rfd::FileDialog::new().set_title("Where is the project now?").pick_folder() else { return };
+        if !self.confirm_leave(super::leave::LeaveReason::SwitchProject) {
+            return;
+        }
+        let d = dir.display().to_string();
+        self.backend.transition(move |s, pi| crate::commands::open_folder(s, pi, d), move |app, r| match r {
+            Ok(()) => {
+                app.prefs.remove(&old);
+                app.after_transition();
+            }
+            Err(e) => app.transition_failed(e),
+        });
+    }
+
+    /// Import Design JSON: a workspace's own design file opens that workspace; any other file is
+    /// copied into a NEW folder (nothing is replaced).
+    pub fn import_dialog(&mut self) {
+        let Some(file) = rfd::FileDialog::new().set_title("Import a Spide design (JSON)").add_filter("Spide design", &["json"]).pick_file() else { return };
+        self.import_file_dialog(file);
+    }
+
+    pub fn import_file_dialog(&mut self, file: std::path::PathBuf) {
+        let text = match std::fs::read_to_string(&file) {
+            Ok(t) => t,
+            Err(e) => return self.toast("error", format!("{}: {e}", file.display())),
+        };
+        let design = match crate::workspace::parse_design(&text, &file) {
+            Ok(d) => d,
+            Err(e) => return self.toast("error", e),
+        };
+        if file.file_name().is_some_and(|n| n == "design.json") {
+            let dir = file.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+            let root = spide_core::project::resolve_root(&dir.join("project.json"));
+            let root = if spide_core::project::is_project(&root) && root.join(spide_core::project::DESIGN) == file { root } else { dir };
+            if crate::workspace::prepare(&root, crate::workspace::LoadIntent::Open).is_ok() {
+                if !self.confirm_leave(super::leave::LeaveReason::SwitchProject) {
+                    return;
+                }
+                let d = root.display().to_string();
+                return self.run_transition(move |s, pi| crate::commands::open_folder(s, pi, d));
+            }
+        }
+        let Some(dest) = rfd::FileDialog::new().set_title("New, empty folder for the imported project").pick_folder() else { return };
+        if let Err(e) = crate::commands::ensure_empty(&dest) {
+            return self.toast("error", e);
+        }
+        let ok = rfd::MessageDialog::new()
+            .set_title("Import Design")
+            .set_description(format!("Import “{}” ({} classes) from
+{}
+into the new project
+{}?
+
+The original file is not changed.", design.name, design.live_classes().count(), file.display(), dest.display()))
+            .set_buttons(rfd::MessageButtons::OkCancelCustom("Import".into(), "Cancel".into()))
+            .show();
+        if !matches!(ok, rfd::MessageDialogResult::Ok) && ok != rfd::MessageDialogResult::Custom("Import".into()) {
+            return;
+        }
+        if !self.confirm_leave(super::leave::LeaveReason::SwitchProject) {
+            return;
+        }
+        let (f, d) = (file.display().to_string(), dest.display().to_string());
+        self.run_transition(move |s, pi| crate::commands::import_design(s, pi, f, d));
+    }
+
+    fn reveal_project(&mut self) {
+        if self.workspace_open() {
+            self.run(|s, _| crate::commands::reveal_project(s));
+        }
+    }
+
+    fn welcome_out(&mut self, o: super::welcome::WelcomeOut) {
+        use super::welcome::WelcomeOut;
+        match o {
+            WelcomeOut::New => self.new_project_dialog(),
+            WelcomeOut::Open => self.open_project_dialog(),
+            WelcomeOut::Import => self.import_dialog(),
+            WelcomeOut::OpenRecent(p) => self.open_recent(p),
+            WelcomeOut::Locate(p) => self.locate_recent(p),
+            WelcomeOut::Remove(p) => {
+                self.prefs.remove(&p);
+                self.save_prefs();
+            }
+            WelcomeOut::TogglePin(p) => {
+                self.prefs.toggle_pin(&p);
+                self.save_prefs();
+            }
+            WelcomeOut::ClearUnpinned => {
+                self.prefs.clear_unpinned();
+                self.save_prefs();
+            }
+            WelcomeOut::ReopenLast(on) => {
+                self.prefs.reopen_last = on;
+                self.save_prefs();
+            }
+        }
+    }
+
+    fn welcome_layout(&mut self, ui: &mut egui::Ui, ws: Rect, snap: &Arc<Snapshot>) {
+        ui.painter().rect_filled(ws, 0.0, css::BG);
+        self.canvas_rect = ws;
+        let mut outs = vec![];
+        let mut project_outs = vec![];
+        ui.scope_builder(egui::UiBuilder::new().max_rect(ws.shrink(16.0)), |ui| {
+            if self.project_ui.form.is_some() {
+                // creating a Spide Project from the welcome screen: the manifest form
+                ui.vertical_centered(|ui| {
+                    ui.set_max_width(560.0);
+                    project_outs = super::project::show(ui, &mut self.project_ui, snap, &self.backend);
+                });
+            } else {
+                outs = super::welcome::show(ui, &self.prefs, self.open_error.as_deref());
+            }
+        });
+        for o in project_outs {
+            self.project_out(o);
+        }
+        for o in outs {
+            self.welcome_out(o);
+        }
+    }
+
+    /// The macOS window title: project, branch and save state (shown in Mission Control and Window menu).
+    fn update_title(&mut self, snap: &Snapshot) {
+        use crate::state::WorkspaceStatus as W;
+        let title = match &snap.workspace_status {
+            W::Closed | W::Loading => "Spide".to_string(),
+            W::Failed(_) => "Spide — project could not be opened".to_string(),
+            st => {
+                let state = if *st == W::ReadOnly { " — read-only" } else if snap.save_status.error.is_some() { " — not saved" } else { "" };
+                format!("{} ({}){state} — Spide", snap.view.name, snap.branch)
+            }
+        };
+        if title != self.last_title {
+            self.ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.last_title = title;
+        }
+    }
+
+    /// After the workspace changed: nothing transient from the previous project survives.
+    pub fn reset_workspace_ui(&mut self) {
+        self.review_active = false;
+        self.selected_proposal = None;
+        self.proposal_canvas = None;
+        self.proposal_ui.session = None;
+        self.proposal_ui.notes.clear();
+        self.decision_ui.drafts = Default::default();
+        self.brief_ui = Default::default();
+        self.draft_notice = None;
+        self.recovered_feedback = None;
+        self.proposal_ui.editing = None;
+        self.proposal_ui.review = None;
+        self.shown_decision = None;
+        self.history_open = false;
+        self.timeline = false;
+        self.set_preview(None, PreviewSource::Option);
+        self.compare = None;
+        self.branch_cmp = None;
+        self.stress = None;
+        self.scenario = None;
+        self.spotlight = None;
+        self.prune = None;
+        self.inline = None;
+        self.palette = None;
+        self.hover.clear();
+        self.card_selected = None;
+        self.brief = false;
+        self.export = None;
+        self.project_ui.form = None;
+        self.class_canvas = None;
+        self.domain_canvas = None;
+        self.export_canvases.clear();
+        self.class_data = None;
+        self.domain_data = None;
+        self.views = Views::default();
+        self.find = None;
+        self.nav.clear();
+        self.selection.clear();
+        self.context = None;
+        self.class_editor = None;
+        self.new_element = None;
+        self.integrations = Default::default();
+        self.copying_image = false;
     }
 
     fn run_ok(&self, f: impl FnOnce(&crate::state::AppState, &crate::pi_bridge::PiBridge) -> Result<(), String> + Send + 'static, ok: impl FnOnce(&mut SpideApp) + Send + 'static) {
@@ -505,7 +921,7 @@ impl SpideApp {
         self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 
-    fn show_editor(&mut self) {
+    pub fn show_editor(&mut self) {
         self.editor_pane = true;
         self.workspace.left_open = true;
         if self.nvim_term.is_none() {
@@ -517,7 +933,7 @@ impl SpideApp {
     }
 
     /// ⌘-click: open a class/method in Neovim.
-    fn open_in_editor(&mut self, class: String, method: Option<String>) {
+    pub(super) fn open_in_editor(&mut self, class: String, method: Option<String>) {
         self.backend.call(move |st, _| crate::editor::open_element(st, &class, method.as_deref()), |app, r| match r {
             Ok(v) => {
                 if v["kind"] == "embedded" {
@@ -528,7 +944,7 @@ impl SpideApp {
         });
     }
 
-    fn focus_canvas(&mut self, name: Option<&str>) -> bool {
+    pub(super) fn focus_canvas(&mut self, name: Option<&str>) -> bool {
         let now = self.now();
         self.class_canvas.as_mut().is_some_and(|c| c.focus(name, now))
     }
@@ -538,20 +954,40 @@ impl SpideApp {
     fn drain(&mut self, ctx: &egui::Context) {
         while let Ok(e) = self.rx.try_recv() {
             match e {
+                UiEvent::OpenPaths(paths) => self.handle_open_paths(paths),
+                UiEvent::RaiseWindow => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
                 UiEvent::Snapshot(s) => {
-                    // ignore stale snapshots of the same project
-                    let keep_old = self.snap.as_ref().is_some_and(|p| p.project_dir == s.project_dir && p.rev > s.rev && p.pi_status == s.pi_status);
+                    // ignore snapshots of a previous workspace, and stale ones of this workspace
+                    let keep_old = self.snap.as_ref().is_some_and(|p| p.epoch > s.epoch || (p.epoch == s.epoch && p.rev > s.rev && p.pi_status == s.pi_status));
                     if !keep_old {
+                        let branch_changed = self.snap.as_ref().is_some_and(|p| p.epoch == s.epoch && p.branch != s.branch);
+                        if branch_changed {
+                            let _ = self.save_input_drafts();
+                            self.discard_input_drafts();
+                        }
                         self.snap = Some(s);
+                        if branch_changed { self.restore_input_drafts(); }
                         self.class_data = None;
                         self.domain_data = None;
                     }
                 }
                 UiEvent::Toast { kind, text } => self.toast(&kind, text),
                 UiEvent::Task(f) => f(self),
-                UiEvent::Menu(MenuAction::Export) => self.open_export(),
-                UiEvent::Menu(MenuAction::ExportAgain) => self.export_again(),
-                UiEvent::Menu(MenuAction::OpenProject) => self.open_project_dialog(),
+                UiEvent::Menu(MenuAction::Run(id)) => self.perform(id),
+                UiEvent::Menu(MenuAction::OpenRecent(p)) => self.open_recent(p),
+                UiEvent::Menu(MenuAction::ClearRecent) => {
+                    self.prefs.clear_unpinned();
+                    self.save_prefs();
+                }
+                UiEvent::Menu(MenuAction::Quit) => {
+                    if self.confirm_leave(super::leave::LeaveReason::Quit) {
+                        self.close_confirmed = true;
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
                 UiEvent::SpideCommand { id, generation, project, command } => {
                     if self.snap.as_ref().map(|s| s.project_dir.as_str()) != Some(project.as_str()) {
                         continue;
@@ -671,7 +1107,7 @@ impl SpideApp {
 
     // ------------------------------------------------------------------ actions
 
-    fn do_prune(&mut self, targets: Vec<Target>, at: Pos2) {
+    pub(super) fn do_prune(&mut self, targets: Vec<Target>, at: Pos2) {
         if self.review_active {
             return self.toast("info", "Use the proposal editor to plan deletions; canvas editing is disabled during review.");
         }
@@ -707,6 +1143,16 @@ impl SpideApp {
         }
         if let Target::Proposal { id } = &t {
             return self.open_proposal_review(Some(id.clone()));
+        }
+        if self.ctx.input(|i| i.modifiers.shift) {
+            // ⇧-click adds to / removes from the selection
+            if let Some(n) = self.selection.iter().position(|x| x == &t) {
+                self.selection.remove(n);
+            } else {
+                self.selection.push(t.clone());
+            }
+        } else {
+            self.selection = vec![t.clone()];
         }
         let key = match &t {
             Target::Class { name } => Some(format!("class:{name}")),
@@ -751,7 +1197,7 @@ impl SpideApp {
         }
     }
 
-    fn on_double_click(&mut self, t: Target, at: Pos2) {
+    pub(super) fn on_double_click(&mut self, t: Target, at: Pos2) {
         if self.review_active {
             return;
         }
@@ -923,7 +1369,7 @@ impl SpideApp {
     }
 
     /// The diagram on screen.
-    fn current_export_view(&self) -> ExportView {
+    pub(super) fn current_export_view(&self) -> ExportView {
         match self.tab {
             Tab::System if self.views.level() == C4Level::Context => ExportView::SystemContext,
             Tab::System => ExportView::SystemContainers,
@@ -1002,7 +1448,7 @@ impl SpideApp {
     }
 
     /// The export SVG of one diagram (None: nothing to draw).
-    fn export_svg_for(&mut self, v: &ExportView, level: Option<u8>, o: &ExportOptions) -> Option<(String, u32, u32)> {
+    pub(super) fn export_svg_for(&mut self, v: &ExportView, level: Option<u8>, o: &ExportOptions) -> Option<(String, u32, u32)> {
         let snap = self.snap.clone()?;
         let mut title = v.title();
         let level = level.or_else(|| v.has_detail().then(|| snap.view.settings.detail_for(if *v == ExportView::Class { "class" } else { "domain" })));
@@ -1166,12 +1612,12 @@ impl SpideApp {
         }
     }
 
-    fn settings_for_project(&self) -> ExportSettings {
+    pub(super) fn settings_for_project(&self) -> ExportSettings {
         let p = self.snap.as_ref().map(|s| s.project_dir.clone()).unwrap_or_default();
         self.export_settings.get(&p).cloned().unwrap_or_default()
     }
 
-    fn open_export(&mut self) {
+    pub(super) fn open_export(&mut self) {
         self.calm();
         self.export = Some(ExportDialog::new(self.settings_for_project()));
     }
@@ -1206,7 +1652,7 @@ impl SpideApp {
         Ok(Some(target))
     }
 
-    fn export_again(&mut self) {
+    pub(super) fn export_again(&mut self) {
         let s = self.settings_for_project();
         let Some(last) = s.last_path.clone() else { return self.open_export() };
         self.calm();
@@ -1457,14 +1903,7 @@ impl SpideApp {
                 let mut w = arg.split_whitespace();
                 let (sub, name) = (w.next().unwrap_or(""), w.next().map(String::from));
                 if arg.is_empty() || cmd == "/branches" {
-                    self.backend.call(
-                        |s, _| Ok(crate::commands::branch_list(s)),
-                        |app, r: Result<Vec<crate::commands::BranchInfo>, String>| match r {
-                            Ok(bs) => app.toast("info", format!("branches: {}", bs.iter().map(|b| format!("{}{} ({} classes, health {})", if b.active { "● " } else { "" }, b.name, b.classes, b.health)).collect::<Vec<_>>().join(" · "))),
-                            Err(e) => app.toast("error", e),
-                        },
-                    );
-                    return;
+                    return self.open_branches();
                 }
                 if let (true, Some(name)) = (sub == "delete", name) {
                     let ok = rfd::MessageDialog::new().set_title("Delete branch").set_level(rfd::MessageLevel::Warning).set_description(format!("Delete branch “{name}”? This cannot be undone.")).set_buttons(rfd::MessageButtons::OkCancelCustom("Delete".into(), "Cancel".into())).show();
@@ -1474,11 +1913,17 @@ impl SpideApp {
                     let msg = format!("deleted branch {name}");
                     return self.run_ok(move |s, _| crate::commands::branch_delete(s, name), move |app| app.toast("info", msg));
                 }
+                if !self.confirm_leave(super::leave::LeaveReason::SwitchBranch) {
+                    return;
+                }
                 self.run(move |s, _| crate::commands::branch_create(s, arg));
             }
             "/switch" => {
                 if arg.is_empty() {
-                    return self.toast("error", "usage: /switch <branch>");
+                    return self.open_branches();
+                }
+                if !self.confirm_leave(super::leave::LeaveReason::SwitchBranch) {
+                    return;
                 }
                 self.run(move |s, _| crate::commands::branch_switch(s, arg));
             }
@@ -1551,7 +1996,7 @@ impl SpideApp {
                 });
             }
             "/stop" => self.run(|_, pi| crate::commands::abort_agent(pi)),
-            "/agent" => self.run_ok(|s, pi| crate::commands::restart_agent(s, pi), |app| app.toast("info", "agent restarted")),
+            "/agent" => self.start_or_restart_agent(),
             "/folder" => self.run(|s, _| crate::commands::reveal_project(s)),
             "/add" => {
                 let mut w = arg.split_whitespace();
@@ -1608,13 +2053,9 @@ impl SpideApp {
                     self.toast("error", "usage: /export [png | puml | all | adr | archunit] — without an argument opens the export dialog");
                 }
             }
-            "/save" => {
-                if let Some(path) = rfd::FileDialog::new().set_file_name(format!("{}.json", slug(Some(&view.name)))).add_filter("Spide design", &["json"]).save_file() {
-                    let path = path.display().to_string();
-                    let msg = format!("saved {path}");
-                    self.run_ok(move |s, _| crate::commands::save_as(s, path), move |app| app.toast("info", msg));
-                }
-            }
+            "/save" if arg == "copy" => self.save_copy_dialog(),
+            "/save" => self.save_now(),
+            "/close" => self.close_project(),
             "/project" => self.open_project_rail(),
             "/readjust" => {
                 let classes: Vec<String> = arg.split_whitespace().map(|c| find_class(view, c).unwrap_or_else(|| c.to_string())).collect();
@@ -1635,23 +2076,16 @@ impl SpideApp {
             }
             "/reindex" => self.run(|s, _| crate::commands::reindex(s)),
             "/open" if arg.starts_with("project") => self.open_project_dialog(),
-            "/open" => {
-                if let Some(path) = rfd::FileDialog::new().add_filter("Spide design", &["json"]).pick_file() {
-                    let path = path.display().to_string();
-                    self.run(move |s, pi| crate::commands::open_design(s, pi, path));
-                }
-            }
-            "/new" => {
-                if let Some(dir) = rfd::FileDialog::new().set_title("Folder for the new design").pick_folder() {
-                    let dir = dir.display().to_string();
-                    self.run(move |s, pi| crate::commands::new_design(s, pi, dir));
-                }
-            }
+            // legacy: /open picked a design JSON. Same safe loader: a workspace's own design opens
+            // it; any other file is imported into a new folder (never copied over a design).
+            "/open" => self.import_dialog(),
+            "/import" => self.import_dialog(),
+            "/new" => self.new_project_dialog(),
             _ => self.toast("error", format!("unknown command {cmd}")),
         }
     }
 
-    fn fit_active(&mut self) {
+    pub(super) fn fit_active(&mut self) {
         let now = self.now();
         match self.tab {
             Tab::Class | Tab::Domain => {
@@ -1670,7 +2104,7 @@ impl SpideApp {
         }
     }
 
-    fn zoom_active(&mut self, f: f32) {
+    pub(super) fn zoom_active(&mut self, f: f32) {
         let now = self.now();
         match self.tab {
             Tab::Class => {
@@ -1700,70 +2134,73 @@ impl SpideApp {
             if in_field && key != Key::Escape {
                 continue;
             }
-            if m.command && !m.alt {
+            // every ⌘-shortcut belongs to the action registry: on macOS its native menu item
+            // receives the key (dispatching here too would run it twice)
+            if let Some(id) = super::actions::by_shortcut(key, m) {
+                if !cfg!(target_os = "macos") {
+                    self.perform(id);
+                }
+                continue;
+            }
+            if key == Key::Escape {
+                self.escape(in_field);
+            }
+            // canvas keyboard: Delete prunes the selection, ↑/↓ step through classes
+            if !in_field && m.is_none() {
                 match key {
-                    Key::K => {
-                        self.palette = Some(Palette::new(""));
-                        continue;
-                    }
-                    Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5 | Key::Num6 => {
-                        let n = [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6].iter().position(|k| *k == key).unwrap();
-                        self.tab = TAB_ORDER[n];
-                        continue;
-                    }
-                    Key::Z => {
-                        self.command(if m.shift { "/redo" } else { "/undo" });
-                        continue;
-                    }
-                    Key::T => {
-                        if self.review_active {
-                            if !self.leave_proposal_review() {
-                                continue;
-                            }
-                            self.review_active = false;
-                            self.refresh_proposal_canvas();
-                        }
-                        self.tab = Tab::Class;
-                        self.timeline = !self.timeline;
-                        if !self.timeline {
-                            self.close_timeline();
-                        }
-                        continue;
-                    }
-                    Key::B => {
-                        self.brief = !self.brief;
-                        continue;
-                    }
-                    Key::S => {
-                        self.command("/save");
-                        continue;
-                    }
-                    Key::O => {
-                        self.command("/open");
-                        continue;
-                    }
-                    // in the macOS app File › Export… (⌘E) and Export Again (⇧⌘E) own these shortcuts
-                    Key::E if !cfg!(target_os = "macos") => {
-                        if m.shift {
-                            self.export_again();
-                        } else {
-                            self.open_export();
-                        }
-                        continue;
-                    }
+                    Key::Delete | Key::Backspace if !self.selection.is_empty() => self.delete_selection(),
+                    Key::ArrowDown => self.select_step(true),
+                    Key::ArrowUp => self.select_step(false),
                     _ => {}
                 }
             }
-            if key == Key::Escape && self.export.is_none() && self.palette.is_none() && self.compare.is_none() && self.branch_cmp.is_none() {
-                if !in_field {
-                    self.focus_canvas(None);
-                    self.brief = false;
-                    self.stress = None;
-                    self.shown_decision = None;
-                }
-                self.prune = None;
-                self.hover.clear();
-                self.spotlight = None;
+        }
+    }
+
+    /// Escape dismisses exactly one layer: the topmost overlay, else the topmost transient state.
+    /// Overlays that read Escape themselves (Find, palette, export, dialogs) are left to do so.
+    fn escape(&mut self, in_field: bool) {
+        if self.export.is_some() || self.palette.is_some() || self.compare.is_some() || self.branch_cmp.is_some() || self.find.is_some() || self.show_shortcuts || self.settings_open || self.activity_open || self.integrations.open || self.documentation_open || self.about_open || self.new_project.is_some() || self.branches.is_some() || self.context.is_some() || self.class_editor.is_some() || self.new_element.is_some() {
+            return;
+        }
+        if self.prune.is_some() {
+            self.prune = None;
+        } else if self.inline.is_some() {
+            // the inline editor cancels itself
+        } else if self.hover.snapshot().is_some_and(|h| h.pinned) {
+            self.hover.clear();
+        } else if self.spotlight.is_some() {
+            self.spotlight = None;
+        } else if in_field {
+            // Escape in a text field only leaves the field
+        } else if !self.selection.is_empty() {
+            self.selection.clear();
+            self.focus_canvas(None);
+        } else if self.stress.is_some() || self.shown_decision.is_some() {
+            self.stress = None;
+            self.shown_decision = None;
+        } else if self.brief {
+            self.brief = false;
+        } else {
+            self.focus_canvas(None);
+            self.hover.clear();
+        }
+    }
+
+    /// When the last overlay closes, keyboard focus returns to the terminal it came from.
+    fn restore_overlay_focus(&mut self) {
+        let open = self.find.is_some() || self.palette.is_some() || self.show_shortcuts || self.new_project.is_some() || self.branches.is_some() || self.class_editor.is_some() || self.new_element.is_some();
+        if open {
+            if self.return_focus.is_none() {
+                let pi = self.term.as_ref().is_some_and(|t| t.has_focus);
+                let nvim = self.editor_pane && self.nvim_term.as_ref().is_some_and(|t| t.has_focus);
+                self.return_focus = Some(if pi { 1 } else if nvim { 2 } else { 0 });
+            }
+        } else if let Some(r) = self.return_focus.take() {
+            match r {
+                1 => if let Some(t) = self.term.as_mut() { t.focus_requested = true },
+                2 => if let Some(t) = self.nvim_term.as_mut() { t.focus_requested = true },
+                _ => {}
             }
         }
     }
@@ -1785,14 +2222,14 @@ impl SpideApp {
             show_implicit: class && self.show_implicit,
             lens: if class && self.preview.is_none() { self.lens } else { Lens::None },
             tension: if class && self.preview.is_none() { snap.metrics.tension } else { 0.0 },
-            read_only: class && (self.preview.is_some() || self.review_active),
+            read_only: snap.workspace_status != crate::state::WorkspaceStatus::Ready || (class && (self.preview.is_some() || self.review_active)),
             review_focus: None,
             stress: None,
             sync: None,
             hovered,
             spotlight: None,
-            can_move_to_package: class && self.preview.is_none() && !self.review_active,
-            can_edit: !(class && (self.preview.is_some() || self.review_active)),
+            can_move_to_package: snap.workspace_status == crate::state::WorkspaceStatus::Ready && class && self.preview.is_none() && !self.review_active,
+            can_edit: snap.workspace_status == crate::state::WorkspaceStatus::Ready && !(class && (self.preview.is_some() || self.review_active)),
             pickable: class && self.review_active && self.preview.is_none(),
             highlight: None,
             keep_layout: false,
@@ -1802,6 +2239,8 @@ impl SpideApp {
     pub fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.drain(&ctx);
+        let dropped: Vec<_> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        if !dropped.is_empty() { self.handle_open_paths(dropped); }
         if let Some(op) = super::trace::show(&ctx, &mut self.trace_ui, &self.backend.st) {
             self.backend.call(
                 move |st, _| crate::service::get(st).ok_or("service not ready".to_string())?.call_tool("revert_op", &json!({"op": op}), "user"),
@@ -1835,9 +2274,17 @@ impl SpideApp {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(d));
         }
         self.shortcuts(&ctx);
+        if let Some(e) = self.proposal_ui.drafts.error.take() {
+            self.toast("error", e);
+        }
         let full = ui.max_rect();
         ui.painter().rect_filled(full, 0.0, css::BG);
         let Some(snap) = self.snap.clone() else {
+            ui.vertical_centered(|ui| {
+                ui.spinner();
+                ui.label("Loading workspace…");
+                if ui.button("Retry workspace snapshot").clicked() { self.backend.st.emit(); }
+            });
             return;
         };
         // revision / project / tab changes close previews and cards
@@ -1870,8 +2317,88 @@ impl SpideApp {
             let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
         }
-        let ws = Rect::from_min_max(Pos2::new(full.left(), full.top() + 30.0), full.max);
-        self.workspace_layout(ui, ws, &snap);
+        let mut workspace_top = full.top() + 30.0;
+        let status = &snap.workspace_status;
+        let problem = match status {
+            crate::state::WorkspaceStatus::ReadOnly => Some("Read-only — another process owns this workspace. Editing and autosave are disabled.".to_string()),
+            crate::state::WorkspaceStatus::Failed(e) => Some(e.clone()),
+            crate::state::WorkspaceStatus::Loading => Some("Loading project…".to_string()),
+            crate::state::WorkspaceStatus::Closed => None,
+            crate::state::WorkspaceStatus::Ready => snap.save_status.error.clone()
+                .or_else(|| snap.save_status.history_error.as_ref().map(|e| format!("Design saved, but history could not be written: {e}")))
+                .or_else(|| snap.save_status.recovery_error.as_ref().map(|e| format!("Design saved, but its recovery copy could not be kept: {e}"))),
+        };
+        if let Some(problem) = problem {
+            let banner = Rect::from_min_size(Pos2::new(full.left() + 12.0, workspace_top), Vec2::new(full.width() - 24.0, 64.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(banner), |ui| {
+                ui.label(RichText::new(&problem).color(css::WARN)).on_hover_text(&snap.design_path);
+                ui.horizontal(|ui| {
+                    if *status == crate::state::WorkspaceStatus::Ready && ui.button("Retry save").clicked() {
+                        self.run(|s, _| s.persist_and_emit());
+                    }
+                    if !matches!(status, crate::state::WorkspaceStatus::Failed(_) | crate::state::WorkspaceStatus::Closed | crate::state::WorkspaceStatus::Loading)
+                        && ui.button("Save Design Copy…").clicked() {
+                        self.command("/save");
+                    }
+                    if matches!(status, crate::state::WorkspaceStatus::Failed(_)) && ui.button("Recover a Copy…").on_hover_text("Create a new workspace from the newest recovery copy or history. The broken file is left untouched.").clicked() {
+                        if let Some(dir) = rfd::FileDialog::new().set_title("New, empty folder for the recovered copy").pick_folder() {
+                            let dir = dir.display().to_string();
+                            self.backend.transition(move |s, pi| crate::commands::recover_copy(s, pi, dir), |app, r| match r {
+                                Ok(label) => {
+                                    app.reset_workspace_ui();
+                                    app.toast("info", format!("Recovered from {label}"));
+                                }
+                                Err(e) => app.toast("error", e),
+                            });
+                        }
+                    }
+                    if ui.button("Open another project…").clicked() {
+                        self.open_project_dialog();
+                    }
+                    if matches!(status, crate::state::WorkspaceStatus::Failed(_)) && ui.button("Close").on_hover_text("Back to the welcome screen").clicked() {
+                        self.close_project();
+                    }
+                });
+            });
+            workspace_top += 68.0;
+        }
+        let ws = Rect::from_min_max(Pos2::new(full.left(), workspace_top), full.max);
+        self.update_title(&snap);
+        if matches!(snap.workspace_status, crate::state::WorkspaceStatus::Closed | crate::state::WorkspaceStatus::Failed(_)) {
+            self.welcome_layout(ui, ws, &snap);
+        } else {
+            self.workspace_layout(ui, ws, &snap);
+        }
+        self.find_overlay();
+        self.context_overlay();
+        self.property_overlays();
+        self.shortcuts_overlay();
+        self.settings_overlay();
+        self.draft_recovery_overlay();
+        self.observe_operation_status();
+        self.activity_overlay();
+        self.integration_overlay();
+        self.help_overlays();
+        if now - self.last_draft_save > 1.0 {
+            let _ = self.save_input_drafts(); // retained error is displayed by draft_recovery_overlay
+            self.last_draft_save = now;
+        }
+        self.restore_cameras();
+        if now - self.last_workspace_save > 5.0 {
+            self.remember_workspace();
+            if self.prefs_path.is_some() { self.save_prefs(); }
+            self.last_workspace_save = now;
+        }
+        self.branches_overlay();
+        self.restore_overlay_focus();
+        self.sync_menu();
+        if let Some(mut f) = self.new_project.take() {
+            match super::welcome::new_project_dialog(&ctx, &mut f) {
+                Some(super::welcome::NewOut::Create) => self.create_new_project(f),
+                Some(super::welcome::NewOut::Cancel) => {}
+                None => self.new_project = Some(f),
+            }
+        }
         chrome::toasts(&ctx, self.canvas_rect, &mut self.toasts);
     }
 
@@ -1973,6 +2500,7 @@ impl SpideApp {
             action = terminal::header(ui, snap.pi_status, self.restarting, &mut self.term_confirm, self.pane_palette.is_some(), self.editor_pane);
         });
         match action {
+            Some(PaneAction::Stop) => self.stop_agent(),
             Some(PaneAction::Collapse) => self.workspace.left_open = false,
             Some(PaneAction::ToggleEditor) => {
                 if self.editor_pane {
@@ -2035,9 +2563,10 @@ impl SpideApp {
             let mut act = None;
             egui::Area::new(egui::Id::unique("pane-palette")).order(egui::Order::Foreground).fixed_pos(pr.min).show(ui.ctx(), |ui| {
                 ui.set_width(pr.width());
-                act = overlays::palette(ui, p);
+                act = overlays::palette(ui, p, &self.prefs.favorite_commands);
             });
             match act {
+                Some(PaletteAction::ToggleFavorite(c)) => self.toggle_favorite_command(c),
                 Some(PaletteAction::Close) => self.pane_palette = None,
                 Some(PaletteAction::Run(c)) => {
                     self.pane_palette = None;
@@ -2155,7 +2684,7 @@ impl SpideApp {
     }
 
     /// Show the Project rail (create/open a project in design-only mode).
-    fn open_project_rail(&mut self) {
+    pub(super) fn open_project_rail(&mut self) {
         if !self.leave_proposal_review() {
             return;
         }
@@ -2191,21 +2720,43 @@ impl SpideApp {
             ProjectOut::CreateIn => {
                 let Some(dir) = rfd::FileDialog::new().set_title("Module folder for the Spide Project (where the code lives)").pick_folder() else { return };
                 if spide_core::project::is_project(&dir) {
+                    if !self.confirm_leave(super::leave::LeaveReason::SwitchProject) {
+                        return;
+                    }
                     let d = dir.display().to_string();
-                    return self.run(move |s, pi| crate::commands::open_project(s, pi, d));
+                    return self.run_transition(move |s, pi| crate::commands::open_project(s, pi, d));
                 }
                 let name = self.snap.as_ref().map(|s| s.view.name.clone()).filter(|n| n != "Untitled design").unwrap_or_else(|| dir.file_name().and_then(|n| n.to_str()).unwrap_or("project").to_string());
                 let m = crate::project::suggest_manifest(&dir, &name);
                 self.project_ui.form = Some(super::project::Form::new(dir, &m, false));
             }
             ProjectOut::Open => self.open_project_dialog(),
+            ProjectOut::Create(root, m, git) => {
+                if !self.confirm_leave(super::leave::LeaveReason::SwitchProject) {
+                    return;
+                }
+                self.backend.transition(
+                    move |s, pi| crate::commands::create_project(s, pi, root, m, git),
+                    |app, r: Result<Vec<String>, String>| {
+                        let added = match r {
+                            Ok(a) => a,
+                            Err(e) => return app.toast("error", e),
+                        };
+                        app.reset_workspace_ui();
+                        app.toast("info", if added.is_empty() { "Spide Project ready".to_string() } else { format!("Spide Project ready · local files excluded from git ({})", added.join(", ")) });
+                    },
+                );
+            }
         }
     }
 
-    fn open_project_dialog(&mut self) {
-        if let Some(dir) = rfd::FileDialog::new().set_title("Spide Project folder (contains spide/project.json)").pick_folder() {
+    pub(super) fn open_project_dialog(&mut self) {
+        if !self.confirm_leave(super::leave::LeaveReason::SwitchProject) {
+            return;
+        }
+        if let Some(dir) = rfd::FileDialog::new().set_title("Open a project folder (with design.json or spide/project.json)").pick_folder() {
             let d = dir.display().to_string();
-            self.run(move |s, pi| crate::commands::open_project(s, pi, d));
+            self.run_transition(move |s, pi| crate::commands::open_folder(s, pi, d));
         }
     }
 
@@ -2279,6 +2830,12 @@ impl SpideApp {
                         inp.keep_layout = self.selected_proposal.as_ref().is_some_and(|p| self.review_seen.contains(p));
                         picked = self.proposal_ui.picked_classes();
                         inp.highlight = Some(&picked);
+                    } else {
+                        // the selection is drawn like review picks
+                        picked = self.selection.iter().filter_map(|t| match t { Target::Class { name } => Some(name.clone()), _ => None }).collect();
+                        if !picked.is_empty() {
+                            inp.highlight = Some(&picked);
+                        }
                     }
                     let c = self.class_canvas.as_mut().unwrap();
                     if c.pinned_focus.as_ref().is_some_and(|p| !data.classes.iter().any(|x| &x.name == p)) {
@@ -2332,11 +2889,13 @@ impl SpideApp {
         for o in canvas_out {
             match o {
                 CanvasOut::Hover(k, p) => {
-                    if self.prune.is_none() {
+                    if self.prune.is_none() && self.context.is_none() {
                         self.hover.move_to(k.as_deref(), Point { x: p.x, y: p.y }, now)
                     }
                 }
                 CanvasOut::Prune(t, p) => self.do_prune(t, p),
+                CanvasOut::Context(t, p) => self.open_context_menu(t, p),
+                CanvasOut::Select(ts, add) => self.select_targets(ts, add),
                 CanvasOut::Click(t, _) => self.on_click_target(t),
                 CanvasOut::DoubleClick(t, p) => self.on_double_click(t, p),
                 CanvasOut::MoveToPackage(c, pk) => {
@@ -2352,11 +2911,13 @@ impl SpideApp {
         for o in view_out {
             match o {
                 ViewOut::Hover(k, p) => {
-                    if self.prune.is_none() {
+                    if self.prune.is_none() && self.context.is_none() {
                         self.hover.move_to(k.as_deref(), Point { x: p.x, y: p.y }, now)
                     }
                 }
                 ViewOut::Prune(t, p) => self.do_prune(t, p),
+                ViewOut::Context(t, p) => self.open_context_menu(t, p),
+                ViewOut::Select(ts, add) => self.select_targets(ts, add),
                 ViewOut::Click(t) => self.on_click_target(t),
                 ViewOut::Regenerate(v, s) => {
                     let v = v.to_string();
@@ -2377,7 +2938,33 @@ impl SpideApp {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 let actions_w = 300.0;
                 ui.allocate_ui_with_layout(Vec2::new((chrome_r.width() - actions_w).max(80.0), 26.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.add(egui::Label::new(RichText::new(&view.name).font(bold(13.0)).color(css::TEXT)).truncate());
+                    let name = ui.add(egui::Label::new(RichText::new(&view.name).font(bold(13.0)).color(css::TEXT)).sense(Sense::click()).truncate());
+                    let name = name.on_hover_text(format!("{}\n{}\nRight-click for project actions", view.name, snap.project_dir));
+                    name.context_menu(|ui| {
+                        if ui.button("Rename Design…").on_hover_text("The design's title. The folder keeps its name.").clicked() {
+                            self.palette = Some(Palette::new("name "));
+                            ui.close();
+                        }
+                        if ui.button("Copy Project Path").clicked() {
+                            ui.ctx().copy_text(snap.project_dir.clone());
+                            ui.close();
+                        }
+                        if ui.button("Reveal in Finder").clicked() {
+                            self.reveal_project();
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Close Project").clicked() {
+                            ui.close();
+                            self.close_project();
+                        }
+                    });
+                    let (label, color) = match (&snap.workspace_status, snap.save_status.error.is_some()) {
+                        (crate::state::WorkspaceStatus::ReadOnly, _) => ("read-only", css::WARN),
+                        (_, true) => ("not saved", css::BAD),
+                        _ => ("saved", css::FAINT),
+                    };
+                    widgets::pill(ui, label, color, css::LINE, Color32::TRANSPARENT, sans(11.0)).on_hover_text(&snap.design_path);
                     widgets::pill(ui, format!("⎇ {}", snap.branch), css::DIM, css::LINE, css::RAISED, super::theme::mono(11.0)).on_hover_text("active branch (/branch, /switch, /compare, /merge)");
                     if view.settings.partner != spide_core::model::PartnerMode::Examiner {
                         let l = brief::MODES.iter().find(|m| m.0 == view.settings.partner).map(|m| m.1).unwrap_or("");
@@ -2421,7 +3008,7 @@ impl SpideApp {
                 _ => false,
             };
             if let Some(t) = chrome::tabs(ui, self.tab, &stale) {
-                self.tab = t;
+                self.go_to_tab(t);
             }
         });
         let w = used.response.rect.width();
@@ -2461,6 +3048,12 @@ impl SpideApp {
                     Some(chrome::Zoom::In) => self.zoom_active(1.25),
                     Some(chrome::Zoom::Fit) => self.fit_active(),
                     None => {}
+                }
+                if let Some(z) = self.active_zoom() {
+                    let b = egui::Button::new(RichText::new(format!("{:.0}%", z * 100.0)).font(super::theme::mono(11.5)).color(css::DIM)).frame(false).min_size(Vec2::new(44.0, 30.0));
+                    if ui.add(b).on_hover_text("Zoom level · click for actual size (⌘0)").clicked() {
+                        self.zoom_reset();
+                    }
                 }
                 if self.preview.is_some() {
                     let b = egui::Button::new(RichText::new("Exit preview").font(sans(12.0)).color(css::GHOST)).fill(Color32::from_rgba_unmultiplied(94, 234, 212, 20)).stroke(Stroke::new(1.0, Color32::from_rgba_unmultiplied(94, 234, 212, 102))).corner_radius(15).min_size(Vec2::new(0.0, 30.0));
@@ -2514,7 +3107,7 @@ impl SpideApp {
             match chrome::welcome(ui, r, brief_open) {
                 Some(chrome::WelcomeAction::Brief) => self.brief = true,
                 Some(chrome::WelcomeAction::Skip) => self.command("/skip"),
-                Some(chrome::WelcomeAction::Open) => self.command("/open"),
+                Some(chrome::WelcomeAction::Open) => self.open_project_dialog(),
                 Some(chrome::WelcomeAction::FocusPi) => {
                     self.workspace.left_open = true;
                     if let Some(t) = self.term.as_mut() {
@@ -2625,9 +3218,10 @@ impl SpideApp {
             let mut act = None;
             egui::Area::new(egui::Id::unique("workspace-palette")).order(egui::Order::Foreground).fixed_pos(Pos2::new(r.right() - 10.0 - w, r.top() + 40.0)).show(&ctx, |ui| {
                 ui.set_width(w);
-                act = overlays::palette(ui, p);
+                act = overlays::palette(ui, p, &self.prefs.favorite_commands);
             });
             match act {
+                Some(PaletteAction::ToggleFavorite(c)) => self.toggle_favorite_command(c),
                 Some(PaletteAction::Close) => self.palette = None,
                 Some(PaletteAction::Run(c)) => {
                     self.palette = None;
@@ -2977,18 +3571,24 @@ mod export_tests {
 
 impl eframe::App for SpideApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // the embedded Neovim owns its unsaved buffers: never lose them by closing the window
-        if ui.ctx().input(|i| i.viewport().close_requested()) && crate::editor::embedded().running() {
-            let dirty = crate::editor::embedded_dirty(&self.backend.st);
-            if !dirty.is_empty() {
+        // closing the window (red button, ⌘W, Quit) goes through the common leave guard
+        if ui.ctx().input(|i| i.viewport().close_requested()) {
+            if self.close_confirmed {
+                self.close_confirmed = false;
+            } else {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                self.show_editor();
-                self.toast("error", format!("Neovim has unsaved buffers ({}). Save or discard them there (:wa / :qa!), then quit.", dirty.len()));
+                if self.confirm_leave(super::leave::LeaveReason::CloseWindow) {
+                    self.close_confirmed = true;
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
             }
         }
         self.frame(ui);
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.remember_workspace();
+        let _ = self.save_input_drafts();
+        self.save_prefs();
         eframe::set_value(storage, "spide.workspace.v1", &self.workspace);
         eframe::set_value(storage, "spide.export.v1", &self.export_settings);
     }

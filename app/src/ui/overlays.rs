@@ -1,6 +1,6 @@
 //! Small floating overlays: prune feedback, inline rename, code view, command palette.
 
-use super::state::commands::{matches, normalize, strip_prefix, COMMANDS};
+use super::state::commands::{matches_pinned, normalize, strip_prefix, COMMANDS};
 use super::theme::{bold, css, hex, mono, sans};
 use super::widgets::{self, button, icon_button, primary_enabled};
 use egui::{Align2, Color32, Key, Margin, Pos2, RichText, Stroke, Vec2};
@@ -107,6 +107,7 @@ pub fn feedback(ctx: &egui::Context, p: &mut PruneState) -> Option<PruneAction> 
     out
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct InlineEdit {
     pub at: Pos2,
     pub label: String,
@@ -117,7 +118,7 @@ pub struct InlineEdit {
     pub kind: InlineKind,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub enum InlineKind {
     RenameClass(String),
     RenameAttribute(String, String),
@@ -184,12 +185,13 @@ impl Palette {
 }
 
 pub enum PaletteAction {
+    ToggleFavorite(String),
     Run(String),
     Close,
 }
 
 /// The `/spide` command palette (pi pane header and ⌘K).
-pub fn palette(ui: &mut egui::Ui, p: &mut Palette) -> Option<PaletteAction> {
+pub fn palette(ui: &mut egui::Ui, p: &mut Palette, favorites: &[String]) -> Option<PaletteAction> {
     let mut out = None;
     widgets::panel_frame().inner_margin(Margin::same(8)).show(ui, |ui| {
         ui.set_width(ui.available_width());
@@ -204,7 +206,7 @@ pub fn palette(ui: &mut egui::Ui, p: &mut Palette) -> Option<PaletteAction> {
         });
         ui.add_space(4.0);
         let query = strip_prefix(&p.text).to_lowercase();
-        let found = matches(&p.text);
+        let found = matches_pinned(&p.text, favorites);
         let mut submit = false;
         egui::Frame::new().fill(css::BG).stroke(Stroke::new(1.0, css::LINE)).corner_radius(9).inner_margin(Margin::symmetric(10, 0)).show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -289,12 +291,17 @@ pub fn palette(ui: &mut egui::Ui, p: &mut Palette) -> Option<PaletteAction> {
                 if on {
                     ui.painter().rect_filled(rect, 6.0, css::ACCENT_SOFT);
                 }
+                let pinned = favorites.iter().any(|f| f == c.command);
+                let star = egui::Rect::from_min_size(rect.min + Vec2::new(0.0, 6.0), Vec2::new(25.0, 28.0));
+                if ui.put(star, egui::Button::new(if pinned { "★" } else { "☆" }).frame(false)).on_hover_text(if pinned { "Unpin command" } else { "Pin command to the top" }).clicked() {
+                    out = Some(PaletteAction::ToggleFavorite(c.command.into()));
+                }
                 let pnt = ui.painter();
-                pnt.text(Pos2::new(rect.left() + 10.0, rect.top() + 13.0), Align2::LEFT_CENTER, c.label, sans(12.5), css::TEXT);
+                pnt.text(Pos2::new(rect.left() + 30.0, rect.top() + 13.0), Align2::LEFT_CENTER, c.label, sans(12.5), css::TEXT);
                 let code = format!("/spide {}{}", c.template.unwrap_or(c.command), if c.required { "…" } else { "" });
                 let code_w = pnt.text(Pos2::new(rect.right() - 10.0, rect.center().y), Align2::RIGHT_CENTER, &code, mono(11.0), if on { css::ACCENT } else { css::FAINT }).width();
                 let help = widgets::clip(c.help, ((rect.width() - code_w - 40.0) / 6.2).max(10.0) as usize);
-                pnt.text(Pos2::new(rect.left() + 10.0, rect.top() + 29.0), Align2::LEFT_CENTER, help, sans(11.5), css::FAINT);
+                pnt.text(Pos2::new(rect.left() + 30.0, rect.top() + 29.0), Align2::LEFT_CENTER, help, sans(11.5), css::FAINT);
                 if resp.clicked() && !p.pending {
                     if let Some(a) = choose(p, c) {
                     out = Some(a);

@@ -27,7 +27,12 @@ pub fn package_rank(p: Option<&Package>) -> u8 {
 }
 
 pub enum CanvasOut {
+    /// ⌥-right-click / ⌥-right-drag: the fast prune gesture
     Prune(Vec<Target>, Pos2),
+    /// right-click on an element: select it and open its context menu
+    Context(Target, Pos2),
+    /// right-drag box (⇧ adds to the selection)
+    Select(Vec<Target>, bool),
     Click(Target, Modifiers),
     DoubleClick(Target, Pos2),
     Hover(Option<String>, Pos2),
@@ -496,17 +501,23 @@ impl ClassCanvas {
                 }
                 ViewEvent::DoubleClick(..) => {}
                 ViewEvent::PruneOne(HitTarget::Target(t), p) => {
-                    if !inp.read_only {
+                    let alt = ui.input(|i| i.modifiers.alt);
+                    if alt && !inp.read_only {
                         out.push(CanvasOut::Prune(vec![t], p));
+                    } else if !inp.pickable {
+                        out.push(CanvasOut::Context(t, p));
                     }
                 }
                 ViewEvent::PruneOne(..) => {}
                 ViewEvent::Marquee(r, p) => {
-                    if !inp.read_only {
-                        let ts = self.collect(inp.classes, inp.relations, r);
+                    let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
+                    let ts = self.collect(inp.classes, inp.relations, r);
+                    if alt && !inp.read_only {
                         if !ts.is_empty() {
                             out.push(CanvasOut::Prune(ts, p));
                         }
+                    } else if !inp.pickable {
+                        out.push(CanvasOut::Select(ts, shift));
                     }
                 }
                 ViewEvent::DragStart(id, w) => {

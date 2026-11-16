@@ -44,20 +44,33 @@ pub fn same_plan(a: &Proposal, b: &Proposal) -> bool {
 pub struct PlanDrafts {
     memory: HashMap<String, PlanDraft>,
     pub file: Option<PathBuf>,
+    /// The last failed write of the drafts file (shown once, then cleared by the UI).
+    pub error: Option<String>,
+    blocked: bool,
 }
 
 impl PlanDrafts {
     pub fn with_file(file: PathBuf) -> Self {
-        let memory = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-        Self { memory, file: Some(file) }
-    }
-    fn persist(&self) {
-        if let Some(f) = &self.file {
-            if let Some(dir) = f.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            let _ = std::fs::write(f, serde_json::to_string(&self.memory).unwrap_or_default());
+        match std::fs::read_to_string(&file) {
+            Ok(t) => match serde_json::from_str(&t) {
+                Ok(memory) => Self { memory, file: Some(file), error: None, blocked: false },
+                Err(e) => Self { file: Some(file), error: Some(format!("Proposal drafts could not be loaded: {e}. Original file retained.")), blocked: true, ..Default::default() },
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self { file: Some(file), ..Default::default() },
+            Err(e) => Self { file: Some(file), error: Some(format!("Proposal drafts could not be read: {e}")), blocked: true, ..Default::default() },
         }
+    }
+    pub fn flush(&mut self) -> Result<(), String> {
+        if self.blocked { return Err("Cannot replace the unreadable proposal draft file. Copy your draft somewhere safe before leaving.".into()); }
+        if let Some(f) = &self.file {
+            let text = serde_json::to_string(&self.memory).map_err(|e| e.to_string())?;
+            if let Err(e) = crate::state::write_atomic(f, &text) {
+                let e = format!("Proposal drafts could not be saved to {}: {e}. They are kept in memory until Spide quits.", f.display());
+                self.error = Some(e.clone());
+                return Err(e);
+            }
+        }
+        Ok(())
     }
     pub fn load(&self, scope: &str) -> Option<PlanDraft> {
         self.memory.get(scope).filter(|d| d.scope == scope && !same_plan(&d.plan, &d.original)).cloned()
@@ -68,7 +81,7 @@ impl PlanDrafts {
         } else {
             self.memory.insert(draft.scope.clone(), draft);
         }
-        self.persist();
+        let _ = self.flush();
     }
 }
 

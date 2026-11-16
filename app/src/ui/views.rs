@@ -33,6 +33,8 @@ pub struct Views {
 
 pub enum ViewOut {
     Prune(Vec<Target>, Pos2),
+    Context(Target, Pos2),
+    Select(Vec<Target>, bool),
     Click(Target),
     Hover(Option<String>, Pos2),
     Regenerate(&'static str, Option<String>),
@@ -74,11 +76,22 @@ fn handle(vp: &mut Viewport, ui: &mut egui::Ui, rect: Rect, scene: &Scene, point
         match e {
             ViewEvent::Hover(k, p) => out.push(ViewOut::Hover(k, p)),
             ViewEvent::Click(HitTarget::Target(t), _) => out.push(ViewOut::Click(t)),
-            ViewEvent::PruneOne(HitTarget::Target(t), p) => out.push(ViewOut::Prune(vec![t], p)),
+            ViewEvent::PruneOne(HitTarget::Target(t), p) => {
+                if ui.input(|i| i.modifiers.alt) {
+                    out.push(ViewOut::Prune(vec![t], p));
+                } else {
+                    out.push(ViewOut::Context(t, p));
+                }
+            }
             ViewEvent::Marquee(r, p) => {
                 let ts = views::collect(points, r.x1, r.y1, r.x2, r.y2);
-                if !ts.is_empty() {
-                    out.push(ViewOut::Prune(ts, p));
+                let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
+                if alt {
+                    if !ts.is_empty() {
+                        out.push(ViewOut::Prune(ts, p));
+                    }
+                } else {
+                    out.push(ViewOut::Select(ts, shift));
                 }
             }
             _ => {}

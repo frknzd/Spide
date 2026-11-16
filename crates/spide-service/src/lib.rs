@@ -380,6 +380,11 @@ impl Service {
         let trust = self.trust();
         let decision = policy::check_caller(name, &trust, policy::Caller::from_actor(actor));
         let class = decision.class;
+        // A valid policy does not grant ownership of the workspace. Reject writes
+        // before dispatch (or journal writes), not after mutating the in-memory store.
+        if !self.store.writer() && class.is_some_and(|c| c != Class::Read) {
+            return Err("This workspace is read-only; another process owns it or it could not be opened.".into());
+        }
         let traced = !matches!(class, Some(Class::Read) | None);
         let op = self.next_op();
         let intent = args.get("intent").and_then(Value::as_str).or_else(|| args.get("rationale").and_then(Value::as_str)).or_else(|| args.get("question").and_then(Value::as_str)).unwrap_or("").to_string();

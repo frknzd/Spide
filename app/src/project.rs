@@ -105,20 +105,22 @@ pub fn design_path(root: &Path) -> PathBuf {
     }
 }
 
-/// Read the manifest and baseline of a project folder (None: a design-only folder).
-pub fn load(root: &Path) -> Option<ProjectState> {
-    if !project::is_project(root) {
-        return None;
+/// Read and validate project configuration without substituting a default manifest.
+pub fn load(root: &Path) -> Result<Option<ProjectState>, String> {
+    let path = root.join(project::MANIFEST);
+    if !path.try_exists().map_err(|e| format!("{}: {e}", path.display()))? {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let manifest = Manifest::parse(&text)?;
+    if manifest.version != 1 {
+        return Err(format!("Unsupported project manifest version {}: {}", manifest.version, path.display()));
+    }
+    let errors = manifest.validate(root, project::work_tree(root).as_deref());
+    if !errors.is_empty() {
+        return Err(format!("{}: {}", path.display(), errors.join("; ")));
     }
     let mut warnings = vec![];
-    let manifest = match std::fs::read_to_string(root.join(project::MANIFEST)).map_err(|e| e.to_string()).and_then(|t| Manifest::parse(&t)) {
-        Ok(m) => m,
-        Err(e) => {
-            warnings.push(e);
-            Manifest::default()
-        }
-    };
-    warnings.extend(manifest.validate(root, project::work_tree(root).as_deref()));
     let (baseline, written) = match std::fs::read_to_string(root.join(project::BASELINE)) {
         Ok(t) => match Baseline::parse(&t) {
             Ok(b) => (Some(b), Some(t)),
@@ -129,7 +131,7 @@ pub fn load(root: &Path) -> Option<ProjectState> {
         },
         Err(_) => (None, None),
     };
-    Some(ProjectState {
+    Ok(Some(ProjectState {
         root: root.to_path_buf(),
         manifest,
         index: CodeIndex::default(),
@@ -140,7 +142,7 @@ pub fn load(root: &Path) -> Option<ProjectState> {
         warnings,
         baseline_written: written,
         baseline_dirty: false,
-    })
+    }))
 }
 
 /// Re-run sync over the current design and index; move the baseline along in-sync items.
@@ -182,6 +184,7 @@ pub fn schedule_baseline_write(st: &AppState) {
         std::thread::sleep(Duration::from_millis(1000));
         *WRITING.lock().unwrap() = false;
         let mut s = st.lock();
+        if s.require_writable().is_err() { return; }
         let Some(p) = s.project.as_mut() else { return };
         if !p.baseline_dirty {
             return;
@@ -261,17 +264,20 @@ pub fn refresh_async(st: &AppState) {
         let Some(p) = s.project.as_mut() else { return };
         p.index.generation += 1;
         p.index.status = Some(IndexStatus::Indexing);
-        (p.index.generation, p.root.clone(), p.manifest.clone())
+        (p.index.generation, p.root.clone(), p.manifest.clone(), s.epoch)
     };
     st.emit();
     let st = st.clone();
     std::thread::spawn(move || {
-        let (generation, root, manifest) = job;
+        let (generation, root, manifest, epoch) = job;
         // canonical root: file paths in the index come out relative to it
         let canon = root.canonicalize().unwrap_or_else(|_| root.clone());
         let r = spide_import::import_project(&canon, &manifest.all_languages(), &manifest.roots, &manifest.exclude, manifest.code_root.as_deref());
         let dirty = {
             let mut s = st.lock();
+            if s.epoch != epoch {
+                return; // the workspace was closed or reopened meanwhile (A → B → A)
+            }
             let Some(p) = s.project.as_mut().filter(|p| p.root == root && p.index.generation == generation) else { return };
             match r {
                 Ok(r) => {
@@ -330,6 +336,7 @@ pub fn watch(st: &AppState) {
     }
     *WATCHER.lock().unwrap() = Some(watcher);
     let st = st.clone();
+    let epoch = st.epoch();
     std::thread::spawn(move || loop {
         let Ok(first) = rx.recv() else { return };
         let (mut java, mut base) = (first, !first);
@@ -343,7 +350,7 @@ pub fn watch(st: &AppState) {
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
-        if st.lock().project.as_ref().is_none_or(|p| p.root != root) {
+        if st.epoch() != epoch || st.lock().project.as_ref().is_none_or(|p| p.root != root) {
             return;
         }
         if base {
@@ -624,7 +631,7 @@ pub fn get_code(s: &Shared, args: &Value) -> Result<String, String> {
 /// Mark in sync (the user's): the current shapes become the baseline, written now.
 pub fn mark_synced(st: &AppState) -> Result<usize, String> {
     let accepted = {
-        let mut s = st.lock();
+        let mut s = st.lock_writable()?;
         let p = s.project.as_mut().ok_or("not a Spide Project")?;
         if !matches!(p.index.status, Some(IndexStatus::Current)) {
             return Err("the code index isn't current — wait for indexing or fix the skipped files".into());
@@ -666,7 +673,11 @@ mod tests {
     }
 
     fn state(dir: &Path) -> AppState {
-        AppState::new(Events::new().0, dir.to_path_buf())
+        if design_path(&project::resolve_root(dir)).exists() {
+            AppState::new(Events::new().0, dir.to_path_buf())
+        } else {
+            AppState::create(Events::new().0, dir.to_path_buf())
+        }
     }
 
     fn wait(st: &AppState, what: &str, f: impl Fn(&Shared) -> bool) {
@@ -689,13 +700,13 @@ mod tests {
     fn detection_and_design_path() {
         let dir = module();
         assert!(state(dir.path()).lock().project.is_none(), "a plain folder is design-only");
-        assert_eq!(state(dir.path()).lock().design_path(), dir.path().join("design.json"));
+        assert_eq!(state(dir.path()).lock().design_path(), dir.path().canonicalize().unwrap().join("design.json"));
         make_project(dir.path());
         for open in [dir.path().to_path_buf(), dir.path().join("spide"), dir.path().join("spide/project.json")] {
             let st = state(&open);
             let s = st.lock();
             assert!(s.project.is_some(), "{}", open.display());
-            assert_eq!(s.design_path(), dir.path().join("spide/design.json"));
+            assert_eq!(s.design_path(), dir.path().canonicalize().unwrap().join("spide/design.json"));
         }
     }
 

@@ -46,6 +46,7 @@ pub enum ViewEvent {
 
 pub struct Viewport {
     pub t: Transform,
+    pub reduced_motion: bool,
     anim: Option<(Transform, Transform, f64, f64)>,
     pub fitted: bool,
     last_size: Option<Vec2>,
@@ -67,6 +68,7 @@ impl Default for Viewport {
     fn default() -> Self {
         Self {
             t: Transform { x: 0.0, y: 0.0, k: 1.0 },
+            reduced_motion: false,
             anim: None,
             fitted: false,
             last_size: None,
@@ -96,8 +98,20 @@ impl Viewport {
         self.t.k
     }
 
+    pub fn restore_camera(&mut self, x: f32, y: f32, zoom: f32) {
+        self.t = Transform { x, y, k: zoom };
+        self.anim = None;
+        self.pending_fit = None;
+        self.fitted = true;
+    }
+
     fn animate_to(&mut self, to: Transform, secs: f64, now: f64) {
-        self.anim = Some((self.t, to, now, secs));
+        if self.reduced_motion {
+            self.t = to;
+            self.anim = None;
+        } else {
+            self.anim = Some((self.t, to, now, secs));
+        }
     }
 
     pub fn fit_rect(&mut self, b: [f64; 4], animate: bool, now: f64) {
@@ -163,6 +177,11 @@ impl Viewport {
     /// starts a node drag (otherwise the canvas pans).
     pub fn show(&mut self, ui: &mut egui::Ui, rect: Rect, scene: &Scene, m: &EguiMeasure, draggable: bool, events: &mut Vec<ViewEvent>) -> egui::Response {
         let now = ui.input(|i| i.time);
+        self.reduced_motion = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::unique("reduced-motion"))).unwrap_or(false);
+        if self.reduced_motion {
+            if let Some((_, to, _, _)) = self.anim.take() { self.t = to; }
+            self.clock.settle_all = true;
+        }
         // keep the content centred when the canvas resizes (panes dragged, window resized)
         if let Some(prev) = self.last_size {
             let d = rect.size() - prev;

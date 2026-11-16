@@ -28,6 +28,18 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
 <key>CFBundleIconFile</key><string>icon.icns</string>
 <key>LSMinimumSystemVersion</key><string>11.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>CFBundleDocumentTypes</key><array><dict>
+<key>CFBundleTypeName</key><string>Spide Project Shortcut</string>
+<key>CFBundleTypeRole</key><string>Editor</string>
+<key>LSHandlerRank</key><string>Owner</string>
+<key>LSItemContentTypes</key><array><string>dev.spide.project-shortcut</string></array>
+</dict></array>
+<key>UTExportedTypeDeclarations</key><array><dict>
+<key>UTTypeIdentifier</key><string>dev.spide.project-shortcut</string>
+<key>UTTypeDescription</key><string>Spide Project Shortcut</string>
+<key>UTTypeConformsTo</key><array><string>public.json</string></array>
+<key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>spideproject</string></array></dict>
+</dict></array>
 <key>NSDocumentsFolderUsageDescription</key><string>Spide and its pi agent open and save design projects in your Documents folder.</string>
 <key>NSDesktopFolderUsageDescription</key><string>Spide and its pi agent open and save projects on your Desktop.</string>
 <key>NSDownloadsFolderUsageDescription</key><string>Spide and its pi agent open and save projects in your Downloads folder.</string>

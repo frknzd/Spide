@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// The create / edit-manifest form.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Form {
     pub root: String,
     pub editing: bool,
@@ -25,6 +25,7 @@ pub struct Form {
     pub test_run: String,
     pub test_cwd: String,
     pub git_exclude: bool,
+    #[serde(skip)]
     pub preview: Option<Preview>,
 }
 
@@ -78,6 +79,8 @@ pub enum ProjectOut {
     CreateIn,
     /// pick a project to open
     Open,
+    /// create a Spide Project (leaves the current workspace: guarded by the app)
+    Create(String, Manifest, bool),
 }
 
 pub fn status_color(s: SyncStatus) -> Color32 {
@@ -137,7 +140,7 @@ pub fn show(ui: &mut Ui, st: &mut ProjectUi, snap: &Snapshot, backend: &Backend)
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 7.0;
             if let Some(form) = st.form.as_mut() {
-                if form_ui(ui, form, snap, backend) {
+                if form_ui(ui, form, snap, backend, &mut out) {
                     st.form = None;
                 }
                 return;
@@ -168,7 +171,7 @@ fn design_only(ui: &mut Ui, out: &mut Vec<ProjectOut>) {
     }
 }
 
-fn form_ui(ui: &mut Ui, f: &mut Form, snap: &Snapshot, backend: &Backend) -> bool {
+fn form_ui(ui: &mut Ui, f: &mut Form, snap: &Snapshot, backend: &Backend, out: &mut Vec<ProjectOut>) -> bool {
     let mut close = false;
     ui.label(RichText::new(if f.editing { "Edit project manifest" } else { "New Spide Project" }).font(bold(16.0)).color(css::TEXT));
     widgets::para(ui, &f.root, 11.5, css::FAINT);
@@ -229,13 +232,7 @@ fn form_ui(ui: &mut Ui, f: &mut Form, snap: &Snapshot, backend: &Backend) -> boo
             if f.editing {
                 backend.run_then(move |s, _| crate::commands::save_manifest(s, m), |app, ()| app.project_ui.form = None);
             } else {
-                backend.run_then(
-                    move |s, pi| crate::commands::create_project(s, pi, root, m, git),
-                    |app, added: Vec<String>| {
-                        app.project_ui.form = None;
-                        app.toast("info", if added.is_empty() { "Spide Project ready".to_string() } else { format!("Spide Project ready · local files excluded from git ({})", added.join(", ")) });
-                    },
-                );
+                out.push(ProjectOut::Create(root, m, git));
             }
         }
         if button(ui, "Cancel").clicked() {
