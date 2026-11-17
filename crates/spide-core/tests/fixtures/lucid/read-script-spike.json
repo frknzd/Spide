@@ -1,0 +1,292 @@
+{
+ "pageId": "0_0",
+ "items": [
+  {
+   "id": "xksNLetUQrNE",
+   "kind": "generator",
+   "className": "UMLSequenceGenerator",
+   "label": "",
+   "bbox": {
+    "x": 40,
+    "y": 660,
+    "w": 361.4463975694444,
+    "h": 680
+   },
+   "data": {
+    "spide.id": "seq:Checkout"
+   },
+   "markup": "title Checkout\nparticipant \"o : Order\" as o\nactor Customer\nCustomer -> o: checkout()\nactivate o\no --> Customer: receipt\ndeactivate o\nloop each line\n  o -> o: total()\nend"
+  },
+  {
+   "id": "yjsNPzCkm.CD",
+   "kind": "block",
+   "className": "UMLClassBlock",
+   "label": "PurchaseOrder\n- total: Money\n- placedAt: Instant\n+ checkout(): void",
+   "bbox": {
+    "x": 0,
+    "y": 300,
+    "w": 374.00173611111103,
+    "h": 172
+   },
+   "data": {
+    "spide.id": "class:PurchaseOrder"
+   },
+   "umlType": "class",
+   "textAreas": {
+    "Title": "PurchaseOrder",
+    "Text1": "- total: Money\n- placedAt: Instant",
+    "Text2": "+ checkout(): void"
+   },
+   "compartments": {
+    "name": "PurchaseOrder",
+    "attributes": [
+     "- total: Money",
+     "- placedAt: Instant"
+    ],
+    "operations": [
+     "+ checkout(): void"
+    ]
+   }
+  },
+  {
+   "id": "cksNpG4yqTkj",
+   "kind": "block",
+   "className": "UMLClassBlock",
+   "label": "«interface»\nPriced\n+ total(): Money",
+   "bbox": {
+    "x": 400,
+    "y": 300,
+    "w": 374.00173611111103,
+    "h": 194
+   },
+   "data": {
+    "spide.id": "class:Priced"
+   },
+   "umlType": "interface",
+   "textAreas": {
+    "Title": "«interface»\nPriced",
+    "Text1": "+ attribute1:type = defaultValue\n+ attribute2:type\n- attribute3:type",
+    "Text2": "+ total(): Money"
+   },
+   "compartments": {
+    "name": "«interface»\nPriced",
+    "attributes": [
+     "+ attribute1:type = defaultValue",
+     "+ attribute2:type",
+     "- attribute3:type"
+    ],
+    "operations": [
+     "+ total(): Money"
+    ]
+   }
+  },
+  {
+   "id": "cksNnBZXGKlS",
+   "kind": "line",
+   "className": "Line",
+   "label": "",
+   "bbox": null,
+   "data": {
+    "spide.id": "rel:PurchaseOrder-realization-Priced"
+   },
+   "from": "yjsNPzCkm.CD",
+   "to": "cksNpG4yqTkj",
+   "labels": [],
+   "rel": {
+    "type": "realization",
+    "label": "",
+    "fromMultiplicity": "",
+    "toMultiplicity": "",
+    "from": "yjsNPzCkm.CD",
+    "to": "cksNpG4yqTkj"
+   }
+  },
+  {
+   "id": "yjsNc6Afx~n6",
+   "kind": "block",
+   "className": "UMLClassBlock",
+   "label": "OrderLine\n- qty: int",
+   "bbox": {
+    "x": 400,
+    "y": 0,
+    "w": 374.00173611111103,
+    "h": 152
+   },
+   "data": {
+    "spide.id": "class:OrderLine"
+   },
+   "umlType": "class",
+   "textAreas": {
+    "Title": "OrderLine",
+    "Text1": "- qty: int",
+    "Text2": ""
+   },
+   "compartments": {
+    "name": "OrderLine",
+    "attributes": [
+     "- qty: int"
+    ],
+    "operations": []
+   }
+  },
+  {
+   "id": "ZksNbqHcUnup",
+   "kind": "block",
+   "className": "C4PersonBlock",
+   "label": "C4PersonBlock\n[Person]\nDescription of the person",
+   "bbox": {
+    "x": 1500,
+    "y": 1080,
+    "w": 288,
+    "h": 288
+   },
+   "data": {}
+  },
+  {
+   "id": "ZksNHPY5VorZ",
+   "kind": "block",
+   "className": "DefaultTextBlock",
+   "label": "DefaultTextBlock",
+   "bbox": {
+    "x": 1500,
+    "y": 960,
+    "w": 160,
+    "h": 80
+   },
+   "data": {}
+  },
+  {
+   "id": "ZksNfIhb6Qgt",
+   "kind": "block",
+   "className": "DatabaseBlock",
+   "label": "DatabaseBlock",
+   "bbox": {
+    "x": 1500,
+    "y": 240,
+    "w": 160,
+    "h": 80
+   },
+   "data": {}
+  },
+  {
+   "id": "YksN36f8lc9o",
+   "kind": "block",
+   "className": "RectangleBlock",
+   "label": "RectangleBlock",
+   "bbox": {
+    "x": 1500,
+    "y": 120,
+    "w": 160,
+    "h": 80
+   },
+   "data": {}
+  },
+  {
+   "id": "YksN517kdbBX",
+   "kind": "block",
+   "className": "ProcessBlock",
+   "label": "ProcessBlock",
+   "bbox": {
+    "x": 1500,
+    "y": 0,
+    "w": 160,
+    "h": 80
+   },
+   "data": {}
+  },
+  {
+   "id": "yksNvz3nGWEv",
+   "kind": "block",
+   "className": "UMLPackageBlock",
+   "label": "domain\nAttributes",
+   "bbox": {
+    "x": 900,
+    "y": 300,
+    "w": 400,
+    "h": 300
+   },
+   "data": {},
+   "umlType": "package",
+   "textAreas": {
+    "Title": "domain",
+    "Text": "Attributes"
+   }
+  },
+  {
+   "id": "yksNu.bGOwSJ",
+   "kind": "block",
+   "className": "UMLActorBlock",
+   "label": "Customer",
+   "bbox": {
+    "x": 900,
+    "y": 0,
+    "w": 80,
+    "h": 180
+   },
+   "data": {},
+   "umlType": "actor",
+   "textAreas": {
+    "Text": "Customer"
+   }
+  },
+  {
+   "id": "yksND~l1ORGW",
+   "kind": "block",
+   "className": "UMLUseCaseBlock",
+   "label": "Place order",
+   "bbox": {
+    "x": 1100,
+    "y": 0,
+    "w": 160,
+    "h": 120
+   },
+   "data": {},
+   "umlType": "useCase",
+   "textAreas": {
+    "Text": "Place order",
+    "ExtensionPoints": "Point 1",
+    "ExtensionPointLabel": "Extension Points"
+   }
+  },
+  {
+   "id": "ZksNe0jzGqvZ",
+   "kind": "container",
+   "className": "SparkFrameBlock",
+   "label": "SparkFrameBlock",
+   "bbox": {
+    "x": 1500,
+    "y": 720,
+    "w": 160,
+    "h": 80
+   },
+   "data": {}
+  },
+  {
+   "id": "ZksNe.uw6DuB",
+   "kind": "container",
+   "className": "RoundedRectangleContainerBlock",
+   "label": "RoundedRectangleContainerBlock",
+   "bbox": {
+    "x": 1500,
+    "y": 480,
+    "w": 160,
+    "h": 80
+   },
+   "data": {}
+  },
+  {
+   "id": "ZksN.5yVK9vZ",
+   "kind": "container",
+   "className": "RectangleContainerBlock",
+   "label": "RectangleContainerBlock",
+   "bbox": {
+    "x": 1500,
+    "y": 600,
+    "w": 160,
+    "h": 80
+   },
+   "data": {}
+  }
+ ],
+ "threads": []
+}

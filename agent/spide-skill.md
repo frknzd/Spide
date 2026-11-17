@@ -134,6 +134,9 @@ its confidence and its basis (structure, heuristic, agent, code).
 - **C4 levels**: external systems (`add_system`), containers (`add_container`, `assign_container` for packages) and
   runtime `add_link`s for systems/actors/protocols. Container-to-container dependencies are derived from the classes —
   don't duplicate them as links. Raise container choices as decisions like any other.
+- **Collaborators' comments**: `open_comments` in `get_design` (and `get_comments`) are what colleagues said about the
+  diagrams in Lucid. Take them into account when you next change those elements; `address_comment` links your decision or
+  proposal to the comment it answers. Lucid sync itself (push/pull) goes through the `spide_lucid` tool — see its skill.
 - **Provenance**: every element remembers the decision or proposal that introduced it; `decided` in `get_design` lists the
   choices made so far — stay consistent with them or raise a decision to revisit one.
 

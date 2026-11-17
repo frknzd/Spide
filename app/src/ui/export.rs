@@ -106,6 +106,8 @@ pub enum DialogOut {
     BatchCancel,
     /// regeneration didn't finish: write the diagrams as they are
     BatchExportAnyway,
+    /// update the Lucid documents (this view, or all diagrams in batch mode) through the agent
+    PushLucid { all: bool },
 }
 
 /// What an Obsidian Canvas shows of the export options (the preview draws the same).
@@ -201,6 +203,9 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                             if icon_button(ui, "×").on_hover_text("Close export").clicked() {
                                 out = Some(DialogOut::Close);
+                            }
+                            if ui.button(if d.batch_mode { "Push all to Lucid" } else { "Push to Lucid" }).on_hover_text("Update the shared Lucid document(s) in place through the agent (git-like: refused if colleagues changed them since the last sync — pull first)").clicked() {
+                                out = Some(DialogOut::PushLucid { all: d.batch_mode });
                             }
                         });
                     });

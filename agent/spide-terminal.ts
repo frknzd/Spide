@@ -1,6 +1,8 @@
 // App-owned pi extension: native TUI + a private structured control channel. No stdout protocol.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { connect, type Socket } from "node:net";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 export default function (pi: ExtensionAPI) {
   const path = process.env.SPIDE_CONTROL_SOCKET;
@@ -96,11 +98,130 @@ export default function (pi: ExtensionAPI) {
       return { action: "handled" };
     }
   });
-  const commands = ["tidy", "fit", "find", "focus", "detail", "lens", "implicit", "external", "brief", "rules", "mode", "strict", "lenient", "accept", "reject", "undo", "redo", "add", "pruned", "timeline", "trace", "goto", "nvim", "branch", "switch", "compare", "merge", "project", "readjust", "implement", "verify", "synced", "reindex", "coderoot", "export", "open", "new", "save", "name", "folder", "agent restart"];
+  // ---------------------------------------------------------------- Lucid sync
+  // pi talks to Lucid's hosted MCP server (OAuth via `/mcp login lucid`); Spide's MCP tools plan
+  // and verify. spide_lucid pipes JSON tool → tool, so diagram scripts never pass through the model.
+  const LUCID = { url: "https://mcp.lucid.app/mcp", exposure: "codemode", description: "Lucid (Lucidchart): documents Spide keeps in sync with the design" };
+  let lucidRegistered = false;
+  const registerLucid = () => {
+    if (lucidRegistered || typeof (pi as any).registerMcpServer !== "function") return;
+    try { (pi as any).registerMcpServer("lucid", LUCID); lucidRegistered = true; } catch { /* a user-level `lucid` server wins */ lucidRegistered = true; }
+  };
+  const lucidEnabled = () => {
+    try { return JSON.parse(readFileSync(join(process.cwd(), ".spide", "lucid", "config.json"), "utf8")).enabled === true; } catch { return false; }
+  };
+  pi.registerTool({
+    name: "spide_lucid",
+    label: "Spide ↔ Lucid",
+    description: "Sync Spide's diagrams with Lucid documents (one per diagram, frontier branch only), git-like. " +
+      "status: per diagram in_sync | local_ahead | remote_ahead | diverged | unlinked. push: update the Lucid documents in place " +
+      "(creates missing ones; refused when Lucid changed since the last sync — pull first). pull: colleagues' Lucid edits become " +
+      "ghost proposals and their comments/notes Spide comments. enable: turn sync on. link: attach a diagram to an existing document (key + url).",
+    promptSnippet: "Push/pull Spide diagrams to/from Lucid documents (git-like sync)",
+    promptGuidelines: ["Use spide_lucid for anything Lucid-related in Spide; never hand-write Lucid scripts or diagram JSON for Spide's diagrams."],
+    parameters: { type: "object", properties: {
+      action: { type: "string", enum: ["status", "push", "pull", "enable", "link"] },
+      key: { type: "string", description: "one diagram (class, domain, package, usecase, system.context, system.containers, sequence:<name>); omitted: all" },
+      url: { type: "string", description: "link: the Lucid document URL" },
+    }, required: ["action"] },
+    reachesTools: () => ["mcp__lucid", "mcp__spide"],
+    async execute(_id: string, params: any, signal: AbortSignal, onUpdate: any, tctx: any) {
+      const log: string[] = [];
+      const say = (s: string) => { log.push(s); onUpdate?.({ content: [{ type: "text", text: log.join("\n") }] }); };
+      const text = (r: any) => (r?.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
+      const call = async (name: string, args: object) => {
+        const r = await tctx.executeTool(name, args, { signal });
+        const t = text(r);
+        // Lucid reports script failures as text (the script's canvas changes were reverted)
+        if (r?.isError || (name === "mcp__lucid__lucid_run_script" && /^Error running script/.test(t))) {
+          if (name.startsWith("mcp__lucid")) throw new Error(`${t}\nIs Lucid connected? Sign in with /mcp login lucid (a Team/Enterprise admin may have to enable Lucid's MCP access).`);
+          throw new Error(t);
+        }
+        try { return JSON.parse(t); } catch { return t; }
+      };
+      const spide = (tool: string, args: object = {}) => call(`mcp__spide__${tool}`, args);
+      const lucid = (tool: string, args: object) => call(`mcp__lucid__${tool}`, args);
+      let script = "";
+      const read = async (doc: string) => {
+        script ||= await spide("lucid_read_script");
+        await lucid("lucid_load_script_documentation", { name: "uml", document_id: doc });
+        const r = await lucid("lucid_run_script", { source: script, document_id: doc });
+        return r?.result ?? r;
+      };
+      try {
+        if (params.action === "enable" || params.action === "link") {
+          const r = await spide("lucid_link", params.action === "link" ? { key: params.key, url: params.url } : {});
+          registerLucid();
+          return { content: [{ type: "text", text: `Lucid sync enabled (${JSON.stringify(r)}). If Lucid isn't signed in yet, ask the user to run /mcp login lucid.` }] };
+        }
+        registerLucid();
+        const status = await spide("lucid_status");
+        if (!status.enabled) return { content: [{ type: "text", text: "Lucid sync is off for this project: spide_lucid action=enable turns it on." }] };
+        if (!status.sync_allowed && params.action !== "status") return { content: [{ type: "text", text: status.reason }], isError: true };
+        const rows: any[] = status.diagrams.filter((d: any) => !params.key || d.key === params.key);
+        if (!rows.length) throw new Error(`no diagram ${params.key}`);
+        if (params.action === "status") {
+          const snapshots: Record<string, unknown> = {};
+          for (const d of rows.filter((d) => d.document_id)) { say(`reading ${d.title}…`); snapshots[d.key] = await read(d.document_id); }
+          const s = await spide("lucid_status", { snapshots });
+          const lines = s.diagrams.filter((d: any) => !params.key || d.key === params.key).map((d: any) => `${d.key}: ${d.status}${d.url ? ` — ${d.url}` : ""}${d.pending_proposals?.length ? ` (undecided: ${d.pending_proposals.join(", ")})` : ""}`);
+          return { content: [{ type: "text", text: lines.join("\n") }] };
+        }
+        if (params.action === "pull") {
+          for (const d of rows.filter((d) => d.document_id)) {
+            say(`pulling ${d.title}…`);
+            const r = await spide("lucid_pull", { key: d.key, snapshot: await read(d.document_id) });
+            say(`${d.key}: ${r.proposals.length} proposal(s), ${r.comments_new_or_updated} comment(s)${r.warnings.length ? `; ${r.warnings.join("; ")}` : ""}`);
+          }
+          return { content: [{ type: "text", text: log.join("\n") || "no linked documents to pull" }] };
+        }
+        // push
+        let folder = status.folder_id as string | null;
+        for (const d of rows.filter((d) => d.in_design)) {
+          say(`pushing ${d.title}…`);
+          let doc = d.document_id as string | null;
+          const plan = await spide("lucid_plan_push", { key: d.key, snapshot: doc ? await read(doc) : null });
+          let url = d.url;
+          if (plan.create) {
+            if (!folder) {
+              const f = await lucid("lucid_create_folder", { name: plan.title.split(" · ")[0] });
+              folder = String(f.id ?? f.folderId ?? "") || null;
+              if (folder) await spide("lucid_link", { folder_id: folder });
+            }
+            const created = await lucid("lucid_create_blank_document", { name: plan.title, product: "lucidchart" });
+            doc = created.documentId; url = created.editUrl;
+            if (folder) await lucid("lucid_update_document_metadata", { document_id: doc, parent: Number(folder) || folder });
+            await lucid("lucid_load_script_documentation", { name: "uml", document_id: doc });
+          }
+          for (const [i, chunk] of plan.chunks.entries()) {
+            say(`  edit ${i + 1}/${plan.chunks.length}`);
+            await lucid("lucid_run_script", { source: chunk, document_id: doc });
+          }
+          await spide("lucid_record_push", { key: d.key, document_id: doc, url, snapshot: await read(doc!) });
+          say(`${d.key}: in sync — ${url}`);
+        }
+        return { content: [{ type: "text", text: log.join("\n") }] };
+      } catch (e) {
+        const m = String((e as Error)?.message ?? e);
+        let refusal: any; try { refusal = JSON.parse(m); } catch { /* plain error */ }
+        return { content: [{ type: "text", text: [...log, refusal?.message ?? m].join("\n") }], isError: true };
+      }
+    },
+  } as any);
+  if (lucidEnabled()) registerLucid();
+  const commands = ["tidy", "fit", "find", "focus", "detail", "lens", "implicit", "external", "brief", "rules", "mode", "strict", "lenient", "accept", "reject", "undo", "redo", "add", "pruned", "timeline", "trace", "goto", "nvim", "branch", "switch", "compare", "merge", "project", "readjust", "implement", "verify", "synced", "reindex", "coderoot", "export", "open", "new", "save", "name", "folder", "agent restart", "lucid status", "lucid push", "lucid pull", "lucid enable", "lucid link"];
   pi.registerCommand("spide", {
     description: "Spide canvas commands (e.g. /spide tidy, /spide find Order). Pi commands stay native.",
     getArgumentCompletions: (prefix) => commands.filter((c) => c.startsWith(prefix)).map((c) => ({ value: c, label: c })),
     handler: async (args, c) => {
+      const lucid = args.trim().match(/^lucid\s*(status|push|pull|enable|link)?\s*(.*)$/);
+      if (lucid) {
+        // the agent runs spide_lucid (tool context: it can reach the Lucid and Spide MCP servers)
+        const [, action = "status", rest] = lucid;
+        const extra = action === "link" ? ` Link ${rest.split(/\s+/)[0] || "the diagram"} to ${rest.split(/\s+/)[1] || "the document the user names"}.` : rest ? ` Only the ${rest} diagram.` : "";
+        pi.sendUserMessage(`Run spide_lucid with action "${action}".${extra} Report the result briefly.`, ctx?.isIdle?.() === false ? { deliverAs: "followUp" } : undefined);
+        return;
+      }
       try { await request("command", { command: "/" + (args.trim() || "brief") }); }
       catch (err) { c.ui.notify(String(err), "error"); }
     },

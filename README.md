@@ -23,6 +23,7 @@ Spide is written in Rust with [egui](https://github.com/emilk/egui). It uses nat
 - [Migration](#migration)
 - [Views](#views)
 - [Exports](#exports)
+- [Lucid](#lucid)
 - [Architecture](#architecture)
 - [Development](#development)
 - [Known limitations](#known-limitations)
@@ -41,6 +42,7 @@ Spide is written in Rust with [egui](https://github.com/emilk/egui). It uses nat
 - **Agent first.** Everything meaningful is an MCP tool, also without a window: `spide-headless` serves MCP over stdio or authenticated HTTP. Project permissions (read-only, propose-only, autonomous) and a compact trace of every change.
 - **Design ↔ code synchronisation.** A Spide Project keeps the design next to its sources. Spide tracks a three-way sync status per element and supports agent-driven implementation and readjustment in both directions.
 - **Exports.** PNG, SVG, PDF, Obsidian Canvas, PlantUML (including C4), JSON, Markdown ADRs and ArchUnit tests, individually or as a batch.
+- **Lucid sync.** Every diagram is a Lucidchart document your colleagues view, comment on and edit. pi keeps them in sync, git-like: pushes update the documents in place, colleagues' edits come back as ghost proposals and their comments become design input for the agent.
 
 ## Requirements
 
@@ -125,6 +127,8 @@ A design-only project folder contains:
 | `.spide/sessions/` | The agent's pi sessions. Spide continues the latest one on start. |
 | `.spide/history.jsonl` | One snapshot per model change, used by the timeline. |
 | `.spide/branches/` | Inactive branches (`<name>.json`). `.spide/branch` names the active one. |
+| `.spide/lucid/` | Lucid sync (local): `config.json` (enabled, frontier branch, folder, one document per diagram) and `base/` (what each document held at the last sync). |
+| `.spide/skills/` | App-owned pi skills (Lucid sync; in a Spide Project also readjust/implement), refreshed at every launch. |
 
 A [Spide Project](#spide-projects-design-and-code-together) stores the design next to its code under `spide/` instead.
 
@@ -320,7 +324,7 @@ Neovim is Spide's editor — there is no code editor in Spide itself.
 ## Agents, headless mode and permissions
 
 - **Headless.** `spide-headless [--project DIR] mcp` serves MCP over stdio; `serve [--port N]` over loopback HTTP with a bearer token published owner-only in `.spide/endpoint.json` and `$XDG_STATE_HOME/spide/endpoints/`. No window, pi or Neovim needed. `trace`, `call TOOL JSON` and `trust` are CLI helpers. One process owns a workspace (`.spide/lock`); when the desktop opens a workspace a headless Spide serves, the headless one hands it over and forwards its agents to the desktop, and takes it back when the desktop quits.
-- **Tools** cover the whole application: design (propose, decisions, approve, apply ops, prune, rules, mode), code (`get_symbols`, `find_symbol`, `element_at`, `get_source`, `propose_patch`, `apply_patch`, `revert_op`), evidence and health (`doctor`, `analyze`, `get_evidence`, `get_health`, assessments, exceptions), history and branches, exports, sync, jobs (`run_check`, `job_status`, `cancel_job`), editor (`open_source`, `reveal`, `get_editor`, `editor_handoff`), events and trace. Purely visual commands (`ui_command`: lens, detail, focus …) need the desktop.
+- **Tools** cover the whole application: design (propose, decisions, approve, apply ops, prune, rules, mode), code (`get_symbols`, `find_symbol`, `element_at`, `get_source`, `propose_patch`, `apply_patch`, `revert_op`), evidence and health (`doctor`, `analyze`, `get_evidence`, `get_health`, assessments, exceptions), history and branches, exports, sync, Lucid (`lucid_*`, `get_comments`, `address_comment`), jobs (`run_check`, `job_status`, `cancel_job`), editor (`open_source`, `reveal`, `get_editor`, `editor_handoff`), events and trace. Purely visual commands (`ui_command`: lens, detail, focus …) need the desktop.
 - **Permissions** per project, kept outside the project in `~/.config/spide/trust.json` (an agent editing project files can't change them): **read-only** (inspect), **propose-only** (default: proposals, staged patches, assessments), **autonomous** (also apply decisions, ops and patches, and run owner-approved commands in trusted workspaces). Set with `spide-headless trust --permission autonomous [--trusted] [--approve-command "cargo test"]`. Owner-only actions (permissions, trust, rules, exceptions, priorities) are never available to agents. Changes need `expected_rev` (or a content hash) and accept an `idempotency_key`.
 - **Trace.** Every mediated operation is journaled (`.spide/trace/journal.jsonl`): intent before acting, outcome after (crashes show as *interrupted*). `/trace` (or `get_trace`, `spide-headless trace`) shows one line per change — intent → changed symbols/files → health and dimension deltas → checks → outcome — filterable to failures, conflicts or unverified changes; expand a row for the policy decision, revisions, issues, errors and the exact diff, and revert source changes as new guarded changes. Secrets are redacted and output is bounded. It is an operational record, not a tamper-proof audit log.
 
@@ -355,13 +359,44 @@ Neovim is Spide's editor — there is no code editor in Spide itself.
 
 **Batch export.** In Export (⌘E), choose **All diagrams**. Then pick the diagrams, the detail levels, the formats and one or more settings profiles. Stale agent-generated diagrams are regenerated first. Spide writes one file per diagram × detail level × profile × format. Files go into a new timestamped folder, are written atomically, and come with progress reporting and cancellation. If the design changes during the export, the batch stops, so every file comes from the same revision.
 
+## Lucid
+
+Spide keeps one [Lucid](https://lucid.co) (Lucidchart) document per diagram — system context, containers, class,
+domain, package, use cases and one per sequence — so people outside Spide can follow, comment on and edit the design.
+The embedded pi agent talks to Lucid's hosted MCP server (`https://mcp.lucid.app/mcp`); Spide never sees Lucid
+credentials.
+
+- **Setup.** Help → Integrations… → *Enable Lucid sync* (or `/spide lucid enable`), then sign in once in the terminal
+  with `/mcp login lucid`. On Lucid Team/Enterprise accounts an admin must enable MCP access first. The documents go
+  into a Lucid folder named after the design.
+- **Push** (`/spide lucid push`, Export → *Push to Lucid*, or Integrations → *Push*) creates missing documents and
+  updates existing ones **in place**: same URL, colleagues' comments, notes, extra shapes and styling stay; only shapes
+  Spide drew (tagged with a `spide.id` shape-data field) are changed, moved or deleted. Classes are native Lucid UML
+  class shapes with compartments, relations typed UML relationships with multiplicities, sequences Lucid sequence
+  diagrams (their markup round-trips exactly). Renaming a class in Spide renames the shape.
+- **Pull** (`/spide lucid pull`) turns colleagues' edits since the last sync into ghost proposals — additions and
+  changes, removals, *conflicts* (Lucid's version of what both sides changed) and moved boxes, separately — and their
+  comment threads and sticky notes into Spide comments. The agent sees open comments in `get_design`/`get_comments`,
+  links answers with `address_comment`, and the canvas shows a 💬 badge on commented elements.
+- **Git-like.** `/spide lucid status` reports per diagram: in sync, local ahead (push), remote ahead (pull), diverged
+  (pull first) or unlinked. A push is refused while the document changed since the last sync or while the last pull's
+  proposals are undecided; rejected remote edits are overwritten by the next push. A failed push records nothing and
+  can simply be rerun (the edit scripts are idempotent and Lucid applies each one atomically).
+- **Frontier branch.** Only `main` (configurable with `lucid_link`) syncs; on other branches Lucid actions are refused.
+- **Linking an existing document:** `/spide lucid link class https://lucid.app/lucidchart/…`, then pull imports it.
+- **Agents without pi** (e.g. Claude Code with the Lucid connector and `spide-headless`) use the same tools:
+  `lucid_read_script` (run with Lucid's `lucid_run_script`), `lucid_status`, `lucid_plan_push` (edit scripts),
+  `lucid_record_push`, `lucid_pull`, `lucid_export`, `lucid_link`/`lucid_unlink`. They never change the design
+  directly, so they are allowed in propose-only projects.
+
 ## Architecture
 
 ```
 crates/spide-core     Model, operations, store (proposals, decisions, undo), metrics and health,
                       responsibility and overlap analysis, rules, impact, scenarios, project
                       manifest and design ↔ code sync, derived views (incl. C4), diff, agent tool API,
-                      exporters (PlantUML, C4, PNG, ADR, ArchUnit)
+                      exporters (PlantUML, C4, PNG, ADR, ArchUnit), Lucid sync model (UML text,
+                      sequence markup, snapshots, three-way pull mapping, in-place patches, sync state)
 crates/spide-import   Source indexing with tree-sitter: Java importer and the Rust, TypeScript, Python, C,
                       C++ and Clojure adapters producing the language-neutral semantic graph
 crates/spide-lsp      Managed stdio LSP client (encoding negotiation, diagnostics, symbols), default
@@ -372,7 +407,7 @@ crates/spide-service  GUI-independent application service: workspace lock, polic
 crates/spide-headless `spide-headless`: MCP over stdio/HTTP without a window
 integrations/nvim     The Neovim plugin (Lua) and its tests
 crates/spide-diagram  GUI-independent scenes, compound Sugiyama layout, orthogonal routing, physics,
-                      all diagram views, themes, SVG and Obsidian Canvas export
+                      all diagram views, themes, SVG, Obsidian Canvas and Lucid (writer) export
 app                   eframe/egui desktop app: canvas, panels, terminal (alacritty_terminal),
                       MCP server (axum), pi PTY and private control socket, file watcher,
                       history and branches
@@ -414,3 +449,5 @@ SPIDE_SMOKE_DIR=/abs/path/to/java/project cargo test -p spide-import smoke -- --
 - The desktop's PNG/SVG/PDF exports need the window; headless exports are text (PlantUML, ADR, ArchUnit, JSON).
 - Permissions bound what agents do *through Spide*; an agent with its own filesystem/shell tools isn't sandboxed by them (its edits are detected and show up as external changes).
 - Branch merging is not a three-way merge.
+- Lucid: positions of new shapes come from Spide's layout and may need tidying in Lucid; colours are set when a shape is
+  created and not synced afterwards; the package and C4 dependency lines are derived (edits to them in Lucid are ignored).

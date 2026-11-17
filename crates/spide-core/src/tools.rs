@@ -170,6 +170,12 @@ pub fn tool_list() -> Value {
            change, the receiver's LCOM4, role fit, a score, a why, and ready-to-use OPS. Turn the top 2–3 into propose_decision \
            options (copy their ops) — the user chooses and approves.",
          "inputSchema":{"type":"object","properties":{"method":{"type":"string"},"group":{"type":"array","items":{"type":"string"}}}}},
+        {"name":"get_comments","description":"Comments from collaborators (Lucid comment threads and sticky notes) on the diagrams: \
+           what they said, about which element (`class:Order` …), and whether a decision/proposal already answers it. Open ones by default; all=true for every comment. \
+           Read them before proposing changes to the elements they are about.",
+         "inputSchema":{"type":"object","properties":{"all":{"type":"boolean"}}},"annotations":{"readOnlyHint":true}},
+        {"name":"address_comment","description":"Link a collaborator's comment to the decision or proposal (id) that answers it, so it no longer shows as open.",
+         "inputSchema":{"type":"object","properties":{"id":{"type":"string"},"by":{"type":"string","description":"decision (D…) or proposal (P…) id"}},"required":["id","by"]}},
         {"name":"set_sequence","description":"Create/replace one UML sequence diagram. LIFELINES are objects `name : Class` \
            (e.g. {\"name\":\"l\",\"class\":\"Loan\"}; omit class for actors and when the object is just `: Class`, then name = class; \
            multi=true for a multi-object `loans : Loan[*]`), left → right. STEPS run top to bottom: a message {from, to, method, args, \
@@ -461,6 +467,17 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             }
             ok(text, true)
         }
+        "get_comments" => {
+            let all = args.get("all").and_then(Value::as_bool).unwrap_or(false);
+            let list: Vec<&Comment> = store.design.comments.iter().filter(|c| all || c.is_open()).collect();
+            ok(serde_json::to_string(&list).unwrap(), false)
+        }
+        "address_comment" => {
+            let id = args.get("id").and_then(Value::as_str).ok_or("id required")?;
+            let by = args.get("by").and_then(Value::as_str).ok_or("by (decision or proposal id) required")?;
+            store.address_comment(id, by).map_err(|e| e.0)?;
+            ok(format!("Comment {id} is answered by {by}."), true)
+        }
         "set_sequence" => {
             let s = crate::sequence::from_input(args)?;
             let problems = store.set_sequence(s).map_err(|e| e.0)?;
@@ -706,6 +723,9 @@ pub fn design_digest(store: &Store) -> String {
         "decided": decided,
         "pruned_by_user": pruned,
         "recent_user_feedback": feedback,
+        "open_comments": d.comments.iter().filter(|c| c.is_open()).take(12).map(|c| json!({"id": c.id, "on": c.target.as_deref().unwrap_or(&c.diagram), "from": c.source,
+            "thread": c.entries.iter().map(|e| format!("{}: {}", e.author, e.text)).collect::<Vec<_>>(),
+            "hint": "consider it when you next change this part of the design; address_comment links your decision/proposal"})).collect::<Vec<_>>(),
         "domain_model": {
             "concepts": d.domain.concepts.iter().filter(|c| live(c.status)).map(|c| &c.name).collect::<Vec<_>>(),
             "associations": d.domain.associations.iter().filter(|a| live(a.status)).count(),

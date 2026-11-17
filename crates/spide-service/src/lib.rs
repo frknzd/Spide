@@ -12,6 +12,7 @@ pub mod nvim;
 mod parity;
 pub mod events;
 pub mod jobs;
+pub mod lucid;
 pub mod mcp;
 pub mod policy;
 pub mod trace;
@@ -365,6 +366,7 @@ impl Service {
             json!({"name":"redo","description":"Redo (autonomous only).","inputSchema": with_guard(json!({}), vec![])}),
         ]);
         arr.extend(parity::tools());
+        arr.extend(lucid::tools());
         for e in self.extensions.lock().unwrap().iter() {
             arr.extend(e.tools());
         }
@@ -855,6 +857,9 @@ impl Service {
                     }
                 }
                 if let Some(r) = self.parity(name, args) {
+                    return r;
+                }
+                if let Some(r) = self.lucid(name, args) {
                     return r;
                 }
                 let out = self.with_store(|st| tools::call(st, name, args))?;

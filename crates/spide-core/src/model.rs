@@ -824,6 +824,42 @@ pub struct ChangeScenario {
     pub proposal: Option<String>,
 }
 
+/// A comment from outside Spide (a Lucid comment thread or a colleague's sticky note), kept so the
+/// agent sees it in later sessions and can link the design change that answers it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Comment {
+    /// `C1`, `C2` …
+    pub id: String,
+    /// `lucid`
+    pub source: String,
+    /// The diagram it was made on (`class`, `sequence:Borrow` …).
+    pub diagram: String,
+    /// The source's id: the Lucid thread id, or `note:<item id>` for a sticky note.
+    pub thread: String,
+    /// The element it is about (Spide id such as `class:Order`), when pinned to or next to one.
+    pub target: Option<String>,
+    pub entries: Vec<CommentEntry>,
+    pub resolved: bool,
+    /// The decision or proposal that answers it (set by the agent).
+    pub addressed_by: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct CommentEntry {
+    pub author: String,
+    pub text: String,
+    /// ISO-8601
+    pub at: String,
+}
+
+impl Comment {
+    pub fn is_open(&self) -> bool {
+        !self.resolved && self.addressed_by.is_none()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Feedback {
@@ -962,6 +998,9 @@ pub struct Design {
     pub sequences: Vec<Sequence>,
     pub change_scenarios: Vec<ChangeScenario>,
     pub feedback: Vec<Feedback>,
+    /// Comments from collaborators (Lucid threads and notes).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<Comment>,
     pub log: Vec<LogEntry>,
     /// Canvas positions per view and element (e.g. `class` → `Order` → pos).
     pub layout: BTreeMap<String, BTreeMap<String, Pos>>,
@@ -1005,6 +1044,7 @@ impl Default for Design {
             sequences: vec![],
             change_scenarios: vec![],
             feedback: vec![],
+            comments: vec![],
             log: vec![],
             layout: BTreeMap::new(),
             settings: Settings::default(),

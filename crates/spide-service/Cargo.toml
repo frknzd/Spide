@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 spide-core = { path = "../spide-core" }
+spide-diagram = { path = "../spide-diagram" }
 spide-import = { path = "../spide-import" }
 spide-lsp = { path = "../spide-lsp" }
 serde = { version = "1", features = ["derive"] }

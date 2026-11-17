@@ -101,9 +101,12 @@ pub fn classify(tool: &str) -> Option<Class> {
     Some(match tool {
         "get_design" | "get_metrics" | "get_view" | "get_overlap" | "get_responsibilities" | "suggest_home" | "workspace_info" | "get_events" | "get_trace" | "job_status"
         | "get_policy" | "get_health" | "doctor" | "get_symbols" | "find_symbol" | "get_source" | "get_project" | "get_sync" | "get_code" | "list_history"
-        | "list_branches" | "get_selection" | "list_exceptions" | "get_assessment_requests" | "get_evidence" | "element_at" | "get_editor" | "open_source" | "reveal" | "select" | "editor_register" | "editor_unregister" | "editor_prefer" | "editor_diagnostics" | "list_patches" | "compare_branch" | "ui_command" | "yield_workspace" => Read,
+        | "list_branches" | "get_selection" | "list_exceptions" | "get_assessment_requests" | "get_evidence" | "element_at" | "get_editor" | "open_source" | "reveal" | "select" | "editor_register" | "editor_unregister" | "editor_prefer" | "editor_diagnostics" | "list_patches" | "compare_branch" | "ui_command" | "yield_workspace"
+        | "get_comments" | "lucid_status" | "lucid_export" | "lucid_plan_push" | "lucid_read_script" => Read,
         "propose_ops" | "propose_decision" | "evaluate_defense" | "assess_class" | "set_use_cases" | "set_domain_model" | "set_sequence" | "set_change_impact"
-        | "propose_patch" | "restore_revision" | "merge_branch" | "submit_assessment" | "propose_exception" | "request_change" | "request_assessment" | "assess_health" | "cancel_assessment" => Propose,
+        | "propose_patch" | "restore_revision" | "merge_branch" | "submit_assessment" | "propose_exception" | "request_change" | "request_assessment" | "assess_health" | "cancel_assessment"
+        // Lucid sync never changes the design directly: pulls become proposals, pushes write Lucid
+        | "address_comment" | "lucid_pull" | "lucid_record_push" | "lucid_link" | "lucid_unlink" => Propose,
         "approve_decision" | "dismiss_decision" | "select_option" | "undo" | "redo" | "apply_patch" | "switch_branch" | "create_branch"
         | "mark_in_sync" | "cancel_job" | "revert_op" | "editor_handoff" | "reject_patch" | "apply_ops" | "prune" | "restore" | "set_mode" | "export" => Apply,
         "run_check" | "analyze" => Execute,

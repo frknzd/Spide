@@ -87,6 +87,23 @@ impl Default for Viewport {
     }
 }
 
+/// Open collaborator comments per element key (`class:Order` …), drawn as badges on the canvas.
+pub fn set_comment_badges(ctx: &egui::Context, design: Option<&spide_core::Design>) {
+    let mut m: std::collections::HashMap<String, usize> = Default::default();
+    for c in design.map(|d| d.comments.as_slice()).unwrap_or_default().iter().filter(|c| c.is_open()) {
+        if let Some(t) = &c.target {
+            // the domain view's concepts are drawn with class keys
+            let key = t.strip_prefix("concept:").map(|n| format!("class:{n}")).unwrap_or_else(|| t.clone());
+            *m.entry(key).or_default() += 1;
+        }
+    }
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("spide-comment-badges"), std::sync::Arc::new(m)));
+}
+
+fn comment_badges(ctx: &egui::Context) -> std::sync::Arc<std::collections::HashMap<String, usize>> {
+    ctx.data(|d| d.get_temp(egui::Id::unique("spide-comment-badges"))).unwrap_or_default()
+}
+
 impl Viewport {
     pub fn view(&self) -> View {
         View { origin: self.rect.min + egui::vec2(self.t.x, self.t.y), k: self.t.k }
@@ -350,6 +367,23 @@ impl Viewport {
             sp.paint(&scene.root);
         }
         self.clock.end_frame();
+        // collaborator comments: a speech-bubble badge at the element's top-right corner
+        let badges = comment_badges(ui.ctx());
+        if !badges.is_empty() {
+            let v = self.view();
+            let mut drawn = std::collections::HashSet::new();
+            for h in &scene.hits {
+                let (spide_diagram::scene::HitShape::Rect { x2, y1, .. }, Some(key)) = (&h.shape, &h.hover) else { continue };
+                let Some(n) = badges.get(key) else { continue };
+                if !drawn.insert(key.clone()) {
+                    continue;
+                }
+                let at = v.to_screen(spide_diagram::scene::Xf::ID, [*x2, *y1]);
+                let r = Rect::from_center_size(at + egui::vec2(-2.0, 2.0), egui::vec2(if *n > 9 { 30.0 } else { 24.0 }, 17.0));
+                painter.rect_filled(r, 8.5, super::theme::css::ACCENT);
+                painter.text(r.center(), egui::Align2::CENTER_CENTER, format!("💬{n}"), super::theme::sans(10.5), Color32::WHITE);
+            }
+        }
         if self.clock.busy && !interacting {
             ui.ctx().request_repaint();
         } else if interacting {

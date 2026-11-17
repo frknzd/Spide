@@ -1368,6 +1368,20 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         out
     }
 
+    /// The Lucid diagram key of the diagram on screen (`class`, `sequence:<name>` …).
+    pub(super) fn lucid_key(&self) -> Option<String> {
+        Some(match self.current_export_view() {
+            ExportView::SystemContext => "system.context".into(),
+            ExportView::SystemContainers => "system.containers".into(),
+            ExportView::Class => "class".into(),
+            ExportView::Domain => "domain".into(),
+            ExportView::Package => "package".into(),
+            ExportView::Usecase => "usecase".into(),
+            ExportView::Sequence(n) if !n.is_empty() => format!("sequence:{n}"),
+            ExportView::Sequence(_) => return None,
+        })
+    }
+
     /// The diagram on screen.
     pub(super) fn current_export_view(&self) -> ExportView {
         match self.tab {
@@ -2239,6 +2253,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
     pub fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.drain(&ctx);
+        super::viewport::set_comment_badges(&ctx, self.snap.as_deref().map(|s| &s.view));
         let dropped: Vec<_> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
         if !dropped.is_empty() { self.handle_open_paths(dropped); }
         if let Some(op) = super::trace::show(&ctx, &mut self.trace_ui, &self.backend.st) {
@@ -3335,6 +3350,16 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                 }
                 Some(DialogOut::Reveal(p)) => {
                     let _ = crate::commands::reveal_path(p);
+                }
+                Some(DialogOut::PushLucid { all }) => {
+                    let key = if all { None } else { self.lucid_key() };
+                    let text = match key {
+                        Some(k) => format!("Run spide_lucid with action \"push\" for the {k} diagram and report the result briefly."),
+                        None => "Run spide_lucid with action \"push\" for all diagrams and report the result briefly.".to_string(),
+                    };
+                    self.backend.run(move |s, pi| crate::commands::send_prompt(s, pi, text, "class".into()));
+                    self.toast("info", "Asked the agent to push to Lucid; follow it in the terminal.");
+                    keep = false;
                 }
                 Some(DialogOut::Export) => {
                     dlg.state = ExportState::Busy;

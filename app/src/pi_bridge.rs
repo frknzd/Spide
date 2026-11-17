@@ -95,6 +95,15 @@ impl PiBridge {
         cmd.env("SPIDE_CONTROL_GENERATION", generation.to_string());
         cmd.env("SPIDE_MCP_TOKEN", &st.token);
         cmd.args(["--session-dir", &sessions.display().to_string(), "--continue", "--append-system-prompt", include_str!("../../agent/spide-skill.md"), "--tools", "*", "-e", &ext.display().to_string()]);
+        // app-owned skills every project gets (Lucid sync), refreshed at every launch
+        match write_skills(&project, &SKILLS) {
+            Ok(dirs) => {
+                for dir in dirs {
+                    cmd.args(["--skill", &dir.display().to_string()]);
+                }
+            }
+            Err(e) => eprintln!("spide: skills: {e}"),
+        }
         // Spide Project: the readjust/implement skills (app-owned, refreshed at every launch)
         if st.lock().project.is_some() {
             match write_project_skills(&project) {
@@ -117,6 +126,20 @@ pub const PROJECT_SKILLS: [(&str, &str); 2] = [
     ("spide-readjust", include_str!("../../agent/skills/spide-readjust/SKILL.md")),
     ("spide-implement", include_str!("../../agent/skills/spide-implement/SKILL.md")),
 ];
+
+/// Skills every project gets (written to `.spide/skills/<name>/SKILL.md`).
+pub const SKILLS: [(&str, &str); 1] = [("spide-lucid", include_str!("../../agent/skills/spide-lucid/SKILL.md"))];
+
+pub fn write_skills(project: &Path, skills: &[(&str, &str)]) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut out = vec![];
+    for (name, text) in skills {
+        let dir = project.join(".spide").join("skills").join(name);
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("SKILL.md"), text)?;
+        out.push(dir);
+    }
+    Ok(out)
+}
 
 pub fn write_project_skills(project: &Path) -> std::io::Result<Vec<std::path::PathBuf>> {
     let mut out = vec![];

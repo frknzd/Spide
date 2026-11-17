@@ -329,6 +329,33 @@ fn member_evidence(ui: &mut Ui, member: &spide_core::model::Method, qualified: &
 
 /// Draw the card body for a hover key. Returns false when there's nothing to show.
 pub fn body(ui: &mut Ui, key: &str, cx: &CardCtx, pinned: bool, selected: &Option<String>, actions: &mut Vec<CardAction>) -> bool {
+    let shown = element_body(ui, key, cx, pinned, selected, actions);
+    if shown {
+        comments_section(ui, key, cx.design);
+    }
+    shown
+}
+
+/// Open comments collaborators left on this element (Lucid threads and notes).
+fn comments_section(ui: &mut Ui, key: &str, design: &Design) {
+    let concept = key.strip_prefix("class:").map(|n| format!("concept:{n}"));
+    let open: Vec<&spide_core::model::Comment> = design.comments.iter().filter(|c| c.is_open() && (c.target.as_deref() == Some(key) || c.target.as_deref() == concept.as_deref())).collect();
+    if open.is_empty() {
+        return;
+    }
+    ui.add_space(8.0);
+    h(ui, &format!("comments from {}", if open.iter().all(|c| c.source == "lucid") { "Lucid" } else { "collaborators" }));
+    for c in open.iter().take(4) {
+        for e in c.entries.iter().take(3) {
+            wrap(ui, format!("💬 {}: {}", e.author, e.text), 12.0, css::TEXT);
+        }
+    }
+    if open.len() > 4 {
+        wrap(ui, format!("+{} more (get_comments)", open.len() - 4), 11.0, css::FAINT);
+    }
+}
+
+fn element_body(ui: &mut Ui, key: &str, cx: &CardCtx, pinned: bool, selected: &Option<String>, actions: &mut Vec<CardAction>) -> bool {
     let Some((kind, rest)) = key.split_once(':') else { return false };
     let design = cx.design;
     let metrics = cx.metrics;

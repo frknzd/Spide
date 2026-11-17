@@ -345,7 +345,7 @@ pub fn plan_title(p: &Proposal, snap: &Snapshot) -> String {
         .and_then(|id| snap.view.decisions.iter().find(|d| &d.id == id))
         .map(|d| d.question.clone())
         .or_else(|| p.rationale.clone())
-        .unwrap_or_else(|| format!("Changes from {}", p.source))
+        .unwrap_or_else(|| if p.source == "lucid" { "Changes from colleagues in Lucid".to_string() } else { format!("Changes from {}", p.source) })
 }
 
 /// What to do after the last decision is resolved.
@@ -958,7 +958,8 @@ fn footer(ui: &mut Ui, st: &mut ProposalUi, p: &Proposal, scope: &str, snap: &Sn
 fn advanced(ui: &mut Ui, st: &mut ProposalUi, p: &Proposal, saved: Option<&Proposal>, scope: &str, snap: &Snapshot, dirty: bool, conflict: bool, valid_preview: bool, backend: &Backend, out: &mut Vec<ProposalOut>, change: &mut Option<Proposal>) {
     let scope = scope.to_string();
     ui.add_enabled_ui(!st.busy, |ui| {
-        widgets::small_faint(ui, format!("{} · by {} · {}", p.id, p.source, if dirty { "unsaved manual edits" } else { "saved plan" }));
+        let by = if p.source == "lucid" { "colleagues in Lucid".to_string() } else { p.source.clone() };
+        widgets::small_faint(ui, format!("{} · by {by} · {}", p.id, if dirty { "unsaved manual edits" } else { "saved plan" }));
         ui.horizontal(|ui| {
             let can_save = dirty && !conflict && valid_preview && st.editing.is_none();
             if ui.add_enabled(can_save, egui::Button::new(RichText::new("Save plan").font(sans(12.0))).fill(css::RAISED).stroke(Stroke::new(1.0, css::LINE)).corner_radius(6)).clicked() {

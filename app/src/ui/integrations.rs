@@ -9,6 +9,8 @@ pub struct IntegrationUi {
     pub checking: bool,
     pub doctor: Option<serde_json::Value>,
     pub error: Option<String>,
+    /// `lucid_status` (local side; the agent reads the documents for the remote side)
+    pub lucid: Option<serde_json::Value>,
 }
 impl SpideApp {
     pub fn start_or_restart_agent(&mut self) {
@@ -37,6 +39,8 @@ impl SpideApp {
         let mut stop = false;
         let mut reindex = false;
         let mut doctor = false;
+        let mut lucid_enable = false;
+        let mut lucid_agent: Option<&str> = None;
         let (port, service, editors) = {
             let port = self.backend.st.lock().mcp_port;
             let svc = crate::service::get(&self.backend.st);
@@ -65,6 +69,46 @@ impl SpideApp {
                 if editors.is_empty() { ui.label("No Neovim sessions connected. Open source to attach an editor."); }
                 for e in editors { ui.label(format!("{} Neovim · pid {} · LSP clients: {}", e.kind, e.pid, if e.lsp.is_empty() { "none reported".into() } else { e.lsp.join(", ") })); }
                 ui.separator();
+                ui.heading("Lucid");
+                ui.label("Each diagram is a Lucid document colleagues can view, comment on and edit. pi keeps them in sync (git-like): Push updates them in place, Pull turns colleagues' edits into proposals and their comments into Spide comments.");
+                match &self.integrations.lucid {
+                    Some(l) if l["loading"] == true => { ui.spinner(); }
+                    Some(l) if l.get("error").is_some() => { ui.colored_label(css::WARN, l["error"].as_str().unwrap_or("Lucid status unavailable")); }
+                    Some(l) if l["enabled"] == true => {
+                        ui.label(format!("Syncs the {} branch{}", l["frontier_branch"].as_str().unwrap_or("main"), if l["sync_allowed"] == true { String::new() } else { format!(" — {}", l["reason"].as_str().unwrap_or("")) }));
+                        for d in l["diagrams"].as_array().into_iter().flatten() {
+                            ui.horizontal(|ui| {
+                                let status = d["status"].as_str().unwrap_or("");
+                                let local = match status {
+                                    "unlinked" => "not in Lucid yet",
+                                    "local_ahead" | "diverged" => "changed here since the last sync",
+                                    _ => "unchanged here since the last sync",
+                                };
+                                ui.label(format!("{} · {local}", d["title"].as_str().unwrap_or("")));
+                                if let Some(url) = d["url"].as_str() {
+                                    if ui.small_button("Open in Lucid").clicked() {
+                                        ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                                    }
+                                }
+                                if let Some(p) = d["pending_proposals"].as_array().filter(|p| !p.is_empty()) {
+                                    ui.colored_label(css::WARN, format!("{} undecided proposal(s) from Lucid", p.len()));
+                                }
+                            });
+                        }
+                        ui.horizontal(|ui| {
+                            let agent = !matches!(s.pi_status, PiStatus::Offline);
+                            if ui.add_enabled(agent, egui::Button::new("Check status")).clicked() { lucid_agent = Some("status"); }
+                            if ui.add_enabled(agent, egui::Button::new("Pull")).clicked() { lucid_agent = Some("pull"); }
+                            if ui.add_enabled(agent, egui::Button::new("Push")).clicked() { lucid_agent = Some("push"); }
+                        });
+                        ui.label("Sign in once in the terminal with /mcp login lucid. Lucid Team/Enterprise accounts need an admin to enable MCP access.");
+                    }
+                    Some(_) => {
+                        lucid_enable = ui.add_enabled(service, egui::Button::new("Enable Lucid sync")).clicked();
+                    }
+                    None => { ui.label("Lucid status unavailable (open a valid project first)."); }
+                }
+                ui.separator();
                 ui.heading("Code index and language tools");
                 match s.project.as_ref() {
                     Some(p) => {
@@ -87,6 +131,17 @@ impl SpideApp {
             });
         });
         self.integrations.open = open && !self.ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        if self.integrations.open && self.integrations.lucid.is_none() || lucid_enable {
+            self.refresh_lucid(lucid_enable);
+        }
+        if !self.integrations.open {
+            self.integrations.lucid = None;
+        }
+        if let Some(action) = lucid_agent {
+            let text = format!("Run spide_lucid with action \"{action}\" for all diagrams and report the result briefly.");
+            self.backend.run(move |s, pi| crate::commands::send_prompt(s, pi, text, "class".into()));
+            self.integrations.lucid = None;
+        }
         if start { self.start_or_restart_agent(); }
         if stop { self.stop_agent(); }
         if reindex { self.backend.run(|s, _| crate::commands::reindex(s)); }
@@ -104,6 +159,24 @@ impl SpideApp {
                 }
             });
         }
+    }
+}
+
+impl SpideApp {
+    /// Local Lucid sync status (`lucid_status` without reading the documents); `enable` turns sync on first.
+    pub fn refresh_lucid(&mut self, enable: bool) {
+        self.integrations.lucid = Some(serde_json::json!({"loading": true}));
+        self.backend.call(move |s, _| {
+            let svc = crate::service::get(s).ok_or("No workspace service")?;
+            if enable {
+                svc.call_tool("lucid_link", &serde_json::json!({}), "user")?;
+            }
+            let text = svc.call_tool("lucid_status", &serde_json::json!({}), "user")?;
+            serde_json::from_str::<serde_json::Value>(&text).map_err(|e| e.to_string())
+        }, |app, result| match result {
+            Ok(v) => app.integrations.lucid = Some(v),
+            Err(e) => app.integrations.lucid = Some(serde_json::json!({"error": e})),
+        });
     }
 }
 

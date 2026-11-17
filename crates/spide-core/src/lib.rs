@@ -13,6 +13,7 @@ pub mod evidence;
 pub mod health;
 pub mod home;
 pub mod impact;
+pub mod lucid;
 pub mod metrics;
 pub mod model;
 pub mod ops;

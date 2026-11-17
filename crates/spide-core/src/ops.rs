@@ -205,6 +205,14 @@ pub enum Op {
         #[serde(default)]
         method: Option<String>,
     },
+    /// Replace the domain model (e.g. edited by colleagues in Lucid). Pruned concepts survive.
+    SetDomainModel { model: DomainModel },
+    /// Replace the use case diagram. Pruned actors/use cases survive.
+    SetUseCases { model: UseCaseModel },
+    /// Create or replace one sequence diagram (by name).
+    SetSequence { sequence: Sequence },
+    /// Pin canvas positions in a view (`class`, `domain`): element → position.
+    SetLayout { view: String, positions: std::collections::BTreeMap<String, Pos> },
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -306,6 +314,10 @@ impl Op {
                 Some(m) => format!("unlink {class}.{m}()"),
                 None => format!("unlink {class}"),
             },
+            Op::SetDomainModel { model } => format!("update the domain model ({} concepts)", model.concepts.len()),
+            Op::SetUseCases { model } => format!("update the use cases ({} use cases)", model.use_cases.len()),
+            Op::SetSequence { sequence } => format!("update sequence \"{}\"", sequence.name),
+            Op::SetLayout { view, positions } => format!("move {} element{} in the {view} view", positions.len(), if positions.len() == 1 { "" } else { "s" }),
         }
     }
 
@@ -337,6 +349,8 @@ impl Op {
             | Op::AssignContainer { .. }
             | Op::AddLink { .. }
             | Op::RemoveLink { .. } => vec![],
+            Op::SetLayout { view, positions } if view == "class" => positions.keys().cloned().collect(),
+            Op::SetDomainModel { .. } | Op::SetUseCases { .. } | Op::SetSequence { .. } | Op::SetLayout { .. } => vec![],
         }
     }
 
@@ -933,6 +947,18 @@ impl Op {
                     d.links.remove(idx);
                 }
             }
+            Op::SetDomainModel { model } => set_domain_model(d, model, mode)?,
+            Op::SetUseCases { model } => set_use_cases(d, model, mode)?,
+            Op::SetSequence { sequence } => set_sequence(d, sequence, mode)?,
+            Op::SetLayout { view, positions } => {
+                if !matches!(view.as_str(), "class" | "domain") {
+                    return err(format!("no saved layout for the {view} view"));
+                }
+                let lay = d.layout.entry(view.clone()).or_default();
+                for (k, p) in positions {
+                    lay.insert(k.clone(), Pos { pinned: true, ..*p });
+                }
+            }
             Op::RemoveForce { name } => {
                 let idx = d
                     .forces
@@ -949,6 +975,91 @@ impl Op {
         }
         Ok(())
     }
+}
+
+// ------------------------------------------------------------------ derived views as operations
+
+/// Ghost marking: what is new or changed shows as proposed, what is gone as removing.
+fn ghost_merge<T: Clone + PartialEq>(old: &[T], new: &mut Vec<T>, key: impl Fn(&T) -> String, status: impl Fn(&mut T) -> &mut Status, ghost: bool) {
+    // pruned entries the new version leaves out survive (with their feedback)
+    for o in old {
+        let mut o2 = o.clone();
+        let st = *status(&mut o2);
+        if new.iter().any(|n| key(n) == key(o)) {
+            continue;
+        }
+        if st == Status::Pruned {
+            new.push(o2);
+        } else if ghost {
+            *status(&mut o2) = Status::Removing;
+            new.push(o2);
+        }
+    }
+    if ghost {
+        for n in new.iter_mut() {
+            let same = old.iter().any(|o| o == n);
+            let st = status(n);
+            if !same && *st != Status::Removing && *st != Status::Pruned {
+                *st = Status::Proposed;
+            }
+        }
+    }
+}
+
+fn set_domain_model(d: &mut Design, model: &DomainModel, mode: Mode) -> Result<(), OpError> {
+    let mut m = model.clone();
+    check_unique(m.concepts.iter().map(|c| c.name.as_str()), "concept")?;
+    if m.concepts.iter().any(|c| c.name.trim().is_empty()) {
+        return err("concept without a name");
+    }
+    for a in &m.associations {
+        if !m.concepts.iter().any(|c| c.name == a.from) || !m.concepts.iter().any(|c| c.name == a.to) {
+            return err(format!("association {} → {}: unknown concept", a.from, a.to));
+        }
+    }
+    let ghost = mode.is_ghost();
+    ghost_merge(&d.domain.concepts, &mut m.concepts, |c| c.name.clone(), |c| &mut c.status, ghost);
+    ghost_merge(&d.domain.associations, &mut m.associations, |a| a.id.clone(), |a| &mut a.status, ghost);
+    m.generated_rev = d.domain.generated_rev.max(m.generated_rev);
+    d.domain = m;
+    Ok(())
+}
+
+fn set_use_cases(d: &mut Design, model: &UseCaseModel, mode: Mode) -> Result<(), OpError> {
+    let mut m = model.clone();
+    check_unique(m.use_cases.iter().map(|u| u.name.as_str()), "use case")?;
+    check_unique(m.actors.iter().map(|a| a.name.as_str()), "actor")?;
+    let ghost = mode.is_ghost();
+    ghost_merge(&d.use_cases.actors, &mut m.actors, |a| a.name.clone(), |a| &mut a.status, ghost);
+    ghost_merge(&d.use_cases.use_cases, &mut m.use_cases, |u| u.name.clone(), |u| &mut u.status, ghost);
+    m.generated_rev = d.use_cases.generated_rev.max(m.generated_rev);
+    d.use_cases = m;
+    Ok(())
+}
+
+fn set_sequence(d: &mut Design, s: &Sequence, mode: Mode) -> Result<(), OpError> {
+    if s.name.trim().is_empty() {
+        return err("sequence needs a name");
+    }
+    let mut s = s.clone();
+    let old = d.sequences.iter().find(|x| x.name == s.name).cloned();
+    if mode.is_ghost() {
+        let old_msgs = old.as_ref().map(|o| o.messages.clone()).unwrap_or_default();
+        for m in s.messages.iter_mut() {
+            if m.status != Status::Pruned && !old_msgs.contains(m) {
+                m.status = Status::Proposed;
+            }
+        }
+        if old.is_none() {
+            s.status = Status::Proposed;
+        }
+    }
+    crate::store::validate_sequence(d, &mut s);
+    match d.sequences.iter_mut().find(|x| x.name == s.name) {
+        Some(x) => *x = s,
+        None => d.sequences.push(s),
+    }
+    Ok(())
 }
 
 /// Containers, external systems and actors share one name space (they are the C4 nodes).

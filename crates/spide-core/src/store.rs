@@ -578,6 +578,56 @@ impl Store {
         Ok(warnings)
     }
 
+    /// Record comments from collaborators (upsert by source + thread; the agent's `addressed_by` is
+    /// kept). Returns how many are new or changed.
+    pub fn upsert_comments(&mut self, incoming: Vec<Comment>) -> Result<usize, OpError> {
+        let changed: Vec<Comment> = incoming
+            .into_iter()
+            .filter(|c| {
+                self.design.comments.iter().find(|x| x.source == c.source && x.thread == c.thread).is_none_or(|x| x.entries != c.entries || x.resolved != c.resolved || x.target != c.target)
+            })
+            .collect();
+        if changed.is_empty() {
+            return Ok(0);
+        }
+        let n = changed.len();
+        self.mutate("lucid", format!("{n} comment{} from collaborators", if n == 1 { "" } else { "s" }), move |d| {
+            for c in changed {
+                match d.comments.iter_mut().find(|x| x.source == c.source && x.thread == c.thread) {
+                    Some(x) => {
+                        x.entries = c.entries;
+                        x.resolved = c.resolved;
+                        x.target = c.target;
+                        x.diagram = c.diagram;
+                    }
+                    None => {
+                        let id = d.next_id("C");
+                        d.comments.push(Comment { id, ..c });
+                    }
+                }
+            }
+            Ok(())
+        })?;
+        Ok(n)
+    }
+
+    /// Link a comment to the decision or proposal that answers it.
+    pub fn address_comment(&mut self, id: &str, by: &str) -> Result<(), OpError> {
+        if !self.design.comments.iter().any(|c| c.id == id) {
+            return Err(OpError(format!("unknown comment {id}")));
+        }
+        if !self.design.decisions.iter().any(|d| d.id == by) && !self.design.proposals.iter().any(|p| p.id == by) && !self.design.log.iter().any(|l| l.summary.contains(by)) {
+            return Err(OpError(format!("unknown decision or proposal {by}")));
+        }
+        let (id, by) = (id.to_string(), by.to_string());
+        self.mutate("agent", format!("comment {id} addressed by {by}"), move |d| {
+            if let Some(c) = d.comments.iter_mut().find(|c| c.id == id) {
+                c.addressed_by = Some(by);
+            }
+            Ok(())
+        })
+    }
+
     pub fn set_examiner(&mut self, mode: ExaminerMode) {
         self.design.settings.examiner = mode;
     }
