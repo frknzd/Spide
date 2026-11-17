@@ -1,6 +1,21 @@
 use spide_core::store::Target;
 use spide_core::*;
 
+#[test]
+fn documentation_setting_persists_without_losing_other_rules() {
+    let mut s = Store::default();
+    assert!(s.design.rules.private_documentation);
+    let mut rules = s.design.rules.clone();
+    rules.thresholds.max_method_lines = 77;
+    rules.private_documentation = false;
+    s.set_rules(rules).unwrap();
+    let restored = Design::from_json(&s.design.to_json()).unwrap();
+    assert!(!restored.rules.private_documentation);
+    assert_eq!(restored.rules.thresholds.max_method_lines, 77);
+    assert!(Store::default().design.rules.private_documentation);
+    assert!(serde_json::from_str::<rules::Rules>("{}").unwrap().private_documentation);
+}
+
 pub fn ops(json: &str) -> Vec<Op> {
     serde_json::from_str(json).expect("ops parse")
 }

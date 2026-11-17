@@ -27,6 +27,36 @@ fn rpc(s: &Service, id: u64, method: &str, params: Value) -> Value {
 }
 
 #[test]
+fn project_documentation_toggle_is_a_partial_persistent_rule_update() {
+    let t = tempfile::tempdir().unwrap();
+    let s = svc(t.path());
+    s.with_store(|st| st.design.rules.thresholds.max_method_lines = 77);
+    s.call_tool("set_rules", &json!({"rules":{"private_documentation":false}}), "user").unwrap();
+    assert!(!s.with_store(|st| st.design.rules.private_documentation));
+    assert_eq!(s.with_store(|st| st.design.rules.thresholds.max_method_lines), 77);
+    drop(s);
+    let s = svc(t.path());
+    assert!(!s.with_store(|st| st.design.rules.private_documentation));
+    assert_eq!(s.with_store(|st| st.design.rules.thresholds.max_method_lines), 77);
+}
+
+#[test]
+fn scoped_text_exports_exclude_transitive_neighbors() {
+    let t = tempfile::tempdir().unwrap();
+    let s = svc(t.path());
+    let d = spide_core::Design::from_json(&json!({"packages":[{"name":"ui"},{"name":"model"}],"classes":[
+        {"name":"Panel","package":"ui"},{"name":"Boundary","package":"model"},{"name":"Hidden","package":"model"}],
+        "relations":[{"id":"one","from":"Panel","to":"Boundary","kind":"dependency"},{"id":"two","from":"Boundary","to":"Hidden","kind":"dependency"}]
+    }).to_string()).unwrap();
+    s.with_store(|st| st.design = d);
+    s.call_tool("export", &json!({"format":"plantuml","package":"ui","path":"ui.puml"}), "user").unwrap();
+    let text = std::fs::read_to_string(t.path().join("ui.puml")).unwrap();
+    assert!(text.contains("Panel") && text.contains("Boundary"));
+    assert!(!text.contains("Hidden"));
+    assert!(s.call_tool("export", &json!({"format":"json","package":"ui","path":"bad.json"}), "user").is_err());
+}
+
+#[test]
 fn second_writer_is_refused_and_lock_released_on_drop() {
     let t = tempfile::tempdir().unwrap();
     let a = svc(t.path());

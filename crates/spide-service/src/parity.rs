@@ -13,7 +13,7 @@ pub fn tools() -> Vec<Value> {
         json!({"name":"prune","description":"Hide elements (kept, the agent is told not to reintroduce them), with optional feedback. Targets: {kind:class|attribute|method|relation|package,…}.","inputSchema":{"type":"object","properties":{"targets":{"type":"array","items":{"type":"object"}},"feedback":{"type":"string"},"expected_rev":{"type":"integer"}},"required":["targets","expected_rev"]}}),
         json!({"name":"restore","description":"Restore a pruned element.","inputSchema":{"type":"object","properties":{"target":{"type":"object"},"expected_rev":{"type":"integer"}},"required":["target","expected_rev"]}}),
         json!({"name":"set_mode","description":"Partner mode: examiner | socratic | devils_advocate | sketch.","inputSchema":{"type":"object","properties":{"mode":{"type":"string"},"expected_rev":{"type":"integer"}},"required":["mode","expected_rev"]}}),
-        json!({"name":"set_rules","description":"Architecture rules (owner only).","inputSchema":{"type":"object","properties":{"rules":{"type":"object"}},"required":["rules"]}}),
+        json!({"name":"set_rules","description":"Update project architecture rules (owner only). Omitted fields are preserved. rules.private_documentation toggles the default-on private-method source documentation health check.","inputSchema":{"type":"object","properties":{"rules":{"type":"object"}},"required":["rules"]}}),
         json!({"name":"list_history","description":"Design timeline: revisions with actor and summary.","inputSchema":{"type":"object","properties":{"limit":{"type":"integer"}}},"annotations":{"readOnlyHint":true}}),
         json!({"name":"restore_revision","description":"Propose the changes that bring the design back to a past revision (the user approves).","inputSchema":{"type":"object","properties":{"rev":{"type":"integer"}},"required":["rev"]}}),
         json!({"name":"list_branches","description":"Design branches with class counts and health.","inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true}}),
@@ -21,7 +21,7 @@ pub fn tools() -> Vec<Value> {
         json!({"name":"switch_branch","description":"Park the current design and load another branch.","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"expected_rev":{"type":"integer"}},"required":["name","expected_rev"]}}),
         json!({"name":"compare_branch","description":"Impact from the current design to a branch (health before/after, added/removed).","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"annotations":{"readOnlyHint":true}}),
         json!({"name":"merge_branch","description":"Bring a branch's changes in as proposals (additions/changes and removals separately).","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}),
-        json!({"name":"export","description":"Write a text export into the workspace: plantuml (class view), adr (one file per decision), archunit (Java tests), json (the design). `path` is workspace-relative.","inputSchema":{"type":"object","properties":{"format":{"type":"string","enum":["plantuml","adr","archunit","json"]},"path":{"type":"string"}},"required":["format","path"]}}),
+        json!({"name":"export","description":"Write a text export into the workspace: plantuml (class view), adr (one file per decision), archunit (Java tests), json (the design). `path` is workspace-relative.","inputSchema":{"type":"object","properties":{"format":{"type":"string","enum":["plantuml","adr","archunit","json"]},"path":{"type":"string"},"view":{"type":"string"},"package":{"type":"string","description":"PlantUML class view only: exact package plus direct incoming/outgoing boundary classes."}},"required":["format","path"]}}),
         json!({"name":"ui_command","description":"Run a desktop view command (/lens, /detail, /tidy, /focus …). Requires the desktop; headless returns an error.","inputSchema":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}),
     ]
 }
@@ -61,7 +61,10 @@ impl Service {
                 ok("ok")
             })(),
             "set_rules" => (|| {
-                let rules: spide_core::rules::Rules = serde_json::from_value(args.get("rules").cloned().unwrap_or(json!({}))).map_err(|e| format!("rules: {e}"))?;
+                let patch = args.get("rules").and_then(Value::as_object).ok_or("rules must be an object")?;
+                let mut value = self.with_store(|st| serde_json::to_value(&st.design.rules).unwrap());
+                for (key, field) in patch { value[key] = field.clone(); }
+                let rules: spide_core::rules::Rules = serde_json::from_value(value).map_err(|e| format!("rules: {e}"))?;
                 self.with_store(|st| st.set_rules(rules)).map_err(|e| e.0)?;
                 self.commit("user")?;
                 ok("ok")
@@ -148,6 +151,9 @@ impl Service {
                 }
                 let d = self.with_store(|st| st.design.clone());
                 let target = root.join(&path);
+                if args.get("package").is_some() && (s("format") != "plantuml" || args.get("view").and_then(Value::as_str).unwrap_or("class") != "class") {
+                    return Err("package scope is supported only for PlantUML class diagrams".into());
+                }
                 let written: Vec<String> = match s("format").as_str() {
                     "json" => {
                         crate::workspace::write_atomic(&target, &d.to_json()).map_err(|e| e.to_string())?;
@@ -160,7 +166,9 @@ impl Service {
                     "plantuml" => {
                         let m = spide_core::metrics::compute(&d, false);
                         let view = args.get("view").and_then(Value::as_str).unwrap_or("class");
-                        let text = spide_core::plantuml::export(view, &d, &m, &d.layout).map_err(|e| e.to_string())?;
+                        let text = if let Some(package) = args.get("package").and_then(Value::as_str) {
+                            spide_core::plantuml::export_package(&d, &m, package)?
+                        } else { spide_core::plantuml::export(view, &d, &m, &d.layout)? };
                         crate::workspace::write_atomic(&target, &text).map_err(|e| e.to_string())?;
                         vec![path.clone()]
                     }

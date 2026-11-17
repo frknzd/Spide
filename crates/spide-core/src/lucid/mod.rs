@@ -185,6 +185,7 @@ pub fn diagram_title(design: &str, key: &str) -> String {
         "domain" => "Domain model".to_string(),
         "package" => "Packages".to_string(),
         "usecase" => "Use cases".to_string(),
+        k if k.starts_with("class.package:") => format!("Class diagram · {} + boundary", &k[14..]),
         k => match k.strip_prefix("sequence:") {
             Some(n) => format!("Sequence: {n}"),
             None => k.to_string(),
@@ -221,6 +222,7 @@ pub fn diagram_keys(d: &crate::Design) -> Vec<String> {
     if d.live_classes().next().is_some() {
         out.push("class".to_string());
     }
+    out.extend(d.packages.iter().filter(|p| p.status.is_live()).map(|p| format!("class.package:{}", p.name)));
     if !d.domain.is_empty() {
         out.push("domain".to_string());
     }

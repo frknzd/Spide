@@ -67,6 +67,7 @@ pub struct ClassData {
     pub relations: Vec<Relation>,
     pub packages: Vec<Package>,
     pub implicit: Vec<spide_core::metrics::ImplicitEdge>,
+    pub scoped_metrics: Option<spide_core::metrics::Metrics>,
     pub saved: Option<std::collections::BTreeMap<String, spide_core::model::Pos>>,
 }
 
@@ -130,6 +131,8 @@ pub struct SpideApp {
     pub lens: Lens,
     pub decision_ui: DecisionUi,
     pub class_canvas: Option<ClassCanvas>,
+    pub(super) package_scope: Option<String>,
+    pub(super) full_class_canvas: Option<ClassCanvas>,
     pub domain_canvas: Option<ClassCanvas>,
     /// off-screen canvases for exports at other detail levels (same layout pipeline)
     pub export_canvases: HashMap<String, ClassCanvas>,
@@ -394,6 +397,8 @@ impl SpideApp {
             lens: Lens::None,
             decision_ui: DecisionUi::default(),
             class_canvas: None,
+            package_scope: None,
+            full_class_canvas: None,
             domain_canvas: None,
             export_canvases: HashMap::new(),
             views: Views::default(),
@@ -803,6 +808,8 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         self.brief = false;
         self.export = None;
         self.project_ui.form = None;
+        self.full_class_canvas = None;
+        self.package_scope = None;
         self.class_canvas = None;
         self.domain_canvas = None;
         self.export_canvases.clear();
@@ -819,7 +826,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         self.copying_image = false;
     }
 
-    fn run_ok(&self, f: impl FnOnce(&crate::state::AppState, &crate::pi_bridge::PiBridge) -> Result<(), String> + Send + 'static, ok: impl FnOnce(&mut SpideApp) + Send + 'static) {
+    pub(super) fn run_ok(&self, f: impl FnOnce(&crate::state::AppState, &crate::pi_bridge::PiBridge) -> Result<(), String> + Send + 'static, ok: impl FnOnce(&mut SpideApp) + Send + 'static) {
         self.backend.run_then(f, move |app, ()| ok(app));
     }
 
@@ -1029,16 +1036,33 @@ The original file is not changed.", design.name, design.live_classes().count(), 
 
     // ------------------------------------------------------------------ data
 
+    /// Change only the class view restriction; do not change the design or full-project health.
+    pub(super) fn set_package_scope(&mut self, scope: Option<String>) {
+        if scope == self.package_scope { self.tab = Tab::Class; return; }
+        if self.package_scope.is_none() { self.full_class_canvas = self.class_canvas.take(); }
+        else { self.class_canvas = None; }
+        self.package_scope = scope;
+        self.class_data = None;
+        if self.package_scope.is_none() { self.class_canvas = self.full_class_canvas.take(); }
+        self.selection.clear();
+        self.hover.clear();
+        self.spotlight = None;
+        self.tab = Tab::Class;
+    }
+
     fn class_data(&mut self) -> Option<Arc<ClassData>> {
         let snap = self.snap.clone()?;
         let phantoms = if self.lens == Lens::Sync { snap.project.as_ref().map(|p| p.phantoms.iter().map(|c| c.name.clone()).collect::<Vec<_>>()) } else { None };
-        let key = hash_of((snap.rev, &snap.project_dir, self.preview_gen, self.review_active, self.proposal_canvas.as_ref().map(|d| d.rev), phantoms));
+        if self.package_scope.as_ref().is_some_and(|p| !snap.view.packages.iter().any(|pk| &pk.name == p && pk.status.is_live())) {
+            self.set_package_scope(None);
+        }
+        let key = hash_of((snap.rev, &snap.project_dir, self.preview_gen, self.review_active, self.proposal_canvas.as_ref().map(|d| d.rev), phantoms, &self.package_scope));
         if let Some(d) = self.class_data.as_ref().filter(|d| d.key == key) {
             return Some(d.clone());
         }
         let view = &snap.view;
         let d: &Design = if self.review_active { self.proposal_canvas.as_ref().unwrap_or(view) } else { self.preview.as_deref().unwrap_or(view) };
-        let mut cd = ClassData { key, classes: d.classes.clone(), relations: d.relations.clone(), packages: d.packages.clone(), implicit: vec![], saved: self.preview.as_deref().unwrap_or(view).layout.get("class").cloned() };
+        let mut cd = ClassData { key, classes: d.classes.clone(), relations: d.relations.clone(), packages: d.packages.clone(), implicit: vec![], scoped_metrics: None, saved: self.preview.as_deref().unwrap_or(view).layout.get("class").cloned() };
         // sync lens: code-only classes join the canvas as "only in code" ghosts
         if let (Lens::Sync, None, false, Some(p)) = (self.lens, &self.preview, self.review_active, snap.project.as_ref()) {
             cd.classes.extend(p.phantoms.iter().cloned());
@@ -1046,6 +1070,20 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         }
         if self.preview.is_none() && !self.review_active {
             cd.implicit = snap.metrics.implicit_edges.clone();
+        }
+        if let Some(package) = &self.package_scope {
+            // Resolve after sync ghosts join the model, then project both graph and scene data.
+            let mut model = d.clone();
+            model.classes = cd.classes.clone();
+            model.relations = cd.relations.clone();
+            let scope = spide_core::scope::PackageScope::new(&model, &snap.metrics, package, true).ok()?;
+            let projected = scope.design(&model);
+            cd.classes = projected.classes;
+            cd.relations = projected.relations;
+            cd.packages = projected.packages;
+            cd.implicit.retain(|e| scope.includes_edge(&e.from, &e.to));
+            cd.scoped_metrics = Some(scope.metrics(&snap.metrics, &model));
+            cd.saved = None;
         }
         let a = Arc::new(cd);
         self.class_data = Some(a.clone());
@@ -1061,7 +1099,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         // the agent-built conceptual model (no link to the design's classes)
         let (classes, relations) = snap.view.domain.as_class_model();
         let saved = snap.view.layout.get("domain").cloned();
-        let a = Arc::new(ClassData { key, classes, relations, packages: vec![], implicit: vec![], saved });
+        let a = Arc::new(ClassData { key, classes, relations, packages: vec![], implicit: vec![], scoped_metrics: None, saved });
         self.domain_data = Some(a.clone());
         Some(a)
     }
@@ -1352,6 +1390,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         if has_classes {
             out.push(ExportView::Class);
         }
+        out.extend(d.packages.iter().filter(|p| p.status.is_live()).map(|p| ExportView::ClassPackage(p.name.clone())));
         // agent-built views also when still missing: a batch asks the agent to build them first
         if !d.domain.is_empty() || has_classes {
             out.push(ExportView::Domain);
@@ -1374,6 +1413,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
             ExportView::SystemContext => "system.context".into(),
             ExportView::SystemContainers => "system.containers".into(),
             ExportView::Class => "class".into(),
+            ExportView::ClassPackage(p) => format!("class.package:{p}"),
             ExportView::Domain => "domain".into(),
             ExportView::Package => "package".into(),
             ExportView::Usecase => "usecase".into(),
@@ -1387,7 +1427,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         match self.tab {
             Tab::System if self.views.level() == C4Level::Context => ExportView::SystemContext,
             Tab::System => ExportView::SystemContainers,
-            Tab::Class => ExportView::Class,
+            Tab::Class => self.package_scope.as_ref().map(|p| ExportView::ClassPackage(p.clone())).unwrap_or(ExportView::Class),
             Tab::Domain => ExportView::Domain,
             Tab::Package => ExportView::Package,
             Tab::Usecase => ExportView::Usecase,
@@ -1399,6 +1439,47 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         }
     }
 
+    /// Build requested export data without changing live scope/selection/caches.
+    fn export_class_data(&mut self, v: &ExportView, ghosts: bool) -> Option<Arc<ClassData>> {
+        let scope = match v { ExportView::ClassPackage(p) => Some(p.clone()), _ => None };
+        if let Some(package) = &scope {
+            let snap = self.snap.as_ref()?;
+            spide_core::scope::PackageScope::new(&snap.view, &snap.metrics, package, true).ok()?;
+        }
+        let original = std::mem::replace(&mut self.package_scope, scope);
+        let cache = self.class_data.take();
+        let result = self.class_data();
+        self.package_scope = original;
+        self.class_data = cache;
+        if let ExportView::ClassPackage(package) = v {
+            let snap = self.snap.as_ref()?;
+            let result = result?;
+            let mut model = snap.view.clone();
+            model.classes = result.classes.clone();
+            model.relations = result.relations.clone();
+            model.packages = result.packages.clone();
+            let scope = spide_core::scope::PackageScope::new(&model, &snap.metrics, package, ghosts).ok()?;
+            let projected = scope.design(&model);
+            return Some(Arc::new(ClassData {
+                key: hash_of((result.key, ghosts)), classes: projected.classes, relations: projected.relations,
+                packages: projected.packages,
+                implicit: result.implicit.iter().filter(|e| scope.includes_edge(&e.from, &e.to)).cloned().collect(),
+                scoped_metrics: Some(scope.metrics(&snap.metrics, &model)), saved: None,
+            }));
+        }
+        result
+    }
+
+    /// Text and visual exports share scope semantics without recomputing health.
+    fn export_plantuml_for(&self, v: &ExportView) -> Result<String, String> {
+        let snap = self.snap.as_ref().ok_or("no project")?;
+        if let ExportView::ClassPackage(package) = v {
+            spide_core::plantuml::export_package(&snap.view, &snap.metrics, package)
+        } else {
+            spide_core::plantuml::export(v.plantuml(), &snap.view, &snap.metrics, &snap.view.layout)
+        }
+    }
+
     /// One diagram's export scene, shared by the preview, single and batch exports. Class and Domain
     /// at the canvas's own detail level come from the live canvas (its layout, incl. what you
     /// dragged); other levels from an off-screen canvas running the same layout pipeline. The layout
@@ -1406,16 +1487,16 @@ The original file is not changed.", design.name, design.live_classes().count(), 
     fn export_scene(&mut self, v: &ExportView, level: Option<u8>, o: &ExportOptions) -> Option<Scene> {
         let snap = self.snap.clone()?;
         match v {
-            ExportView::Class | ExportView::Domain => {
-                let class = *v == ExportView::Class;
-                let data = if class { self.class_data()? } else { self.domain_data()? };
+            ExportView::Class | ExportView::ClassPackage(_) | ExportView::Domain => {
+                let class = !matches!(v, ExportView::Domain);
+                let data = if class { self.export_class_data(v, o.ghosts)? } else { self.domain_data()? };
                 let view_key = if class { "class" } else { "domain" };
                 let live_level = snap.view.settings.detail_for(view_key);
                 let level = level.unwrap_or(live_level).min(4);
                 let metrics = if class { Some(&snap.metrics) } else { None };
                 let inp = self.canvas_input(&data, &snap, metrics, level, None);
                 let now = self.now();
-                let canvas = if level == live_level {
+                let canvas = if level == live_level && *v == self.current_export_view() {
                     let slot = if class { &mut self.class_canvas } else { &mut self.domain_canvas };
                     slot.get_or_insert_with(|| ClassCanvas::new(format!("{}:{view_key}", snap.project_dir), view_key))
                 } else {
@@ -1435,7 +1516,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
     fn view_scene(&mut self, snap: &Snapshot, v: &ExportView) -> Option<Scene> {
         let measure = &self.measure;
         match v {
-            ExportView::Class | ExportView::Domain => None,
+            ExportView::Class | ExportView::ClassPackage(_) | ExportView::Domain => None,
             ExportView::Package => Some(spide_diagram::views::package_scene(measure, &snap.derived, &snap.metrics, &mut self.views.package).scene),
             ExportView::SystemContext | ExportView::SystemContainers => {
                 let l = if *v == ExportView::SystemContext { C4Level::Context } else { C4Level::Container };
@@ -1453,7 +1534,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
     fn export_tab(v: &ExportView) -> Tab {
         match v {
             ExportView::SystemContext | ExportView::SystemContainers => Tab::System,
-            ExportView::Class => Tab::Class,
+            ExportView::Class | ExportView::ClassPackage(_) => Tab::Class,
             ExportView::Domain => Tab::Domain,
             ExportView::Package => Tab::Package,
             ExportView::Usecase => Tab::Usecase,
@@ -1465,7 +1546,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
     pub(super) fn export_svg_for(&mut self, v: &ExportView, level: Option<u8>, o: &ExportOptions) -> Option<(String, u32, u32)> {
         let snap = self.snap.clone()?;
         let mut title = v.title();
-        let level = level.or_else(|| v.has_detail().then(|| snap.view.settings.detail_for(if *v == ExportView::Class { "class" } else { "domain" })));
+        let level = level.or_else(|| v.has_detail().then(|| snap.view.settings.detail_for(if matches!(v, ExportView::Class | ExportView::ClassPackage(_)) { "class" } else { "domain" })));
         if let (true, Some(l)) = (v.has_detail(), level) {
             title = format!("{title} · {}", spide_diagram::visuals::DETAIL_LABELS[l.min(4) as usize]);
         }
@@ -1485,7 +1566,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         use spide_diagram::canvas::{self, CanvasOptions, Source};
         let snap = self.snap.clone()?;
         let o = export::canvas_preview_options(o);
-        let level = level.or_else(|| v.has_detail().then(|| snap.view.settings.detail_for(if *v == ExportView::Class { "class" } else { "domain" })));
+        let level = level.or_else(|| v.has_detail().then(|| snap.view.settings.detail_for(if matches!(v, ExportView::Class | ExportView::ClassPackage(_)) { "class" } else { "domain" })));
         let mut view_title = v.title();
         if let (true, Some(l)) = (v.has_detail(), level) {
             view_title = format!("{view_title} · {}", DETAIL_LABELS[l.min(4) as usize]);
@@ -1505,14 +1586,14 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         let actors: Vec<&str> = snap.view.use_cases.actors.iter().map(|a| a.name.as_str()).collect();
         let is_actor = |n: &str| actors.contains(&n);
         let data = match v {
-            ExportView::Class => Some(self.class_data()?),
+            ExportView::Class | ExportView::ClassPackage(_) => Some(self.export_class_data(v, o.ghosts)?),
             ExportView::Domain => Some(self.domain_data()?),
             _ => None,
         };
         let src = match v {
-            ExportView::Class | ExportView::Domain => {
+            ExportView::Class | ExportView::ClassPackage(_) | ExportView::Domain => {
                 let d = data.as_deref()?;
-                Source::Classes { classes: &d.classes, relations: &d.relations, packages: &d.packages, package_deps: &snap.metrics.package_deps, conceptual: *v == ExportView::Domain }
+                Source::Classes { classes: &d.classes, relations: &d.relations, packages: &d.packages, package_deps: &d.scoped_metrics.as_ref().unwrap_or(&snap.metrics).package_deps, conceptual: *v == ExportView::Domain }
             }
             ExportView::Package => Source::Packages { packages: &snap.derived.packages.packages, deps: &snap.metrics.package_deps },
             ExportView::SystemContext => Source::System { view: &snap.derived.system, level: C4Level::Context },
@@ -1555,7 +1636,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                     Some(json) => export_jobs::write_atomic(&path, json.as_bytes()),
                 }
             }
-            Format::Puml => spide_core::plantuml::export(job.view.plantuml(), &snap.view, &snap.metrics, &snap.view.layout).and_then(|t| export_jobs::write_atomic(&path, t.as_bytes())),
+            Format::Puml => self.export_plantuml_for(&job.view).and_then(|t| export_jobs::write_atomic(&path, t.as_bytes())),
             f => {
                 let p = &run.profiles[job.profile.min(run.profiles.len() - 1)];
                 match self.export_svg_for(&job.view, job.level, &p.options) {
@@ -1659,7 +1740,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                 let json = self.export_canvas_for(&v, None, &s.options).ok_or("This view has nothing to export yet.")?;
                 crate::commands::export_text(json, target.clone())?;
             }
-            Format::Puml => crate::commands::export_plantuml(&st, self.tab.key().into(), target.clone())?,
+            Format::Puml => crate::commands::export_text(self.export_plantuml_for(&self.current_export_view())?, target.clone())?,
             Format::Json => crate::commands::save_as(&st, target.clone())?,
             Format::Archunit => crate::commands::export_archunit(&st, target.clone())?,
         }
@@ -1982,6 +2063,11 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                     None => self.toast("error", "no open decision with several options"),
                 }
             }
+            "/scope" => {
+                if arg.is_empty() || arg == "all" { self.set_package_scope(None); }
+                else if view.packages.iter().any(|p| p.name == arg && p.status.is_live()) { self.set_package_scope(Some(arg.into())); }
+                else { self.toast("error", format!("unknown package: {arg}")); }
+            }
             "/rules" => {
                 if arg.is_empty() {
                     self.brief = true;
@@ -2223,6 +2309,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
 
     fn canvas_input<'a>(&self, data: &'a ClassData, snap: &'a Snapshot, metrics: Option<&'a spide_core::metrics::Metrics>, level: u8, hovered: Option<&'a str>) -> CanvasInput<'a> {
         let class = metrics.is_some();
+        let metrics = data.scoped_metrics.as_ref().or(metrics);
         CanvasInput {
             classes: &data.classes,
             relations: &data.relations,
@@ -2820,7 +2907,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         match self.tab {
             Tab::Class => {
                 if let Some(data) = self.class_data() {
-                    let key = format!("{}:{}", snap.project_dir, if self.preview.is_some() { "preview" } else { "class" });
+                    let key = format!("{}:{}:{:?}", snap.project_dir, if self.preview.is_some() { "preview" } else { "class" }, self.package_scope);
                     if self.class_canvas.as_ref().is_none_or(|c| c.key != key) {
                         self.class_canvas = Some(ClassCanvas::new(key, "class"));
                     }
@@ -2833,7 +2920,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                     inp.stress = stress.as_ref();
                     inp.sync = sync.as_ref();
                     inp.spotlight = self.spotlight.as_ref().map(|s| s.as_deref());
-                    inp.saved = if self.preview.is_some() { self.preview.as_ref().and_then(|p| p.layout.get("class")) } else { data.saved.as_ref() };
+                    inp.saved = if self.package_scope.is_some() { None } else if self.preview.is_some() { self.preview.as_ref().and_then(|p| p.layout.get("class")) } else { data.saved.as_ref() };
                     // review: elements keep their place across before/after and alternatives
                     let review_saved;
                     let picked;
@@ -2918,6 +3005,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                     self.run_ok(move |s, _| crate::commands::apply_user_ops(s, vec![brief::op(json!({"op": "move_to_package", "class": c, "package": pk}))]), move |app| app.toast("info", msg));
                 }
                 CanvasOut::SaveLayout(pos) => {
+                    if self.tab == Tab::Class && self.package_scope.is_some() { continue; }
                     let view = if self.tab == Tab::Domain { "domain" } else { "class" }.to_string();
                     self.run(move |s, _| crate::commands::set_layout(s, view, pos));
                 }
@@ -3058,6 +3146,18 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                         self.run(move |s, _| crate::commands::set_detail(s, v, l));
                     }
                 }
+                if self.tab == Tab::Class {
+                    let mut scope = self.package_scope.clone();
+                    egui::ComboBox::from_id_salt("package-scope").width(155.0)
+                        .selected_text(scope.as_deref().map(|p| format!("{p} + boundary")).unwrap_or_else(|| "All packages".into()))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut scope, None, "All packages");
+                            for p in view.packages.iter().filter(|p| p.status.is_live()) {
+                                ui.selectable_value(&mut scope, Some(p.name.clone()), format!("{} + boundary", p.name));
+                            }
+                        }).response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "Package scope"));
+                    if scope != self.package_scope { self.set_package_scope(scope); }
+                }
                 match chrome::zoom_group(ui) {
                     Some(chrome::Zoom::Out) => self.zoom_active(0.8),
                     Some(chrome::Zoom::In) => self.zoom_active(1.25),
@@ -3087,6 +3187,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
             match a {
                 HealthAction::Fix(i) => self.fix_issue(i),
                 HealthAction::Focus(i) => self.focus_issue(i),
+                HealthAction::FocusTarget(target) => self.reveal(&target),
                 HealthAction::Assess => self.backend.call(
                     |st, _| crate::service::get(st).ok_or("service not ready".to_string())?.call_tool("request_assessment", &json!({"reason":"asked from the health popover"}), "user"),
                     |app, r| if let Err(e) = r { app.toast("error", e) },
@@ -3299,7 +3400,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         }
         // export dialog
         if self.export.is_some() {
-            let title = self.tab.title();
+            let current = self.current_export_view();
             let mut dlg = self.export.take().unwrap();
             let views = self.export_views();
             // a running batch writes one file per frame: progress stays visible and Stop works
@@ -3311,10 +3412,15 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                 }
                 ctx.request_repaint();
             }
-            let out = export::dialog(&ctx, &mut dlg, title, &views, &mut |o| self.export_svg(o));
+            let out = export::dialog(&ctx, &mut dlg, &current, &views, &mut |o| self.export_svg(o));
             let mut keep = true;
             match out {
                 Some(DialogOut::Close) => keep = false,
+                Some(DialogOut::PackageScope(scope)) => {
+                    self.set_package_scope(scope);
+                    dlg.preview_key.clear();
+                    dlg.preview = None;
+                }
                 Some(DialogOut::BatchCancel) => {
                     if let Some(r) = dlg.run.as_mut() {
                         r.cancelled = true;
@@ -3439,6 +3545,42 @@ fn rail(ui: &mut egui::Ui, r: Rect, label: &str) -> egui::Response {
 mod export_tests {
     use super::*;
     use crate::ui::tests::{harness, project, steps, shot};
+
+    #[test]
+    fn package_scope_keeps_full_layout_and_health() {
+        let dir = project("rest-extraction");
+        let mut h = harness(dir.path(), (1440.0, 900.0));
+        steps(&mut h, 20);
+        let snap = h.state().snap.clone().unwrap();
+        let package = snap.view.packages.iter().find(|p| p.status.is_live() && snap.view.classes.iter().any(|c| c.package.as_deref() == Some(&p.name))).unwrap().name.clone();
+        let expected = spide_core::scope::PackageScope::new(&snap.view, &snap.metrics, &package, true).unwrap();
+        let full_positions = h.state().class_canvas.as_ref().map(|c| c.layout.positions());
+        h.state_mut().set_package_scope(Some(package.clone()));
+        steps(&mut h, 10);
+        let data = h.state_mut().class_data().unwrap();
+        assert_eq!(data.classes.iter().map(|c| c.name.clone()).collect::<std::collections::BTreeSet<_>>(), expected.classes);
+        assert!(data.saved.is_none());
+        shot(&mut h, "package-boundary");
+        assert_eq!(h.state().snap.as_ref().unwrap().metrics.health_report.score, snap.metrics.health_report.score);
+        assert_eq!(h.state().snap.as_ref().unwrap().view.layout, snap.view.layout);
+        let v = ExportView::ClassPackage(package.clone());
+        let options = ExportOptions { ghosts: true, ..Default::default() };
+        let canvas = h.state_mut().export_canvas_for(&v, Some(1), &options).unwrap();
+        let canvas: serde_json::Value = serde_json::from_str(&canvas).unwrap();
+        let ids: std::collections::BTreeSet<String> = canvas["nodes"].as_array().unwrap().iter().filter_map(|n| n["id"].as_str()?.strip_prefix("class:").map(String::from)).collect();
+        assert_eq!(ids, expected.classes);
+        let puml = h.state().export_plantuml_for(&v).unwrap();
+        for c in snap.view.classes.iter().filter(|c| !expected.classes.contains(&c.name)) {
+            assert!(!puml.contains(&format!("class {} {{", c.name)), "hidden class {}", c.name);
+        }
+        let full = h.state_mut().export_class_data(&ExportView::Class, true).unwrap();
+        assert_eq!(full.classes.len(), snap.view.classes.len());
+        assert_eq!(h.state().package_scope.as_deref(), Some(package.as_str()));
+        assert!(h.state_mut().export_svg_for(&v, Some(1), &options).is_some());
+        h.state_mut().set_package_scope(None);
+        assert_eq!(h.state().class_canvas.as_ref().map(|c| c.layout.positions()), full_positions);
+        assert_eq!(h.state_mut().class_data().unwrap().classes.len(), snap.view.classes.len());
+    }
 
     #[test]
     fn export_dialog_and_real_files() {

@@ -6,6 +6,26 @@ use spide_core::{Design, Store};
 use spide_diagram::lucid;
 use std::collections::HashSet;
 
+#[test]
+fn package_alternatives_match_scope_and_empty_packages_are_drawn() {
+    let d = example("rest-extraction");
+    let metrics = spide_core::metrics::compute(&d,false);
+    for p in d.packages.iter().filter(|p| p.status.is_live()) {
+        let scope = spide_core::scope::PackageScope::new(&d,&metrics,&p.name,false).unwrap();
+        let target = lucid::target(&d,&format!("class.package:{}",p.name)).unwrap();
+        let ids: std::collections::BTreeSet<String> = target.items.iter().filter_map(|i| i.sid.as_deref()?.strip_prefix("class:").map(String::from)).collect();
+        assert_eq!(ids,scope.classes,"{}",p.name);
+        for item in target.items {
+            if let ItemKind::Relationship { from,to,.. } = item.kind {
+                if let (Some(from),Some(to)) = (from.strip_prefix("class:"),to.strip_prefix("class:")) { assert!(scope.includes_edge(from,to)); }
+            }
+        }
+    }
+    let empty = Design::from_json(r#"{"packages":[{"name":"empty"}]}"#).unwrap();
+    let target = lucid::target(&empty,"class.package:empty").unwrap();
+    assert!(target.items.iter().any(|i| matches!(&i.kind,ItemKind::Package {name,..} if name == "empty")));
+}
+
 pub fn example(name: &str) -> Design {
     let text = std::fs::read_to_string(format!("{}/../../tests/fixtures/{name}.json", env!("CARGO_MANIFEST_DIR"))).unwrap();
     let mut s = Store::default();

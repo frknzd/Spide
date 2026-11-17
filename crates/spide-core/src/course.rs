@@ -230,18 +230,23 @@ pub fn design_checks(d: &Design, ghosts: bool, resp: &crate::responsibility::Rep
                 for call in &m.calls {
                     let Some((x, n)) = call.split_once('.') else { continue };
                     let xr = role(x);
-                    // a *command* (changes domain state, returns nothing); reading values to show them is fine
-                    let command = d.class(x).is_some_and(|xc| xc.methods.iter().any(|mm| mm.name == n && mm.returns.is_none() && !crate::detail::is_accessor(x, mm) && !crate::detail::is_constructor(x, mm)));
-                    if matches!(xr.as_str(), "domain" | "value") && !getter_like(n) && command {
+                    // Display values are legitimate. A query is a bypass only when the UI already
+                    // knows a controller that explicitly mediates that exact domain operation.
+                    let command = d.class(x).is_some_and(|xc| xc.methods.iter().any(|mm| live(mm.status) && mm.name == n && mm.returns.is_none() && !crate::detail::is_accessor(x, mm) && !crate::detail::is_constructor(x, mm)));
+                    let mediated_query = xr == "domain" && d.classes.iter().any(|controller| {
+                        live(controller.status) && role(&controller.name) == "controller" && friends.contains(&controller.name)
+                            && controller.methods.iter().any(|cm| live(cm.status) && cm.calls.contains(call))
+                    });
+                    if matches!(xr.as_str(), "domain" | "value") && ((!getter_like(n) && command) || mediated_query) {
                         out.push(issue(
                             "ui_bypasses_controller",
                             0.45,
                             0.7,
                             "heuristic",
-                            format!("{key}() calls {x}.{n}() directly: the UI drives the domain without a controller"),
+                            format!("{key}() calls {x}.{n}() directly: the UI bypasses the application boundary"),
                             vec![c.name.clone(), key.clone(), x.to_string()],
                             "System events from the UI should go to a controller (facade or use-case controller) that delegates to the domain; otherwise the UI is coupled to domain internals and the domain can't be reused with another UI.",
-                            "send the system event to a controller (e.g. Register.enterItem) that calls the domain",
+                            "route the application operation or lifecycle query through the controller; display-only values do not need an extra controller hop",
                         ));
                         break;
                     }

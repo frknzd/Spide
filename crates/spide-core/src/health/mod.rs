@@ -290,8 +290,9 @@ pub struct Context<'a> {
 
 fn dimension_of(kind: &str) -> &'static str {
     match kind {
-        "type_switch" | "change_ripple" | "scattered_concept" | "narrowed_visibility" | "inheritance_coupling" | "composite_incomplete" | "degenerate_visitor" | "deep_inheritance" | "volatile_hub" => "extensibility",
+        "instanceof" | "type_switch" | "change_ripple" | "scattered_concept" | "narrowed_visibility" | "inheritance_coupling" | "composite_incomplete" | "degenerate_visitor" | "deep_inheritance" | "volatile_hub" => "extensibility",
         "large_class" | "long_method" | "duplication" | "middle_man" | "long_params" | "chatty_scenario" | "missing_types" | "inherited_repeated" | "orphan" | "complex_function" | "deep_nesting" | "long_function" | "many_params" | "speculative_abstraction" => "simplicity",
+        "private_documentation" => "implementation_quality",
         k if k.starts_with("evidence:") => "implementation_quality",
         _ => "modularity",
     }
@@ -314,7 +315,7 @@ fn from_issue(i: &Issue, d: &Design, dimension: &str) -> Vec<Signal> {
         .iter()
         .map(|t| Signal {
             rule: i.kind.to_string(),
-            rule_version: 1,
+            rule_version: if i.kind == "ui_bypasses_controller" { 2 } else { 1 },
             dimension: dimension.into(),
             profile: profile.into(),
             entity: entity_of(t, d),
@@ -361,6 +362,26 @@ fn profile_signals(d: &Design, m: &Metrics, live: &[&Class], idioms: &mut BTreeM
             let target = format!("{}.{}", c.name, meth.name);
             let loc = f.file.clone();
             let cc = f.branches + 1;
+            if matches!(p.language, "java" | "design") && f.instanceofs > 0 {
+                let mut s = sig("instanceof", &c.name, &target, p.language,
+                    0.18 + 0.04 * f.instanceofs.saturating_sub(1).min(4) as f64, 0.9, "code",
+                    format!("{target}() uses {} instanceof check(s): type-specific dispatch can require edits for every new node type", f.instanceofs),
+                    "review whether polymorphism or a parser registry/class map can isolate new types; instanceof is a smell, not a correctness error");
+                s.file = Some(loc.clone());
+                s.line = Some(f.start_line);
+                out.push(s);
+            }
+            if d.rules.private_documentation && meth.visibility == crate::model::Visibility::Private
+                && !meth.is_abstract && !crate::detail::is_constructor(&c.name, meth) && f.source_documented == Some(false) {
+                let mut s = sig("private_documentation", &c.name, &target, p.language, 0.08, 1.0, "code",
+                    format!("{target}() has no attached explanatory source comment"),
+                    "document the helper's purpose with an explanatory comment or Javadoc; this optional project check measures presence, not comment quality");
+                // Keep individual locations, but bound the scoring contribution to one per class.
+                s.root_cause = format!("private_documentation:{}", c.name);
+                s.file = Some(loc.clone());
+                s.line = Some(f.start_line);
+                out.push(s);
+            }
             let mut push = |mut s: Signal| {
                 s.file = Some(loc.clone());
                 s.line = Some(f.start_line);
@@ -538,6 +559,11 @@ pub fn report(d: &Design, m: &Metrics, ctx: Context) -> HealthReport {
     let langs: Vec<String> = if ctx.languages.is_empty() { live.iter().filter_map(|c| profiles::language_of(c).map(str::to_string)).collect::<BTreeSet<_>>().into_iter().collect() } else { ctx.languages.to_vec() };
     let ran: BTreeSet<&str> = ctx.evidence.map(|e| e.runs.iter().filter(|r| r.ran()).map(|r| r.language.as_str()).collect()).unwrap_or_default();
     let tool_coverage = if langs.is_empty() { 0.0 } else { langs.iter().filter(|l| ran.contains(l.as_str())).count() as f64 / langs.len() as f64 };
+    let documented_classes = live.iter().filter(|c| c.methods.iter().any(|meth| meth.status.is_live()
+        && meth.visibility == crate::model::Visibility::Private && !meth.is_abstract
+        && !crate::detail::is_constructor(&c.name, meth)
+        && meth.code.as_ref().is_some_and(|f| f.source_documented.is_some()))).count();
+    let documentation_coverage = if d.rules.private_documentation && !live.is_empty() { 0.15 * documented_classes as f64 / live.len() as f64 } else { 0.0 };
     let analysed_changes = m.changes.iter().filter(|c| c.analysed && !c.stale).count();
     let mut dims: BTreeMap<String, DimensionScore> = BTreeMap::new();
     let total_w: f64 = DIMENSIONS.iter().map(|k| d.health_priorities.get(*k).copied().unwrap_or(1.0).max(0.0)).sum::<f64>().max(1e-9);
@@ -545,11 +571,11 @@ pub fn report(d: &Design, m: &Metrics, ctx: Context) -> HealthReport {
         let sigs: Vec<&Signal> = signals.iter().filter(|s| s.dimension == dim).collect();
         let mut ds = DimensionScore { weight: d.health_priorities.get(dim).copied().unwrap_or(1.0).max(0.0) / total_w * DIMENSIONS.len() as f64, ..Default::default() };
         let measurable = match dim {
-            "implementation_quality" => tool_coverage > 0.0,
+            "implementation_quality" => tool_coverage > 0.0 || documentation_coverage > 0.0,
             _ => !live.is_empty(),
         };
         ds.coverage = match dim {
-            "implementation_quality" => tool_coverage,
+            "implementation_quality" => tool_coverage.max(documentation_coverage),
             "simplicity" => if has_code { code_coverage } else { 0.7 },
             "extensibility" => if d.change_scenarios.is_empty() { 0.7 } else if analysed_changes > 0 { 1.0 } else { 0.8 },
             _ => if live.is_empty() { 0.0 } else { 1.0 },
@@ -557,7 +583,7 @@ pub fn report(d: &Design, m: &Metrics, ctx: Context) -> HealthReport {
         if dim == "implementation_quality" && !measurable {
             ds.gaps.push(if langs.is_empty() { "no code: implementation quality can't be verified from a design".into() } else { format!("no language server/linter has run for {} (run analyze; see doctor)", langs.join(", ")) });
         } else if dim == "implementation_quality" && tool_coverage < 1.0 {
-            ds.gaps.push(format!("tools ran for {} of {} languages", ran.len(), langs.len()));
+            ds.gaps.push(format!("tools ran for {} of {} languages; source documentation alone does not verify correctness or safety", ran.len(), langs.len()));
         }
         if dim == "simplicity" && !has_code && !live.is_empty() {
             ds.gaps.push("design-only: function bodies are unknown".into());

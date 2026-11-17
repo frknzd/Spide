@@ -48,7 +48,7 @@ impl SpideApp {
         let old = self.prefs.workspaces.get(&s.project_dir).cloned().unwrap_or_default();
         let mut cameras = old.cameras;
         for (key, camera) in [
-            ("class", self.class_canvas.as_ref().and_then(|c| Camera::capture(&c.vp))),
+            ("class", (if self.package_scope.is_none() { self.class_canvas.as_ref() } else { self.full_class_canvas.as_ref() }).and_then(|c| Camera::capture(&c.vp))),
             ("domain", self.domain_canvas.as_ref().and_then(|c| Camera::capture(&c.vp))),
             ("package", Camera::capture(&self.views.package_vp)),
             ("system", Camera::capture(&self.views.system_vp)),
@@ -92,7 +92,8 @@ impl SpideApp {
                 v.restore_camera(c.x + (v.rect.width() - c.width) / 2.0, c.y + (v.rect.height() - c.height) / 2.0, c.zoom);
             }
         }
-        if let Some(c) = self.class_canvas.as_mut() { apply(&mut c.vp, "class", &mut self.pending_cameras); }
+        let full = if self.package_scope.is_none() { self.class_canvas.as_mut() } else { self.full_class_canvas.as_mut() };
+        if let Some(c) = full { apply(&mut c.vp, "class", &mut self.pending_cameras); }
         if let Some(c) = self.domain_canvas.as_mut() { apply(&mut c.vp, "domain", &mut self.pending_cameras); }
         apply(&mut self.views.package_vp, "package", &mut self.pending_cameras);
         apply(&mut self.views.system_vp, "system", &mut self.pending_cameras);

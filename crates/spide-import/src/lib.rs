@@ -165,6 +165,27 @@ fn collect_body(n: Node, src: &[u8], m: &mut RawMethod) {
     }
 }
 
+/// Measure attached Java comments without mistaking a previous declaration's trailing comment
+/// for method documentation. Annotations belong to the method node and do not break attachment.
+fn source_documented(n: Node, src: &[u8]) -> bool {
+    let mut next_row = n.start_position().row;
+    let mut prev = n.prev_named_sibling();
+    let mut documented = false;
+    while let Some(p) = prev {
+        if !matches!(p.kind(), "block_comment" | "line_comment") || next_row > p.end_position().row + 1 {
+            break;
+        }
+        if p.prev_named_sibling().is_some_and(|before| before.end_position().row == p.start_position().row && !matches!(before.kind(), "block_comment" | "line_comment")) {
+            break;
+        }
+        let content = text(p, src).trim_matches(|c: char| c == '/' || c == '*' || c.is_whitespace());
+        documented |= !content.is_empty();
+        next_row = p.start_position().row;
+        prev = p.prev_named_sibling();
+    }
+    documented
+}
+
 fn parse_method(n: Node, src: &[u8]) -> RawMethod {
     let (visibility, is_static, is_abstract) = modifiers(n, src);
     let mut m = RawMethod {
@@ -195,6 +216,7 @@ fn parse_method(n: Node, src: &[u8]) -> RawMethod {
     }
     m.facts = facts::facts(n, n.child_by_field_name("body"), src);
     m.facts.params = m.params.len() as u32;
+    m.facts.source_documented = Some(source_documented(n, src));
     m
 }
 

@@ -97,6 +97,7 @@ impl ExportDialog {
 
 pub enum DialogOut {
     Close,
+    PackageScope(Option<String>),
     Export,
     Reveal(String),
     /// settings changed (persist)
@@ -125,7 +126,7 @@ pub fn effective_profiles(s: &ExportSettings) -> Vec<Profile> {
 }
 
 /// The export sheet. `svg` builds the current view's export SVG for the given options.
-pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views: &[ExportView], svg: &mut dyn FnMut(&ExportOptions) -> Option<(String, u32, u32)>) -> Option<DialogOut> {
+pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, current: &ExportView, views: &[ExportView], svg: &mut dyn FnMut(&ExportOptions) -> Option<(String, u32, u32)>) -> Option<DialogOut> {
     let mut out = None;
     let now = ctx.input(|i| i.time);
     let f = info(d.settings.format);
@@ -191,7 +192,18 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, view_title: &str, views
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
                             widgets::kicker(ui, "Export");
-                            ui.label(RichText::new(if d.batch_mode { "All diagrams" } else { view_title }).font(bold(16.0)).color(css::TEXT));
+                            ui.label(RichText::new(if d.batch_mode { "All diagrams".into() } else { current.title() }).font(bold(16.0)).color(css::TEXT));
+                            if !d.batch_mode && matches!(current, ExportView::Class | ExportView::ClassPackage(_)) {
+                                let mut scope = match current { ExportView::ClassPackage(p) => Some(p.clone()), _ => None };
+                                let before = scope.clone();
+                                egui::ComboBox::from_id_salt("export-package-scope").selected_text(scope.as_deref().unwrap_or("All packages")).show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut scope, None, "All packages");
+                                    for v in views {
+                                        if let ExportView::ClassPackage(p) = v { ui.selectable_value(&mut scope, Some(p.clone()), format!("{p} + boundary")); }
+                                    }
+                                }).response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "Export package scope"));
+                                if before != scope { out = Some(DialogOut::PackageScope(scope)); }
+                            }
                         });
                         ui.add_space(24.0);
                         if d.run.as_ref().is_none_or(|r| r.done()) {
@@ -442,7 +454,8 @@ fn batch_panel(ui: &mut egui::Ui, d: &mut ExportDialog, views: &[ExportView]) ->
                 if views.is_empty() {
                     ui.label(RichText::new("Nothing to export yet.").font(sans(12.5)).color(css::FAINT));
                 }
-                for v in views {
+                if ui.checkbox(&mut b.package_views, "Include package + boundary alternatives").changed() { changed = true; }
+                for v in views.iter().filter(|v| b.package_views || !matches!(v, ExportView::ClassPackage(_))) {
                     let mut on = !b.excluded.contains(&v.key());
                     if ui.checkbox(&mut on, RichText::new(v.title()).font(sans(12.5)).color(css::TEXT)).changed() {
                         b.excluded.retain(|k| k != &v.key());

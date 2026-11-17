@@ -99,13 +99,21 @@ impl TypeRule {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Rules {
     pub preset: Preset,
     pub forbidden: Vec<DepRule>,
     pub forbidden_types: Vec<TypeRule>,
     pub thresholds: Thresholds,
+    /// Check attached source comments on private concrete methods when the importer measured them.
+    pub private_documentation: bool,
+}
+
+impl Default for Rules {
+    fn default() -> Self {
+        Self { preset: Preset::default(), forbidden: vec![], forbidden_types: vec![], thresholds: Thresholds::default(), private_documentation: true }
+    }
 }
 
 /// Why a dependency is not allowed.

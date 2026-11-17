@@ -19,6 +19,8 @@ impl SpideApp {
         let before = self.prefs.clone();
         let mut reset_layout = false;
         let mut focus_pi = false;
+        let project_rules = self.snap.as_ref().map(|s| s.view.rules.clone());
+        let mut private_docs = project_rules.as_ref().is_some_and(|r| r.private_documentation);
         egui::Window::new("Settings").open(&mut open).collapsible(false).default_width(480.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO).show(&self.ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 9.0;
@@ -33,6 +35,12 @@ impl SpideApp {
                     }
                 });
                 ui.separator();
+                if project_rules.is_some() {
+                    ui.heading("Project health");
+                    ui.checkbox(&mut private_docs, "Check private-method documentation");
+                    widgets::para(ui, "Project-specific. Accepts explanatory comments or Javadoc when source evidence is available.", 11.5, css::DIM);
+                    ui.separator();
+                }
                 ui.heading("Appearance");
                 ui.add(egui::Slider::new(&mut self.prefs.ui_scale, 0.75..=1.75).step_by(0.05).text("Interface scale"));
                 ui.add(egui::Slider::new(&mut self.prefs.terminal_font_size, 9.0..=24.0).step_by(1.0).text("Terminal text size"));
@@ -50,6 +58,10 @@ impl SpideApp {
                 focus_pi = ui.button("Show pi terminal").clicked();
             });
         });
+        if let Some(mut rules) = project_rules.filter(|r| r.private_documentation != private_docs) {
+            rules.private_documentation = private_docs;
+            self.run_ok(move |s, _| crate::commands::set_rules(s, rules), |app| app.toast("info", "Project health check updated"));
+        }
         if reset_layout { self.workspace = Default::default(); }
         if focus_pi {
             self.workspace.left_open = true;
@@ -67,6 +79,24 @@ impl SpideApp {
 #[cfg(test)]
 mod tests {
     use crate::ui::{actions::ActionId, tests::{project, harness, steps}};
+
+    #[test]
+    fn private_documentation_toggle_updates_project_rules_not_app_preferences() {
+        use egui_kittest::kittest::Queryable;
+        let dir = project("library");
+        let mut h = harness(dir.path(), (1440.0, 900.0));
+        steps(&mut h, 5);
+        let before = h.state().prefs.clone();
+        h.state_mut().perform(ActionId::Settings);
+        steps(&mut h, 3);
+        h.get_by_label("Check private-method documentation").click();
+        steps(&mut h, 15);
+        assert!(!h.state().backend.st.lock().store.design.rules.private_documentation);
+        assert_eq!(h.state().prefs, before);
+        h.get_by_label("Check private-method documentation").click();
+        steps(&mut h, 15);
+        assert!(h.state().backend.st.lock().store.design.rules.private_documentation);
+    }
 
     #[test]
     fn settings_apply_locally_and_new_project_uses_selected_location() {

@@ -14,6 +14,7 @@ pub enum ExportView {
     SystemContext,
     SystemContainers,
     Class,
+    ClassPackage(String),
     Domain,
     Package,
     Usecase,
@@ -27,6 +28,7 @@ impl ExportView {
             ExportView::SystemContext => "system-context".into(),
             ExportView::SystemContainers => "system-containers".into(),
             ExportView::Class => "class".into(),
+            ExportView::ClassPackage(p) => format!("class-package-{}", spide_core::scope::package_key(p)),
             ExportView::Domain => "domain".into(),
             ExportView::Package => "package".into(),
             ExportView::Usecase => "usecase".into(),
@@ -38,6 +40,7 @@ impl ExportView {
             ExportView::SystemContext => "System context (C4)".into(),
             ExportView::SystemContainers => "Containers (C4)".into(),
             ExportView::Class => "Class diagram".into(),
+            ExportView::ClassPackage(p) => format!("Class diagram · {p} + boundary"),
             ExportView::Domain => "Domain model".into(),
             ExportView::Package => "Package diagram".into(),
             ExportView::Usecase => "Use case diagram".into(),
@@ -46,13 +49,13 @@ impl ExportView {
     }
     /// Class and Domain draw at a detail level (packages … full); the other views have none.
     pub fn has_detail(&self) -> bool {
-        matches!(self, ExportView::Class | ExportView::Domain)
+        matches!(self, ExportView::Class | ExportView::ClassPackage(_) | ExportView::Domain)
     }
     /// The PlantUML exporter's view (one file per view; all sequences / both C4 levels together).
     pub fn plantuml(&self) -> &'static str {
         match self {
             ExportView::SystemContext | ExportView::SystemContainers => "system",
-            ExportView::Class => "class",
+            ExportView::Class | ExportView::ClassPackage(_) => "class",
             ExportView::Domain => "domain",
             ExportView::Package => "package",
             ExportView::Usecase => "usecase",
@@ -102,6 +105,8 @@ impl Profile {
 pub struct BatchSettings {
     /// views left out (by key); new views are included by default
     pub excluded: Vec<String>,
+    /// Explicit opt-in: one package-plus-boundary class alternative per package.
+    pub package_views: bool,
     /// detail levels for Class and Domain
     pub levels: Vec<u8>,
     /// scene formats (PNG, SVG, PDF, Obsidian Canvas)
@@ -114,7 +119,7 @@ pub struct BatchSettings {
 
 impl Default for BatchSettings {
     fn default() -> Self {
-        Self { excluded: vec![], levels: vec![1, 2, 3, 4], formats: vec![Format::Png], plantuml: false, profiles: vec![] }
+        Self { excluded: vec![], package_views: false, levels: vec![1, 2, 3, 4], formats: vec![Format::Png], plantuml: false, profiles: vec![] }
     }
 }
 
@@ -158,7 +163,7 @@ pub fn jobs(views: &[ExportView], b: &BatchSettings, profiles: &[Profile]) -> Ve
     levels.sort();
     levels.dedup();
     let formats: Vec<Format> = [Format::Png, Format::Svg, Format::Pdf, Format::Canvas].into_iter().filter(|f| b.formats.contains(f)).collect();
-    let chosen: Vec<&ExportView> = views.iter().filter(|v| !b.excluded.contains(&v.key())).collect();
+    let chosen: Vec<&ExportView> = views.iter().filter(|v| !b.excluded.contains(&v.key()) && (b.package_views || !matches!(v, ExportView::ClassPackage(_)))).collect();
     let profile_names: Vec<String> = {
         let mut seen = HashSet::new();
         profiles.iter().map(|p| unique(slug(&p.name), "", &mut seen).trim_end_matches('.').to_string()).collect()
@@ -184,8 +189,8 @@ pub fn jobs(views: &[ExportView], b: &BatchSettings, profiles: &[Profile]) -> Ve
     if b.plantuml {
         let mut done = HashSet::new();
         for v in &chosen {
-            let p = v.plantuml();
-            if done.insert(p) {
+            let p = if matches!(v, ExportView::ClassPackage(_)) { v.key() } else { v.plantuml().to_string() };
+            if done.insert(p.clone()) {
                 out.push(Job { view: (*v).clone(), level: None, profile: 0, format: Format::Puml, file: unique(format!("{p}-plantuml"), "puml", &mut used) });
             }
         }
@@ -337,8 +342,21 @@ mod tests {
     }
 
     #[test]
+    fn package_jobs_are_opt_in_unique_and_have_text_alternatives() {
+        let views = vec![ExportView::Class, ExportView::ClassPackage("a.b".into()), ExportView::ClassPackage("a-b".into()), ExportView::ClassPackage("模型".into())];
+        let mut b = BatchSettings { levels: vec![1], formats: vec![Format::Svg], plantuml: true, ..Default::default() };
+        let p = vec![Profile::default()];
+        assert_eq!(jobs(&views, &b, &p).len(), 2);
+        b.package_views = true;
+        let jobs = jobs(&views, &b, &p);
+        assert_eq!(jobs.len(), 8);
+        assert_eq!(jobs.iter().map(|j| &j.file).collect::<HashSet<_>>().len(), 8);
+        assert_eq!(jobs.iter().filter(|j| j.format == Format::Puml).count(), 4);
+    }
+
+    #[test]
     fn exclusions_plantuml_once_per_view_and_single_profile_names() {
-        let b = BatchSettings { excluded: vec!["package".into()], levels: vec![2], formats: vec![Format::Pdf], plantuml: true, profiles: vec![] };
+        let b = BatchSettings { excluded: vec!["package".into()], package_views: false, levels: vec![2], formats: vec![Format::Pdf], plantuml: true, profiles: vec![] };
         let js = jobs(&views(), &b, &[Profile::default()]);
         assert!(!js.iter().any(|j| j.view == ExportView::Package));
         let puml: Vec<&String> = js.iter().filter(|j| j.format == Format::Puml).map(|j| &j.file).collect();

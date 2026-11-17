@@ -159,6 +159,9 @@ pub struct CodeFacts {
     /// `switch` statements/expressions and `instanceof` checks.
     pub switches: u32,
     pub instanceofs: u32,
+    /// Attached explanatory source comment. None means this adapter/import did not measure it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_documented: Option<bool>,
     /// Enum constants or types it switches on (`case BCL:`).
     pub switch_on: Vec<String>,
     /// Arithmetic and comparison operators, loops.

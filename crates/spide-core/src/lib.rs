@@ -25,6 +25,7 @@ pub mod pdf;
 pub mod png;
 pub mod rules;
 pub mod scenarios;
+pub mod scope;
 pub mod sequence;
 pub mod store;
 pub mod symbols;

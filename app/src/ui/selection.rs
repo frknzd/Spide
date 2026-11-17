@@ -18,6 +18,7 @@ pub struct ContextMenu {
 
 enum Item {
     Inspect,
+    PackageScope(String),
     Rename,
     Properties,
     Reveal,
@@ -96,6 +97,9 @@ impl SpideApp {
                 ui.separator();
                 let one = |ok: bool, why: &'static str| if ok { Ok(()) } else { Err(why) };
                 let renamable = matches!(single, Some(Target::Class { .. } | Target::Attribute { .. } | Target::Method { .. }));
+                if let Some(Target::Package { name }) = &single {
+                    if let Some(x) = item(ui, Ok(()), "Show Package + Boundary", "", Item::PackageScope(name.clone())) { chosen = Some(x); }
+                }
                 if let Some(x) = item(ui, one(single.is_some(), "Select one element"), "Inspect", "", Item::Inspect) {
                     chosen = Some(x);
                 }
@@ -185,6 +189,7 @@ impl SpideApp {
                     self.hover.pin(&key);
                 }
             }
+            Item::PackageScope(name) => self.set_package_scope(Some(name)),
             Item::Rename => {
                 if let Some(t) = single {
                     self.on_double_click(t, menu.at);

@@ -1004,6 +1004,13 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
             }
         }
     }
+    // Empty declared packages remain visible, including an empty selected package scope.
+    let empty_y = rects.values().map(|r| r.y + r.h / 2.0).fold(0.0_f64, f64::max) + 100.0;
+    for (i, p) in d.packages.iter().filter(|p| p.status.is_live() || p.status == Status::Proposed).enumerate() {
+        if !by_pkg.iter().any(|g| g.0 == p.name) {
+            by_pkg.push((&p.name, vec![], vec![Rect { x: i as f64 * 260.0, y: empty_y, w: 160.0, h: 50.0 }]));
+        }
+    }
     let pkg_min_w = |name: &str| package_min_width(ms, name, d.packages.iter().find(|x| x.name == name));
     for (name, names, rs) in &by_pkg {
         let [x1, y1, x2, y2] = package_hull(rs, pkg_min_w(name));
@@ -1050,7 +1057,7 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
     let mut pkg_layer = Group::new();
     let mut hull_of_pkg: HashMap<&str, Rect> = HashMap::new();
     if !o.hide_packages {
-        for (name, _, rs) in &by_pkg {
+        for (name, names, rs) in &by_pkg {
             let pk = d.packages.iter().find(|x| x.name == *name);
             let color = match pk {
                 Some(Package { layer: Some(l), .. }) => layer_color(*l),
@@ -1068,7 +1075,7 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
                 let s = stroke(color, 3.0).opacity(0.6);
                 g.rect(x1, y1, x2 - x1, y2 - y1, 22.0, Some(paint(color, 0.12)), Some(if proposed { s.dash(10.0, 8.0) } else { s }));
                 g.text((x1 + x2) / 2.0, (y1 + y2) / 2.0, name.to_string(), FontSpec::sans(fs as f32).bold(), color, Anchor::Middle);
-                let sub = format!("{} class{}{}", rs.len(), if rs.len() == 1 { "" } else { "es" }, pk.and_then(|p| p.layer).map(|l| format!(" · {}", layer_name(l))).unwrap_or_default());
+                let sub = format!("{} class{}{}", names.len(), if names.len() == 1 { "" } else { "es" }, pk.and_then(|p| p.layer).map(|l| format!(" · {}", layer_name(l))).unwrap_or_default());
                 g.text((x1 + x2) / 2.0, (y1 + y2) / 2.0 + fs * 0.9, sub, FontSpec::sans((fs * 0.5) as f32), c::DIM, Anchor::Middle);
                 pkg_layer.add(g);
                 hits.push(hit);

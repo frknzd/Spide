@@ -286,6 +286,9 @@ pub fn class_diagram(d: &Design, m: &Metrics, layout: &Layout) -> String {
     for c in &classes {
         by_pkg.entry(c.package.clone()).or_default().push(c);
     }
+    for p in d.packages.iter().filter(|p| shown(p.status)) {
+        by_pkg.entry(Some(p.name.clone())).or_default();
+    }
     for (pkg, cs) in &by_pkg {
         match pkg {
             Some(p) => {
@@ -579,6 +582,14 @@ pub fn c4_diagrams(d: &Design, m: &Metrics) -> String {
     }
     let _ = writeln!(o, "@enduml");
     o
+}
+
+/// Export one package with direct boundary classes, never transitive package siblings.
+pub fn export_package(d: &Design, m: &Metrics, package: &str) -> Result<String, String> {
+    let scope = crate::scope::PackageScope::new(d, m, package, true)?;
+    let projected = scope.design(d);
+    let metrics = scope.metrics(m, d);
+    export("class", &projected, &metrics, &projected.layout)
 }
 
 pub fn export(view: &str, d: &Design, m: &Metrics, layout: &Layout) -> Result<String, String> {

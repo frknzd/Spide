@@ -618,6 +618,12 @@ pub fn export_plantuml_all(st: &AppState, dir: String) -> R<Vec<String>> {
         std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
         written.push(path.display().to_string());
     }
+    for package in snap.view.packages.iter().filter(|p| p.status.is_live()) {
+        let text = spide_core::plantuml::export_package(&snap.view, &snap.metrics, &package.name)?;
+        let path = dir.join(format!("{base}-class-package-{}.puml", spide_core::scope::package_key(&package.name)));
+        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+        written.push(path.display().to_string());
+    }
     if written.is_empty() {
         return Err("nothing to export yet".into());
     }

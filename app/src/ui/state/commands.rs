@@ -25,6 +25,7 @@ const fn k(mut i: CommandInfo, keywords: &'static str) -> CommandInfo {
 pub const COMMANDS: &[CommandInfo] = &[
     k(t("find", "Find class", "Navigate", "Zoom to a class", "find ", true), "search locate"),
     t("focus", "Focus package", "Navigate", "Highlight one package", "focus ", true),
+    t("scope", "Package + boundary", "Navigate", "Restrict class diagram to one package and direct neighbors; scope all restores", "scope ", true),
     c("fit", "Fit diagram", "Navigate", "Show the whole active diagram"),
     c("tidy", "Tidy layout", "Canvas", "Rearrange unpinned classes"),
     k(t("detail 3", "Design detail", "Canvas", "Use the default exam-style detail level", "detail ", false), "level members"),

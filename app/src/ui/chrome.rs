@@ -119,6 +119,7 @@ fn confidence_text(i: &Issue) -> Option<String> {
 pub enum HealthAction {
     Fix(usize),
     Focus(usize),
+    FocusTarget(String),
     /// Ask the agent to (re)assess the dimensions that need it.
     Assess,
     /// Owner decision on a proposed health exception.
@@ -348,7 +349,18 @@ fn health_popover(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option<
                 }
             });
         }
-        if m.issues.is_empty() {
+        let code_signals: Vec<_> = r.signals.iter().filter(|s| !m.issues.iter().any(|i| i.kind == s.rule)).collect();
+        if !code_signals.is_empty() {
+            widgets::section(ui, &format!("source checks · {}", code_signals.len()));
+            for signal in code_signals.iter().take(12) {
+                let tip = format!("{} · {}% confidence\n{}", signal.provenance, (signal.confidence * 100.0).round(), signal.fix_hint.as_deref().unwrap_or(""));
+                if ui.add(egui::Label::new(RichText::new(&signal.message).font(sans(12.0)).color(css::TEXT)).sense(Sense::click()).wrap()).on_hover_text(tip).clicked() {
+                    actions.push(HealthAction::FocusTarget(signal.target.clone()));
+                }
+            }
+            if code_signals.len() > 12 { widgets::faint(ui, format!("{} more source findings (get_health lists all)", code_signals.len() - 12)); }
+        }
+        if m.issues.is_empty() && code_signals.is_empty() {
             widgets::faint(ui, "Low coupling, high cohesion, responsibilities where the data is. Clean.");
         }
         for (id, label, _) in PRINCIPLES {

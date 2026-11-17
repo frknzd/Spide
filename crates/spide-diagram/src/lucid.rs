@@ -38,8 +38,23 @@ pub fn target(d: &Design, key: &str) -> Option<Target> {
 /// layout never shuffles a shared document. Spide's own saved positions (class and domain views)
 /// win; new elements get the layout's position.
 pub fn target_anchored(d: &Design, key: &str, base: Option<&spide_core::lucid::snapshot::Snapshot>) -> Option<Target> {
-    let mut t = target(d, key)?;
-    let Some(base) = base else { return Some(t) };
+    if let Some(package) = key.strip_prefix("class.package:") {
+        let metrics = compute(d, false);
+        let scope = spide_core::scope::PackageScope::new(d, &metrics, package, false).ok()?;
+        let projected = scope.design(d);
+        let metrics = scope.metrics(&metrics, d);
+        let target = target_with(&projected, &metrics, "class")?;
+        let mut result = anchor_target(&projected, "class", base, target);
+        result.key = key.into();
+        result.title = diagram_title(&d.name, key);
+        return Some(result);
+    }
+    Some(anchor_target(d, key, base, target(d, key)?))
+}
+
+/// Anchor the already-projected target, avoiding dependency recomputation on a partial model.
+fn anchor_target(d: &Design, key: &str, base: Option<&spide_core::lucid::snapshot::Snapshot>, mut t: Target) -> Target {
+    let Some(base) = base else { return t };
     let saved = match key {
         "class" | "domain" => d.layout.get(key),
         _ => None,
@@ -80,7 +95,7 @@ pub fn target_anchored(d: &Design, key: &str, base: Option<&spide_core::lucid::s
     if anchored {
         wrap_frames(d, key, &mut t.items);
     }
-    Some(t)
+    t
 }
 
 /// Frames wrap their members (class view: a package's classes; use cases: the use cases).
@@ -105,6 +120,13 @@ fn wrap_frames(d: &Design, key: &str, items: &mut [Item]) {
 }
 
 fn target_with(d: &Design, metrics: &Metrics, key: &str) -> Option<Target> {
+    if let Some(package) = key.strip_prefix("class.package:") {
+        let scope = spide_core::scope::PackageScope::new(d, metrics, package, false).ok()?;
+        let projected = scope.design(d);
+        let metrics = scope.metrics(metrics, d);
+        let items = class_items(&projected, &metrics);
+        return (!items.is_empty()).then(|| Target { key: key.into(), title: diagram_title(&d.name, key), items });
+    }
     let items = match key {
         "class" => class_items(d, metrics),
         "domain" => domain_items(d, metrics),
@@ -265,7 +287,7 @@ fn class_items(d: &Design, metrics: &Metrics) -> Vec<Item> {
     let mut items = vec![];
     for p in &packages {
         let sid = format!("package:{}", p.name);
-        if nodes.iter().any(|n| n.id == sid && n.group) {
+        if nodes.iter().any(|n| n.id == sid) {
             items.push(Item { fill: None, ..Item::new(sid, ItemKind::Package { name: p.name.clone(), body: String::new() }, None) });
         }
     }

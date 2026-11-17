@@ -75,7 +75,7 @@ use serde_json::{json, Value};
 use spide_core::lucid::{diagram_keys, diagram_title, map, patch, snapshot, Target};
 
 pub fn tools() -> Vec<Value> {
-    let key = json!({"type":"string","description":"diagram: class | domain | package | usecase | system.context | system.containers | sequence:<name>"});
+    let key = json!({"type":"string","description":"diagram: class | class.package:<exact package name> (one-hop boundary view) | domain | package | usecase | system.context | system.containers | sequence:<name>"});
     let snap = json!({"type":"object","description":"the result of running lucid_read_script on the document (lucid_run_script), passed through unchanged"});
     vec![
         json!({"name":"lucid_read_script","description":"The JavaScript Spide reads a Lucid document with: run it with the Lucid MCP's lucid_run_script (document_id; load the `uml` script API for the document first) and pass the result to lucid_status / lucid_plan_push / lucid_pull / lucid_record_push.",

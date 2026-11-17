@@ -156,6 +156,18 @@ fn is_removal(o: &Op) -> bool {
 pub fn pull(current: &Design, key: &str, base: &[Item], remote: &Snapshot) -> Pull {
     let mut p = match key {
         "class" => class_pull(current, base, &remote.items),
+        k if k.starts_with("class.package:") => {
+            let metrics = crate::metrics::compute(current, false);
+            match crate::scope::PackageScope::new(current, &metrics, &k[14..], false) {
+                Ok(scope) => {
+                    let mut pull = class_pull(&scope.design(current), base, &remote.items);
+                    // Scoped Lucid geometry must never overwrite the full class diagram layout.
+                    pull.layout.clear();
+                    pull
+                }
+                Err(error) => Pull { warnings: vec![error], ..Default::default() },
+            }
+        },
         "domain" => domain_pull(current, base, &remote.items),
         "usecase" => usecase_pull(current, base, &remote.items),
         "package" => package_pull(current, base, &remote.items),

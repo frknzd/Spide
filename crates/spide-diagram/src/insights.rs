@@ -139,6 +139,7 @@ pub fn scattered_by_class(m: Option<&Metrics>) -> HashMap<String, Vec<String>> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Family {
+    Documentation,
     Complexity,
     Duplication,
     Responsibility,
@@ -152,6 +153,7 @@ pub enum Family {
 impl Family {
     pub fn label(self) -> &'static str {
         match self {
+            Family::Documentation => "documentation",
             Family::Complexity => "complexity",
             Family::Duplication => "duplication",
             Family::Responsibility => "responsibility",
@@ -164,6 +166,7 @@ impl Family {
     }
     pub fn icon(self) -> &'static str {
         match self {
+            Family::Documentation => "¶",
             Family::Complexity => "≋",
             Family::Duplication => "⧉",
             Family::Responsibility => "↗",
@@ -268,6 +271,22 @@ pub fn member_diagnostics(m: Option<&Metrics>, classes: &[Class]) -> Members {
             d.issues.sort_by(|a, b| (b.severity * b.confidence).total_cmp(&(a.severity * a.confidence)));
             d.family = d.issues[0].family;
         }
+    }
+    // These source checks are native health signals rather than legacy issues.
+    for signal in m.health_report.signals.iter().filter(|s| matches!(s.rule.as_str(), "instanceof" | "private_documentation")) {
+        let Some(c) = by_name.get(signal.entity.as_str()) else { continue };
+        let Some(name) = signal.target.strip_prefix(&format!("{}.", c.name)) else { continue };
+        if !c.methods.iter().any(|m| m.name == name) { continue; }
+        let family = if signal.rule == "instanceof" { Family::Complexity } else { Family::Documentation };
+        let d = out.entry(c.name.clone()).or_default().entry(format!("method:{name}")).or_insert(MemberDiagnosis { issues: vec![], severity: 0.0, family });
+        d.issues.push(MemberIssue {
+            kind: signal.rule.clone(), family, severity: signal.severity, confidence: signal.confidence,
+            basis: signal.provenance.clone(), message: signal.message.clone(), explain: signal.message.clone(),
+            fix_hint: signal.fix_hint.clone(), source: "Source health check".into(),
+        });
+        d.issues.sort_by(|a,b| (b.severity*b.confidence).total_cmp(&(a.severity*a.confidence)));
+        d.severity = d.issues[0].severity * d.issues[0].confidence;
+        d.family = d.issues[0].family;
     }
     out
 }
