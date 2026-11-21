@@ -325,11 +325,7 @@ pub fn class_diagram(d: &Design, m: &Metrics, layout: &Layout) -> String {
         let _ = writeln!(out, "note bottom of {} : ⚠ applied by overruling the examiner", id(&c.name));
     }
     let r = &m.health_report;
-    let label = match r.score {
-        Some(h) => format!("health {h}/100{}", if r.provisional { format!(" (provisional, {}% coverage)", r.coverage) } else { String::new() }),
-        None => "health unassessed".into(),
-    };
-    let _ = writeln!(out, "\nlegend right\n  <b>{label}</b> · {}", r.version);
+    let _ = writeln!(out, "\nlegend right\n  <b>Design findings from available checks</b> · {}", r.version);
     for i in m.issues.iter().take(5) {
         let _ = writeln!(out, "  {}", esc(&i.message));
     }

@@ -62,8 +62,9 @@ fn agent_workflow_in_every_language() {
 
         // 3. health of the code (no design yet): measured, honest about unknown implementation quality
         let h = call(&s, "get_health", json!({}), "agent");
-        assert!(h["measured"].as_u64().is_some(), "{lang}: {h}");
-        assert!(h["provisional"] == true && h["dimensions"]["implementation_quality"]["measured"].is_null(), "{lang}");
+        assert_eq!(h["scope"], "code", "{lang}: {h}");
+        assert_eq!(h["version"], "evidence-1");
+        assert!(!h["gaps"].as_array().unwrap().is_empty(), "{lang}");
 
         // 4. read + guarded edit: a comment line after the function's first line
         let src = call(&s, "get_source", json!({"file": file, "start_line": 1, "end_line": 400}), "agent");
@@ -98,6 +99,6 @@ fn agent_workflow_in_every_language() {
         assert!(s.call_tool("apply_patch", &json!({"id": p["patch"]}), "agent").unwrap_err().contains("permission denied"), "{lang}");
         call(&s, "apply_patch", json!({"id": p["patch"]}), "user");
         assert!(std::fs::read_to_string(t.path().join(file)).unwrap().contains("reviewed by the agent"), "{lang}");
-        println!("{lang:<11} ok: {} → {}:{line}, health {}", hit["qualified"], file, h["measured"]);
+        println!("{lang:<11} ok: {} → {}:{line}", hit["qualified"], file);
     }
 }

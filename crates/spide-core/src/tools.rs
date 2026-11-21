@@ -61,7 +61,7 @@ pub fn tool_list() -> Value {
         {"name":"get_design","description":"Read the whole design: partner mode, design stage, the brief (forces: goals, qualities, constraints, expected changes), classes with members, relations, packages, pending proposals and decisions, \
            pruned elements WITH the user's feedback (respect it!), the domain model (and whether it is stale), use cases and sequences. Compact JSON.",
          "inputSchema":{"type":"object","properties":{}}, "annotations":{"readOnlyHint":true}},
-        {"name":"get_metrics","description":"Architecture health: score 0–100, issues (cycles, god classes, low cohesion (LCOM4), layer violations, orphans, high coupling), per-class fan-in/out & instability, package metrics.",
+        {"name":"get_metrics","description":"Architecture observations and findings (cycles, god classes, low cohesion (LCOM4), layer violations, orphans, high coupling), per-class fan-in/out & instability, package metrics.",
          "inputSchema":{"type":"object","properties":{}}, "annotations":{"readOnlyHint":true}},
         {"name":"get_view","description":"Read a view: domain (the conceptual domain model you built), package (packages + dependencies), use_case, sequence.",
          "inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["domain","package","use_case","sequence"]}},"required":["kind"]},
@@ -164,10 +164,9 @@ pub fn tool_list() -> Value {
            middle men. Run it before proposing new members.",
          "inputSchema":{"type":"object","properties":{"class":{"type":"string"},"min_score":{"type":"number","minimum":0,"maximum":1}}}},
         {"name":"suggest_home","description":"Where should a misplaced method (method: \"Class.method\") or a group of duplicates \
-           (group: [\"A.m\", \"B.n\"]) live? Ranked candidates: keep, move to an existing class (Information Expert share of \
+           (group: [\"A.m\", \"B.n\"]) live? Unranked candidates: keep, move to an existing class (Information Expert share of \
            the data it uses; wholes take over their parts), or a NEW Pure Fabrication class in the innermost legal layer. Each \
-           has legality (layer/forbidden rules for every caller), the simulated health before→after, the source's fan-out \
-           change, the receiver's LCOM4, role fit, a score, a why, and ready-to-use OPS. Turn the top 2–3 into propose_decision \
+           has legality, simulated source fan-out change, receiver LCOM4 when known, role fit, rationale and ready-to-use OPS. Turn relevant trade-offs into propose_decision \
            options (copy their ops) — the user chooses and approves.",
          "inputSchema":{"type":"object","properties":{"method":{"type":"string"},"group":{"type":"array","items":{"type":"string"}}}}},
         {"name":"get_comments","description":"Comments from collaborators (Lucid comment threads and sticky notes) on the diagrams: \
@@ -214,7 +213,7 @@ fn parse<T: for<'de> Deserialize<'de>>(v: &Value) -> Result<T, String> {
     serde_json::from_value(v.clone()).map_err(|e| format!("invalid arguments: {e}"))
 }
 
-use crate::impact::health_delta;
+use crate::impact::finding_delta;
 
 /// Where the design is in the boundaries → responsibilities → interactions → details progression.
 pub fn stage(d: &Design) -> &'static str {
@@ -289,16 +288,12 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             let v = store.view();
             let m = compute(&v, false);
             ok(serde_json::to_string(&json!({
-                "health": m.health,
                 "issues": m.issues,
                 "classes": m.classes.iter().map(|(k, c)| json!({"class":k,"fan_in":c.fan_in,"fan_out":c.fan_out,
                     "instability":(c.instability*100.0).round()/100.0,"lcom4":c.lcom,"members":c.members,"god":c.god})).collect::<Vec<_>>(),
                 "packages": m.packages,
                 "package_dependencies": m.package_deps,
-                "principles": m.principles,
                 "health_report": m.health_report,
-                "legacy_health": m.legacy_health,
-                "health_explained": "health (health-2) = geometric mean of extensibility, modularity, simplicity and implementation_quality, each from evidence with explicit coverage; unknown dimensions make it provisional; the agent's current dimension assessments contribute 40% (assess_health). Issues keep their course principle, source, confidence and basis.",
             }))
             .unwrap(), false)
         }
@@ -325,7 +320,6 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
                 options: Vec<DecisionOption>,
             }
             let a: A = parse(args)?;
-            let before = compute(&store.view(), false);
             let previews: Vec<String> = a
                 .options
                 .iter()
@@ -354,10 +348,9 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             };
             ok(
                 format!(
-                    "Decision {id} is now shown to the user with live previews (current health {}). Consequences per option: {}.{warn} \
+                    "Decision {id} is now shown to the user with live previews. Consequences per option: {}.{warn} \
                      Wait for user approval or a revision request. No defence or examiner verdict is required. \
                      End your turn now with at most one short sentence.",
-                    before.health,
                     previews.join(", ")
                 ),
                 true,
@@ -377,7 +370,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             let standalone = crate::impact::impact_of_ops(&store.design, &a.ops).ok();
             let id = store.propose_linked_ops(a.ops, a.rationale, "agent", a.decision, a.option).map_err(|e| e.0)?;
             let after = compute(&store.view(), true);
-            let mut text = format!("Proposal {id} shown as ghosts ({summary}). {}", health_delta(&before, &after));
+            let mut text = format!("Proposal {id} shown as ghosts ({summary}). {}", finding_delta(&before, &after));
             if let Some(im) = standalone.filter(|im| !im.flipped_deps.is_empty() || !im.affected_scenarios.is_empty()) {
                 if !im.flipped_deps.is_empty() {
                     let f: Vec<String> = im.flipped_deps.iter().map(|(a, b)| format!("{a} → {b}")).collect();
@@ -402,8 +395,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
             let disputes = m.issues.iter().filter(|i| i.kind == "disagreement").count();
             ok(
                 format!(
-                    "Recorded {n} assessment(s). Health now {}.{}{}",
-                    m.health,
+                    "Recorded {n} responsibility assessment(s).{}{}",
                     if disputes > 0 { format!(" {disputes} disagreement(s) with Spide's signals: raise them with the user.") } else { String::new() },
                     if warnings.is_empty() { String::new() } else { format!(" Warnings: {}", warnings.join("; ")) }
                 ),
@@ -711,7 +703,6 @@ pub fn design_digest(store: &Store) -> String {
             "forbidden": d.rules.forbidden.iter().map(|r| json!({"from": r.from, "to": r.to, "reason": r.reason})).collect::<Vec<_>>(),
             "forbidden_types": d.rules.forbidden_types.iter().map(|r| json!({"layer": r.layer, "pattern": r.pattern})).collect::<Vec<_>>(),
         },
-        "health": m.health,
         "top_issues": m.issues.iter().take(6).map(|i| &i.message).collect::<Vec<_>>(),
         "assessments": {"stale": stale, "missing": missing,
             "hint": "assess_class (batched) for stale/missing classes when you next touch them"},

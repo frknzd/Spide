@@ -217,23 +217,27 @@ fn symbols_navigation_both_ways_and_safe_source() {
 }
 
 #[test]
-fn assessment_and_exception_flow_respects_policy() {
+fn score_free_evidence_and_exception_flow_respects_policy() {
     let t = tempfile::tempdir().unwrap();
+    let legacy_queue = t.path().join(".spide/assessments.json");
+    std::fs::create_dir_all(legacy_queue.parent().unwrap()).unwrap();
+    let old_request = r#"[{"id":"A1","dimensions":["modularity"],"reason":"old request"}]"#;
+    std::fs::write(&legacy_queue, old_request).unwrap();
     let s = with(t.path(), policy::Permission::Autonomous, false, &[]);
+    assert_eq!(std::fs::read_to_string(&legacy_queue).unwrap(), old_request);
     s.call_tool("propose_decision", &json!({"question":"model?","options":[{"label":"a","ops":[{"op":"add_class","name":"Order"},{"op":"add_class","name":"Line"},{"op":"add_relation","from":"Order","to":"Line","kind":"composition"},{"op":"add_relation","from":"Line","to":"Order","kind":"dependency"}]}]}), "agent").unwrap();
     let id = s.with_store(|st| st.design.decisions[0].id.clone());
     s.call_tool("approve_decision", &json!({"id":id,"expected_rev":rev(&s)}), "agent").unwrap();
-    let req: Value = serde_json::from_str(&s.call_tool("get_assessment_requests", &json!({}), "agent").unwrap()).unwrap();
-    assert_eq!(req["needed"].as_array().unwrap().len(), 4);
-    assert!(req["rubric"].as_str().unwrap().contains("extensibility"));
-    let q: Value = serde_json::from_str(&s.call_tool("request_assessment", &json!({"reason":"new model"}), "agent").unwrap()).unwrap();
-    assert!(q["request"].as_str().unwrap().starts_with('A'));
-    let before: Value = serde_json::from_str(&s.call_tool("get_health", &json!({}), "agent").unwrap()).unwrap();
-    s.call_tool("assess_health", &json!({"assessments":[{"dimension":"modularity","score":95,"rationale":"the cycle is the aggregate's back-reference, intended","cited":["Order","Line"]}],"model":"test-model"}), "agent").unwrap();
-    let after: Value = serde_json::from_str(&s.call_tool("get_health", &json!({}), "agent").unwrap()).unwrap();
-    assert!(after["assisted"].as_u64().unwrap() > before["measured"].as_u64().unwrap());
-    assert_eq!(after["measured"], before["measured"]);
-    assert!(s.assessments.pending().iter().all(|r| !r.dimensions.contains(&"modularity".to_string())));
+    for name in ["get_assessment_requests", "request_assessment", "assess_health", "cancel_assessment", "set_priorities"] {
+        assert!(s.call_tool(name, &json!({}), "agent").unwrap_err().contains("retired"));
+    }
+    let read = |name| serde_json::from_str::<Value>(&s.call_tool(name, &json!({}), "agent").unwrap()).unwrap();
+    let before = read("get_health");
+    assert_eq!(before["version"], "evidence-1");
+    assert!(!before["gaps"].as_array().unwrap().is_empty());
+    for key in ["score", "measured", "assisted", "dimensions", "coverage"] { assert!(before.get(key).is_none()); }
+    let metrics = read("get_metrics");
+    for key in ["health", "legacy_health", "principles"] { assert!(metrics.get(key).is_none()); }
     // exceptions: the agent proposes, only the owner approves
     let x: Value = serde_json::from_str(&s.call_tool("propose_exception", &json!({"rule":"cycle","scope":"Order","reason":"aggregate back-reference by design"}), "agent").unwrap()).unwrap();
     let xid = x["exception"].as_str().unwrap();
@@ -242,6 +246,6 @@ fn assessment_and_exception_flow_respects_policy() {
     s.call_tool("approve_exception", &json!({"id":xid}), "user").unwrap();
     let ex: Value = serde_json::from_str(&s.call_tool("list_exceptions", &json!({}), "agent").unwrap()).unwrap();
     assert_eq!(ex[0]["approved"], true);
-    let tr: Value = serde_json::from_str(&s.call_tool("get_trace", &json!({"limit":20}), "agent").unwrap()).unwrap();
-    assert!(tr["rows"].as_array().unwrap().iter().any(|r| r["tool"] == "assess_health"));
+    assert!(read("get_health")["suppressed"].as_array().unwrap().iter().any(|f| f["suppressed_by"] == xid));
+    assert!(s.journal.read().iter().all(|r| r.health_before.is_none() && r.health_after.is_none()));
 }

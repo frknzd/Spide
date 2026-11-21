@@ -22,8 +22,6 @@ pub enum DomainEvent {
     Editors,
     /// LSP/linter/editor evidence changed (health must be recomputed).
     EvidenceChanged,
-    /// The agent is asked to (re)assess health dimensions.
-    AssessmentRequested { id: String, dimensions: Vec<String>, reason: String },
 }
 
 pub trait EventSink: Send + Sync {

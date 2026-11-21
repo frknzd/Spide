@@ -124,6 +124,8 @@ impl ToolRun {
 pub struct EvidenceSet {
     pub findings: Vec<Finding>,
     pub runs: Vec<ToolRun>,
+    /// Diagnostics excluded when this evidence snapshot was checked against current files.
+    pub stale_findings: usize,
 }
 
 impl EvidenceSet {
@@ -165,7 +167,9 @@ impl EvidenceSet {
             (Some(h), Some(c)) => h == c,
             _ => true,
         });
-        before - self.findings.len()
+        let dropped = before - self.findings.len();
+        self.stale_findings += dropped;
+        dropped
     }
 }
 

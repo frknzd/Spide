@@ -1,11 +1,10 @@
-//! Canvas chrome: identity row, workspace actions, view tabs, toolbar (health ring and popover,
+//! Canvas chrome: identity row, workspace actions, view tabs, toolbar (evidence popover,
 //! detail slider, zoom group), proposal dock, toasts, welcome and startup cards.
 
-use super::theme::{bold, col, css, hex, mono, sans};
+use super::theme::{bold, css, hex, mono, sans};
 use super::widgets::{self, button, toggle_button};
 use egui::{Align2, Color32, CornerRadius, Margin, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
 use spide_core::metrics::{Issue, Metrics};
-use spide_diagram::visuals::health_color;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Tab {
@@ -52,10 +51,6 @@ impl Tab {
     }
 }
 
-pub fn hc(score: f64) -> Color32 {
-    col(health_color(score), 1.0)
-}
-
 /// The view tabs; returns the clicked tab.
 pub fn tabs(ui: &mut Ui, tab: Tab, stale: &dyn Fn(Tab) -> bool) -> Option<Tab> {
     let mut out = None;
@@ -91,14 +86,6 @@ pub fn stale_label(t: Tab, stale: bool) -> String {
     }
 }
 
-const PRINCIPLES: [(&str, &str, &str); 5] = [
-    ("coupling", "coupling", "Minimise coupling: cycles, fan-out, Law of Demeter (coupling to stable libraries is fine)"),
-    ("cohesion", "cohesion", "Increase cohesion: god classes, LCOM4, mixed concerns, vague names, long methods"),
-    ("responsibility", "responsibilities", "Distribute responsibilities: Information Expert, Controller, Creator, Pure Fabrication, duplication, feature envy, data classes"),
-    ("architecture", "architecture", "Your architecture rules: layers, modules, forbidden dependencies and types, orphans"),
-    ("uml", "UML hygiene", "Exam notes: argument types, no repeated inherited members, Composite/Visitor sanity, long parameter lists"),
-];
-
 fn issue_color(kind: &str) -> Color32 {
     match kind {
         "cycle" | "god" => css::BAD,
@@ -120,8 +107,6 @@ pub enum HealthAction {
     Fix(usize),
     Focus(usize),
     FocusTarget(String),
-    /// Ask the agent to (re)assess the dimensions that need it.
-    Assess,
     /// Owner decision on a proposed health exception.
     Exception(String, bool),
 }
@@ -130,56 +115,13 @@ pub enum HealthAction {
 pub struct HealthState {
     pub open: bool,
     pub pinned: bool,
-    pub only: Option<&'static str>,
     close_at: Option<f64>,
 }
 
-/// The health ring (30px), its label, and the breakdown popover on hover/click.
-pub fn health_ring(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option<u8>, actions: &mut Vec<HealthAction>, exceptions: Option<&[spide_core::health::HealthException]>) {
-    let h = m.health as f64;
-    let color = hc(h);
+/// Neutral entry point for findings and unavailable evidence.
+pub fn evidence_button(ui: &mut Ui, st: &mut HealthState, m: &Metrics, actions: &mut Vec<HealthAction>) {
     let now = ui.input(|i| i.time);
-    let resp = egui::Frame::new().fill(css::SURFACE).stroke(Stroke::new(1.0, css::LINE)).corner_radius(20).inner_margin(Margin { left: 2, right: 10, top: 2, bottom: 2 }).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 7.0;
-            let (r, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
-            let c = r.center();
-            let rad = 11.9;
-            let p = ui.painter();
-            p.circle_stroke(c, rad, Stroke::new(2.5, Color32::from_rgb(0x2c, 0x2f, 0x36)));
-            let arc = |frac: f64, color: Color32| {
-                let n = 48;
-                let pts: Vec<Pos2> = (0..=((n as f64 * frac).ceil() as usize)).map(|i| {
-                    let a = -std::f32::consts::FRAC_PI_2 + (i as f32 / n as f32).min(frac as f32) * std::f32::consts::TAU;
-                    c + Vec2::angled(a) * rad
-                }).collect();
-                if pts.len() > 1 {
-                    p.add(egui::Shape::line(pts, Stroke::new(2.5, color)));
-                }
-            };
-            if let Some(g) = ghost.filter(|g| *g as f64 != h) {
-                arc(g as f64 / 100.0, hc(g as f64).gamma_multiply(0.35));
-            }
-            arc(h / 100.0, color);
-            let label = match m.health_report.score {
-                None => "—".to_string(),
-                Some(x) if m.health_report.provisional => format!("~{x}"),
-                Some(x) => x.to_string(),
-            };
-            p.text(c + Vec2::new(0.0, 0.5), Align2::CENTER_CENTER, label, bold(8.5), color);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                ui.label(RichText::new("Health").font(bold(11.5)).color(css::TEXT));
-                let n = m.issues.len();
-                ui.label(RichText::new(format!("{n} issue{}", if n == 1 { "" } else { "s" })).font(sans(10.5)).color(css::DIM));
-            });
-        });
-    });
-    let trigger = ui.interact(resp.response.rect, ui.scope_id().with("health-trigger"), Sense::click());
-    if let Some(g) = ghost.filter(|g| *g as f64 != h) {
-        let at = resp.response.rect.left_top() + Vec2::new(24.0, -6.0);
-        ui.painter().text(at, Align2::LEFT_BOTTOM, format!("→ {g}"), bold(10.5), hc(g as f64));
-    }
+    let trigger = ui.button(RichText::new("Evidence").font(bold(11.5)).color(css::TEXT));
     if trigger.clicked() {
         if st.pinned {
             st.open = false;
@@ -196,13 +138,13 @@ pub fn health_ring(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option
     if !st.open {
         return;
     }
-    let anchor = resp.response.rect.left_bottom();
+    let anchor = trigger.rect.left_bottom();
     let max_w = (ui.clip_rect().right() - anchor.x - 10.0).clamp(280.0, 470.0);
     let area = egui::Area::new(ui.scope_id().with("health-pop")).order(egui::Order::Foreground).fixed_pos(anchor + Vec2::new(0.0, 8.0)).show(ui.ctx(), |ui| {
         widgets::panel_frame().inner_margin(Margin::symmetric(16, 14)).show(ui, |ui| {
             ui.set_width(max_w - 32.0);
             ui.set_max_height(ui.ctx().content_rect().height() * 0.7);
-            health_popover(ui, st, m, ghost, actions, exceptions);
+            evidence_popover(ui, m, actions);
         });
     });
     // close: click outside, Escape, or leaving (unless pinned)
@@ -225,174 +167,50 @@ pub fn health_ring(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option
     }
 }
 
-fn health_popover(ui: &mut Ui, st: &mut HealthState, m: &Metrics, ghost: Option<u8>, actions: &mut Vec<HealthAction>, exceptions: Option<&[spide_core::health::HealthException]>) {
-    let h = m.health as f64;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        ui.label(RichText::new("design health").font(sans(12.5)).color(css::DIM));
-        let r = &m.health_report;
-        match r.score {
-            Some(x) => ui.label(RichText::new(format!("{x}/100")).font(bold(12.5)).color(hc(h))),
-            None => ui.label(RichText::new("unassessed").font(bold(12.5)).color(css::DIM)),
-        };
-        if let Some(g) = ghost.filter(|g| *g as f64 != h) {
-            ui.label(RichText::new(format!(" · {g} with proposals")).font(sans(12.5)).color(hc(g as f64)));
-        }
-    });
+fn evidence_popover(ui: &mut Ui, m: &Metrics, actions: &mut Vec<HealthAction>) {
     let r = &m.health_report;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        let mut bits = vec![format!("coverage {}%", r.coverage)];
-        if let Some(ms) = r.measured {
-            bits.push(format!("measured {ms}"));
+    widgets::section(ui, "Design evidence");
+    egui::ScrollArea::vertical().max_height(ui.ctx().content_rect().height() * 0.55).auto_shrink([false, true]).show(ui, |ui| {
+        if !r.gaps.is_empty() {
+            widgets::section(ui, "Evidence gaps");
+            for gap in &r.gaps { ui.label(gap); }
         }
-        if let Some(a) = r.assisted {
-            bits.push(format!("with agent {a}"));
-        }
-        if r.provisional {
-            bits.push("provisional".into());
-        }
-        bits.push(format!("legacy {}", r.legacy));
-        ui.label(RichText::new(bits.join(" · ")).font(sans(11.0)).color(css::FAINT)).on_hover_text(&r.explain);
-    });
-    ui.add_space(6.0);
-    for (id, label) in [("modularity", "Modularity"), ("extensibility", "Extensibility"), ("simplicity", "Simplicity"), ("implementation_quality", "Implementation")] {
-        let Some(d) = r.dimensions.get(id) else { continue };
-        let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
-        let p = ui.painter();
-        p.text(Pos2::new(row.left() + 4.0, row.center().y), Align2::LEFT_CENTER, label, sans(12.0), css::DIM);
-        let bar = Rect::from_min_size(Pos2::new(row.left() + 122.0, row.center().y - 3.0), Vec2::new(row.width() - 122.0 - 62.0, 6.0));
-        p.rect_filled(bar, 3.0, Color32::from_rgb(0x2c, 0x2f, 0x36));
-        match d.best() {
-            Some(v) => {
-                p.rect_filled(Rect::from_min_size(bar.min, Vec2::new(bar.width() * v as f32 / 100.0, 6.0)), 3.0, hc(v));
-                if let Some(mv) = d.measured.filter(|_| d.agent.is_some()) {
-                    // where the evidence alone puts it
-                    let x = bar.left() + bar.width() * mv as f32 / 100.0;
-                    p.vline(x, bar.y_range().expand(3.0), Stroke::new(1.5, css::TEXT));
-                }
-                let tag = if d.judgement_only { format!("{v:.0}*") } else { format!("{v:.0}") };
-                p.text(Pos2::new(row.right() - 4.0, row.center().y), Align2::RIGHT_CENTER, tag, bold(12.0), hc(v));
-            }
-            None => {
-                p.text(Pos2::new(row.right() - 4.0, row.center().y), Align2::RIGHT_CENTER, "unknown", sans(11.0), css::FAINT);
+        if !r.runs.is_empty() {
+            widgets::section(ui, "Analysis runs");
+            for run in &r.runs {
+                ui.label(format!("{} ({}) · {}", run.tool, run.language, run.status))
+                    .on_hover_text(run.detail.as_deref().unwrap_or(""));
             }
         }
-        let mut tip = vec![format!("coverage {:.0}% · {} findings on {} elements", d.coverage * 100.0, d.signals, d.entities)];
-        if let (Some(a), Some(mv)) = (d.agent, d.measured) {
-            tip.push(format!("measured {mv:.0}, agent {a:.0} → {:.0} (agent weighs 40%)", d.best().unwrap_or(mv)));
-        }
-        if d.judgement_only {
-            tip.push("* only the agent's judgement: no measurement yet".into());
-        }
-        tip.extend(d.gaps.iter().cloned());
-        resp.on_hover_text(tip.join("\n"));
-    }
-    if !r.blocking.is_empty() {
-        ui.add_space(4.0);
-        widgets::section(ui, &format!("verified errors · {}", r.blocking.len()));
-        for b in r.blocking.iter().take(5) {
-            ui.label(RichText::new(format!("{} — {}", b.target, b.message)).font(sans(11.5)).color(css::BAD));
-        }
-    }
-    let needs: Vec<&str> = r.dimensions.iter().filter(|(_, d)| d.agent.is_none()).map(|(k, _)| k.as_str()).collect();
-    if !needs.is_empty() {
-        ui.horizontal_wrapped(|ui| {
-            let what = if r.stale_assessments.is_empty() { "No current agent judgement".to_string() } else { format!("Agent judgement out of date ({})", r.stale_assessments.join(", ")) };
-            widgets::faint(ui, &what);
-            if widgets::link_sized(ui, "ask the agent to assess", 11.0).on_hover_text("The agent reads the code against the rubric; its score counts 40% next to the measured one").clicked() {
-                actions.push(HealthAction::Assess);
+        widgets::section(ui, "Findings");
+        if r.signals.is_empty() { widgets::faint(ui, "No findings from available checks. This does not establish design quality."); }
+        for signal in &r.signals {
+            if let Some((idx, issue)) = m.issues.iter().enumerate().find(|(_, i)| i.kind == signal.rule && i.message == signal.message && i.targets.contains(&signal.target)) {
+                if issue.targets.first() == Some(&signal.target) { issue_row(ui, idx, issue, actions); }
+            } else {
+                ui.horizontal_wrapped(|ui| {
+                    widgets::faint(ui, &signal.provenance);
+                    if widgets::link_sized(ui, &signal.message, 12.0).on_hover_text(signal.fix_hint.as_deref().unwrap_or(&signal.target)).clicked() {
+                        actions.push(HealthAction::FocusTarget(signal.target.clone()));
+                    }
+                });
             }
-        });
-    }
-    if let Some(ex) = exceptions {
-        for x in ex.iter().filter(|x| !x.approved) {
-            ui.add_space(4.0);
+        }
+        if !r.exceptions.is_empty() { widgets::section(ui, "Exceptions"); }
+        for x in &r.exceptions {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(format!("Exception proposed by {}: {} doesn't apply to {} — {}", x.proposed_by, x.rule, x.scope, x.reason)).font(sans(11.5)).color(css::TEXT));
-                if widgets::link_sized(ui, "approve", 11.0).clicked() {
-                    actions.push(HealthAction::Exception(x.id.clone(), true));
-                }
-                if widgets::link_sized(ui, "reject", 11.0).clicked() {
-                    actions.push(HealthAction::Exception(x.id.clone(), false));
-                }
-            });
-        }
-    }
-    ui.add_space(6.0);
-    widgets::section(ui, "findings by principle");
-    for (id, label, help) in PRINCIPLES {
-        let Some(sc) = m.principles.get(id) else { continue };
-        let on = st.only == Some(id);
-        let (r, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
-        if on || resp.hovered() {
-            ui.painter().rect_filled(r, 6.0, Color32::from_rgba_unmultiplied(122, 162, 255, 26));
-        }
-        let p = ui.painter();
-        p.text(Pos2::new(r.left() + 4.0, r.center().y), Align2::LEFT_CENTER, label, sans(12.0), css::DIM);
-        let bar = Rect::from_min_size(Pos2::new(r.left() + 122.0, r.center().y - 3.0), Vec2::new(r.width() - 122.0 - 42.0, 6.0));
-        p.rect_filled(bar, 3.0, Color32::from_rgb(0x2c, 0x2f, 0x36));
-        p.rect_filled(Rect::from_min_size(bar.min, Vec2::new(bar.width() * sc.score as f32 / 100.0, 6.0)), 3.0, hc(sc.score as f64));
-        p.text(Pos2::new(r.right() - 4.0, r.center().y), Align2::RIGHT_CENTER, sc.score.to_string(), bold(12.0), hc(sc.score as f64));
-        if resp.on_hover_text(format!("{help} · weight {}%", (sc.weight * 100.0).round())).clicked() {
-            st.only = if on { None } else { Some(id) };
-        }
-    }
-    ui.add_space(6.0);
-    let issues: Vec<(usize, &Issue)> = m.issues.iter().enumerate().filter(|(_, i)| st.only.is_none_or(|o| i.principle == o)).collect();
-    egui::ScrollArea::vertical().max_height(ui.ctx().content_rect().height() * 0.45).auto_shrink([false, true]).show(ui, |ui| {
-        if st.only.is_some() && issues.is_empty() {
-            ui.horizontal(|ui| {
-                widgets::faint(ui, "No issues for this principle.");
-                if widgets::link(ui, "Show all").clicked() {
-                    st.only = None;
+                let status = if x.active(spide_core::store::now_ms()) { "Approved" } else if x.approved { "Expired" } else { "Proposed" };
+                ui.label(format!("{status}: {} on {} — {}", x.rule, x.scope, x.reason));
+                if !x.approved {
+                    if widgets::link_sized(ui, "approve", 11.0).clicked() { actions.push(HealthAction::Exception(x.id.clone(), true)); }
+                    if widgets::link_sized(ui, "reject", 11.0).clicked() { actions.push(HealthAction::Exception(x.id.clone(), false)); }
                 }
             });
         }
-        let code_signals: Vec<_> = r.signals.iter().filter(|s| !m.issues.iter().any(|i| i.kind == s.rule)).collect();
-        if !code_signals.is_empty() {
-            widgets::section(ui, &format!("source checks · {}", code_signals.len()));
-            for signal in code_signals.iter().take(12) {
-                let tip = format!("{} · {}% confidence\n{}", signal.provenance, (signal.confidence * 100.0).round(), signal.fix_hint.as_deref().unwrap_or(""));
-                if ui.add(egui::Label::new(RichText::new(&signal.message).font(sans(12.0)).color(css::TEXT)).sense(Sense::click()).wrap()).on_hover_text(tip).clicked() {
-                    actions.push(HealthAction::FocusTarget(signal.target.clone()));
-                }
-            }
-            if code_signals.len() > 12 { widgets::faint(ui, format!("{} more source findings (get_health lists all)", code_signals.len() - 12)); }
+        if !r.suppressed.is_empty() { widgets::section(ui, "Suppressed findings"); }
+        for signal in &r.suppressed {
+            widgets::faint(ui, format!("{} · {}", signal.message, signal.suppressed_by.as_deref().unwrap_or("")));
         }
-        if m.issues.is_empty() && code_signals.is_empty() {
-            widgets::faint(ui, "Low coupling, high cohesion, responsibilities where the data is. Clean.");
-        }
-        for (id, label, _) in PRINCIPLES {
-            let group: Vec<&(usize, &Issue)> = issues.iter().filter(|(_, i)| (if i.principle.is_empty() { "uml" } else { i.principle }) == id).collect();
-            if group.is_empty() {
-                continue;
-            }
-            ui.add_space(6.0);
-            widgets::section(ui, &format!("{label} · {}", group.len()));
-            let limit = if st.only.is_some() { usize::MAX } else { 6 };
-            for (idx, i) in group.iter().take(limit) {
-                issue_row(ui, *idx, i, actions);
-            }
-            if st.only.is_none() && group.len() > 6 && widgets::link_sized(ui, format!("… {} more", group.len() - 6), 11.0).clicked() {
-                st.only = Some(id);
-            }
-        }
-    });
-    ui.add_space(8.0);
-    widgets::hline(ui);
-    ui.add_space(6.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 12.0;
-        for (c, t) in [(0x5b8cff, "calm"), (0xffb454, "coupled"), (0xff5c6c, "hot")] {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let (r, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
-                ui.painter().circle_filled(r.center(), 4.0, super::theme::hex(c));
-                ui.label(RichText::new(t).font(sans(11.0)).color(css::FAINT));
-            });
-        }
-        ui.label(RichText::new("size ∝ coupling · health: geometric mean of the four dimensions, from evidence (plus the agent's current judgement)").font(sans(11.0)).color(css::FAINT));
     });
 }
 

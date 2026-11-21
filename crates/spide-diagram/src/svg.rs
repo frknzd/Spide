@@ -3,7 +3,7 @@
 use crate::route::cmds_to_svg;
 use crate::scene::{bbox, tag, Anchor, Group, Paint, Prim, Scene, Stroke};
 use crate::theme::light_color;
-use crate::visuals::{c, f, health_color, FontSpec, Measure, Rgb, FONT_MONO, FONT_SANS};
+use crate::visuals::{c, f, FontSpec, Measure, Rgb, FONT_MONO, FONT_SANS};
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
@@ -245,7 +245,6 @@ pub struct ExportOptions {
     pub background: String,
     pub title: bool,
     pub date: bool,
-    pub health: bool,
     pub legend: bool,
     pub ghosts: bool,
     pub diagnostics: bool,
@@ -256,14 +255,13 @@ pub struct ExportOptions {
 
 impl Default for ExportOptions {
     fn default() -> Self {
-        Self { theme: "light".into(), background: "solid".into(), title: true, date: true, health: false, legend: true, ghosts: false, diagnostics: false, packages: true, padding: "comfortable".into() }
+        Self { theme: "light".into(), background: "solid".into(), title: true, date: true, legend: true, ghosts: false, diagnostics: false, packages: true, padding: "comfortable".into() }
     }
 }
 
 pub struct ExportMeta {
     pub title: String,
     pub view: String,
-    pub health: Option<u8>,
     pub legend: Vec<LegendKey>,
     /// pre-formatted date ("14 November 2025")
     pub date: String,
@@ -285,7 +283,7 @@ pub fn build_export_svg(scene: &Scene, m: &dyn Measure, meta: &ExportMeta, o: &E
     let b = bbox(&scene.root, m, skip)?;
     let (bx, by, bw, bh) = (b[0], b[1], b[2] - b[0], b[3] - b[1]);
     let pad = if o.padding == "compact" { 24.0 } else { 56.0 };
-    let show_header = o.title || o.date || (o.health && meta.health.is_some());
+    let show_header = o.title || o.date;
     let header_h = if show_header {
         if o.title {
             58.0
@@ -338,12 +336,7 @@ pub fn build_export_svg(scene: &Scene, m: &dyn Measure, meta: &ExportMeta, o: &E
         }
         let parts: Vec<&str> = [Some(meta.view.as_str()), o.date.then_some(meta.date.as_str())].into_iter().flatten().filter(|s| !s.is_empty()).collect();
         let parts = parts.join("  ·  ");
-        extra.text(left, y + 10.0, parts.clone(), FontSpec::sans(12.0), c::DIM, Anchor::Start);
-        if let (true, Some(h)) = (o.health, meta.health) {
-            let tx = left + m.width(&parts, FontSpec::sans(12.0)) + if parts.is_empty() { 0.0 } else { 14.0 };
-            extra.text(tx, y + 10.0, "health ", FontSpec::sans(12.0), c::DIM, Anchor::Start);
-            extra.text(tx + m.width("health ", FontSpec::sans(12.0)), y + 10.0, format!("{h}/100"), FontSpec::sans(12.0).bold(), health_color(h as f64), Anchor::Start);
-        }
+        extra.text(left, y + 10.0, parts, FontSpec::sans(12.0), c::DIM, Anchor::Start);
         let ly = y0 + pad + header_h - 10.0;
         extra.line([left, ly], [left + content_w, ly], crate::scene::stroke(c::BORDER, 0.8).opacity(0.6));
     }

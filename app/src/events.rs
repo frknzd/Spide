@@ -26,8 +26,6 @@ pub enum UiEvent {
     ShowEditor,
     /// A `/command` for the canvas (from an agent's ui_command).
     Command(String),
-    /// The agent should (re)assess health dimensions.
-    AssessmentRequested { dimensions: Vec<String>, reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

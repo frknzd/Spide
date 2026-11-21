@@ -407,17 +407,6 @@ pub fn completion(ui: &mut Ui, snap: &Snapshot) -> Option<NextStep> {
     out
 }
 
-fn health_badge(ui: &mut Ui, after: u8, before: i64) {
-    let delta = after as i64 - before;
-    let mut job = egui::text::LayoutJob::default();
-    let c = super::chrome::hc(after as f64);
-    job.append(&after.to_string(), 0.0, egui::TextFormat { font_id: bold(12.0), color: c, ..Default::default() });
-    if delta != 0 {
-        job.append(&format!(" {}{delta}", if delta > 0 { "+" } else { "" }), 0.0, egui::TextFormat { font_id: sans(11.0), color: c.gamma_multiply(0.85), ..Default::default() });
-    }
-    ui.label(job).on_hover_text("Health if approved (change from now)");
-}
-
 /// One-click list of pending plans.
 fn queue(ui: &mut Ui, plans: &[Proposal], current: &str, snap: &Snapshot, enabled: bool, select: &mut Option<String>) {
     let at = plans.iter().position(|x| x.id == current).unwrap_or(0);
@@ -436,22 +425,14 @@ fn queue(ui: &mut Ui, plans: &[Proposal], current: &str, snap: &Snapshot, enable
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), row_h), egui::Sense::click());
             let title = plan_title(x, snap);
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, format!("Review: {title}")));
-            let resp = resp.on_hover_text(title);
+            let resp = resp.on_hover_text(match impact { Some(i) => format!("{title}\n{}", i.summary()), None => title });
             if on {
                 ui.painter().rect_filled(rect, 6.0, Color32::from_rgba_unmultiplied(138, 169, 255, 28));
                 ui.painter().vline(rect.left() + 1.0, rect.y_range().shrink(5.0), Stroke::new(2.5, css::ACCENT));
             } else if resp.hovered() && enabled {
                 ui.painter().rect_filled(rect, 6.0, css::RAISED);
             }
-            let mut right = rect.right() - 6.0;
-            if let Some(im) = impact {
-                let d = im.health_delta();
-                if d != 0 {
-                    let t = if d > 0 { format!("▲{d}") } else { format!("▼{}", -d) };
-                    let g = ui.painter().text(egui::pos2(right, rect.center().y), egui::Align2::RIGHT_CENTER, t, sans(11.0), if d > 0 { css::GOOD } else { css::BAD });
-                    right = g.left() - 8.0;
-                }
-            }
+            let right = rect.right() - 6.0;
             let n = format!("{}", i + 1);
             ui.painter().text(egui::pos2(rect.left() + 10.0, rect.center().y), egui::Align2::LEFT_CENTER, n, bold(11.0), if on { css::ACCENT } else { css::FAINT });
             let title = plan_title(x, snap);
@@ -476,7 +457,6 @@ fn queue(ui: &mut Ui, plans: &[Proposal], current: &str, snap: &Snapshot, enable
 
 /// Alternatives as one-click cards: choosing one replaces the plan shown on the diagram.
 fn alternatives(ui: &mut Ui, st: &mut ProposalUi, dec: &spide_core::model::Decision, chosen: Option<&str>, snap: &Snapshot, backend: &Backend, out: &mut Vec<ProposalOut>) {
-    let health = snap.metrics.health as i64;
     let locked = st.unsaved();
     ui.horizontal(|ui| {
         widgets::section(ui, &format!("{} alternatives", dec.options.len()));
@@ -495,14 +475,11 @@ fn alternatives(ui: &mut Ui, st: &mut ProposalUi, dec: &spide_core::model::Decis
             ui.spacing_mut().item_spacing.y = 4.0;
             ui.horizontal(|ui| {
                 ui.label(RichText::new(if on { "◉" } else { "○" }).font(sans(13.0)).color(if on { css::GHOST } else { css::FAINT }));
-                let w = ui.available_width() - if pv.and_then(|p| p.health).is_some() { 52.0 } else { 0.0 };
+                let w = ui.available_width();
                 ui.allocate_ui_with_layout(Vec2::new(w.max(40.0), 18.0), egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true), |ui| {
                     ui.set_width(w.max(40.0));
                     ui.add(egui::Label::new(RichText::new(&o.label).font(bold(13.0)).color(css::TEXT)).wrap());
                 });
-                if let Some(h) = pv.and_then(|p| p.health) {
-                    health_badge(ui, h, health);
-                }
             });
             if let Some(s) = &o.summary {
                 widgets::para(ui, s, 12.0, css::DIM);

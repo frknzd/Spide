@@ -11,7 +11,7 @@ local cmds = {
   SpideConnect = { function() spide().connect() end, "Connect this Neovim to the Spide owning the project" },
   SpideDisconnect = { function() spide().disconnect() end, "Detach from Spide" },
   SpideReveal = { function() spide().reveal() end, "Show the element under the cursor in Spide's diagram" },
-  SpideHealth = { function() spide().health() end, "Show the project's design health" },
+  SpideHealth = { function() spide().health() end, "Show the project's design evidence" },
   SpideTrace = { function() spide().trace() end, "Show the compact operation trace" },
   SpidePatches = { function() spide().patches() end, "Review and apply pending patches" },
 }

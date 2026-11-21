@@ -11,7 +11,6 @@ fn long_method_boundary_and_evidence() {
     let mut d = sample();
     d.classes[0].methods[0].code = Some(CodeFacts { loc: 30, ..Default::default() });
     assert!(!course::code_checks(&d, false).iter().any(|i| i.kind == "long_method"));
-    let before = metrics::compute(&d, false).health;
     d.classes[0].methods[0].code.as_mut().unwrap().loc = 31;
     let issues = course::code_checks(&d, false);
     let i = issues.iter().find(|i| i.kind == "long_method").unwrap();
@@ -19,7 +18,7 @@ fn long_method_boundary_and_evidence() {
     assert_eq!(i.basis, "code");
     assert!(i.confidence < 1.0 && i.severity < 0.5);
     assert!(!i.explain.is_empty() && i.fix_hint.is_some());
-    assert!(metrics::compute(&d, false).health <= before);
+    assert!(metrics::compute(&d, false).health_report.signals.iter().any(|s| s.rule == "long_method"));
     d.classes[0].methods[0].code = None;
     assert!(!course::code_checks(&d, false).iter().any(|i| i.kind == "long_method"));
 }
@@ -31,7 +30,7 @@ fn measured(design: &Design, code: &Design) -> Design {
 }
 
 #[test]
-fn configurable_length_threshold_and_mapped_evidence_change_health_once() {
+fn configurable_length_threshold_and_mapped_evidence_report_one_finding() {
     let design = sample();
     let mut code = design.clone();
     code.classes[0].source = Some(SourceSymbol { symbol: "Worker".into(), file: "Worker.java".into(), ..Default::default() });
@@ -39,7 +38,7 @@ fn configurable_length_threshold_and_mapped_evidence_change_health_once() {
     let with_facts = measured(&design, &code);
     let before = metrics::compute(&design, false);
     let after = metrics::compute(&with_facts, false);
-    assert!(after.health < before.health, "{} vs {}", after.health, before.health);
+    assert!(!before.issues.iter().any(|i| i.kind == "long_method"));
     assert_eq!(after.issues.iter().filter(|i| i.kind == "long_method").count(), 1);
     assert!(after.issues.iter().find(|i| i.kind == "long_method").unwrap().message.contains("threshold 30"));
     let mut relaxed = with_facts.clone(); relaxed.rules.thresholds.max_method_lines = 31;

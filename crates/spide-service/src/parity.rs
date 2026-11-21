@@ -16,10 +16,10 @@ pub fn tools() -> Vec<Value> {
         json!({"name":"set_rules","description":"Update project architecture rules (owner only). Omitted fields are preserved. rules.private_documentation toggles the default-on private-method source documentation health check.","inputSchema":{"type":"object","properties":{"rules":{"type":"object"}},"required":["rules"]}}),
         json!({"name":"list_history","description":"Design timeline: revisions with actor and summary.","inputSchema":{"type":"object","properties":{"limit":{"type":"integer"}}},"annotations":{"readOnlyHint":true}}),
         json!({"name":"restore_revision","description":"Propose the changes that bring the design back to a past revision (the user approves).","inputSchema":{"type":"object","properties":{"rev":{"type":"integer"}},"required":["rev"]}}),
-        json!({"name":"list_branches","description":"Design branches with class counts and health.","inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true}}),
+        json!({"name":"list_branches","description":"Design branches with class counts.","inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true}}),
         json!({"name":"create_branch","description":"Create a branch from the current design (or a past revision with `rev`) and switch to it unless `switch` is false.","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"rev":{"type":"integer"},"switch":{"type":"boolean"},"expected_rev":{"type":"integer"}},"required":["name","expected_rev"]}}),
         json!({"name":"switch_branch","description":"Park the current design and load another branch.","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"expected_rev":{"type":"integer"}},"required":["name","expected_rev"]}}),
-        json!({"name":"compare_branch","description":"Impact from the current design to a branch (health before/after, added/removed).","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"annotations":{"readOnlyHint":true}}),
+        json!({"name":"compare_branch","description":"Changes, findings, and rule breaks from the current design to a branch.","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"annotations":{"readOnlyHint":true}}),
         json!({"name":"merge_branch","description":"Bring a branch's changes in as proposals (additions/changes and removals separately).","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}),
         json!({"name":"export","description":"Write a text export into the workspace: plantuml (class view), adr (one file per decision), archunit (Java tests), json (the design). `path` is workspace-relative.","inputSchema":{"type":"object","properties":{"format":{"type":"string","enum":["plantuml","adr","archunit","json"]},"path":{"type":"string"},"view":{"type":"string"},"package":{"type":"string","description":"PlantUML class view only: exact package plus direct incoming/outgoing boundary classes."}},"required":["format","path"]}}),
         json!({"name":"ui_command","description":"Run a desktop view command (/lens, /detail, /tidy, /focus …). Requires the desktop; headless returns an error.","inputSchema":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}),
@@ -91,7 +91,7 @@ impl Service {
             "list_branches" => {
                 let active = crate::branches::active(&root);
                 let cur = self.with_store(|st| st.design.clone());
-                let info = |n: &str, d: &Design, a: bool| json!({"name": n, "active": a, "classes": d.live_classes().count(), "health": spide_core::metrics::compute(d, false).health_report.score});
+                let info = |n: &str, d: &Design, a: bool| json!({"name": n, "active": a, "classes": d.live_classes().count()});
                 let mut out = vec![info(&active, &cur, true)];
                 for n in crate::branches::list(&root).into_iter().filter(|n| *n != active) {
                     if let Ok(d) = crate::branches::read(&root, &n) {

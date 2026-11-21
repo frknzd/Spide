@@ -7,14 +7,13 @@ fn design(ops_json: &str) -> Design {
 }
 
 #[test]
-fn clean_design_is_healthy() {
+fn linear_dependencies_have_no_cycles() {
     let d = design(
         r#"[{"op":"add_class","name":"A"},{"op":"add_class","name":"B"},{"op":"add_class","name":"C"},
             {"op":"add_relation","from":"A","to":"B","kind":"association"},
             {"op":"add_relation","from":"B","to":"C","kind":"association"}]"#,
     );
     let m = compute(&d, false);
-    assert_eq!(m.health, 100);
     assert!(m.cycles.is_empty());
     assert_eq!(m.classes["B"].fan_in, 1);
     assert_eq!(m.classes["B"].fan_out, 1);
@@ -36,7 +35,6 @@ fn detects_cycles_including_implicit() {
     assert_eq!(m.cycle_edges.len(), 3);
     assert!(m.classes["A"].in_cycle);
     assert!(m.implicit_edges.iter().any(|e| e.from == "B" && e.to == "A" && e.in_cycle));
-    assert!(m.health < 100);
     assert!(m.issues.iter().any(|i| i.kind == "cycle"));
 }
 
@@ -146,7 +144,7 @@ mod rules_in_metrics {
         let m = compute(&d, false);
         assert!(m.layer_violations.contains(&"OrderController->OrderRepository:dependency".to_string()));
         d.rules.preset = Preset::None;
-        assert_eq!(compute(&d, false).health, 100);
+        assert!(compute(&d, false).layer_violations.is_empty());
     }
 
     #[test]
@@ -159,7 +157,6 @@ mod rules_in_metrics {
         let fd = m.issues.iter().find(|i| i.kind == "forbidden_dep").expect("forbidden dep");
         assert!(fd.message.contains("go through a service"));
         assert!(m.issues.iter().any(|i| i.kind == "forbidden_type" && i.message.contains("HttpRequest")));
-        assert!(m.health < 100);
         // thresholds
         d.rules.forbidden.clear();
         d.rules.forbidden_types.clear();
@@ -207,7 +204,6 @@ fn external_packages_are_suggested_once_and_discounted() {
     assert!(s.design.is_external("A"));
     let after = compute(&s.design, false);
     assert_eq!(after.classes["Panel"].fan_out, 0, "coupling to a stable library is discounted");
-    assert!(after.health >= before.health);
     assert!(!after.issues.iter().any(|i| i.targets.contains(&"A".to_string())), "external classes aren't judged");
 }
 

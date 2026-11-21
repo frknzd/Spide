@@ -41,7 +41,7 @@ fn adrs_for_decided_decisions() {
     }
     let out = adr::adrs(&s.design);
     assert_eq!(out.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>(), vec!["0001-how-do-we-vary-loan-rules.md", "0002-who-knows-a-member-s-loans.md"]);
-    assert!(out[0].1.contains("health"));
+    assert!(out[0].1.contains("Design preview"));
     golden("adr-0001.md", &out[0].1);
     golden("adr-0002.md", &out[1].1);
 }

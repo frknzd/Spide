@@ -294,27 +294,28 @@ function M.health()
     return notify(err, vim.log.levels.WARN)
   end
   local lines = {}
-  if type(res) == "table" and res.dimensions then
-    table.insert(lines, string.format("Health %s  (measured %s, assisted %s, coverage %s%%)", tostring(res.score), tostring(res.measured), tostring(res.assisted), tostring(res.coverage)))
-    for name, d in pairs(res.dimensions) do
-      table.insert(lines, string.format("  %-22s %s", name, tostring(d.score)))
+  if type(res) == "table" then
+    local report = res.health_report or res
+    table.insert(lines, "Evidence · " .. (report.scope or "design"))
+    for _, gap in ipairs(report.gaps or {}) do
+      table.insert(lines, "  Gap: " .. gap)
     end
-    for i, issue in ipairs(res.top or {}) do
-      if i > 12 then
-        break
-      end
-      table.insert(lines, "  • " .. (issue.message or ""))
+    for _, run in ipairs(report.runs or {}) do
+      table.insert(lines, (run.tool or "Tool") .. ": " .. (run.status or "unknown"))
     end
-  elseif type(res) == "table" then
-    table.insert(lines, "Health " .. tostring(res.health))
-    for i, issue in ipairs(res.issues or {}) do
+    local findings = report.signals or res.issues or {}
+    if #findings == 0 then
+      table.insert(lines, "No findings from available checks; not a design verdict.")
+    end
+    for i, issue in ipairs(findings) do
       if i > 12 then
+        table.insert(lines, string.format("  … %d more finding(s)", #findings - 12))
         break
       end
       table.insert(lines, "  • " .. (issue.message or ""))
     end
   end
-  float(lines, " Spide health ")
+  float(lines, " Spide evidence ")
 end
 
 function M.ask(text)

@@ -2,7 +2,6 @@
 //! dispatch, trace journal, jobs, domain events and the agent-facing MCP surface. Shared by the
 //! desktop app and `spide-headless`.
 
-pub mod assessments;
 pub mod branches;
 pub mod history;
 pub mod code;
@@ -129,7 +128,6 @@ pub struct Service {
     code: Mutex<code::CodeState>,
     pub evidence: Arc<code::EvidenceStore>,
     pub editors: editor::Editors,
-    pub assessments: assessments::Queue,
     /// Headless only: the desktop took over the workspace; MCP traffic is forwarded to it.
     pub yielded: std::sync::atomic::AtomicBool,
     /// Proves human actions from Neovim (pushed to the plugin over RPC, never written to disk).
@@ -192,7 +190,6 @@ impl Service {
             code: Mutex::new(code::CodeState::default()),
             evidence: Arc::new(code::EvidenceStore::new(&root)),
             editors: editor::Editors::default(),
-            assessments: assessments::Queue::new(&root),
             yielded: std::sync::atomic::AtomicBool::new(false),
             user_token: workspace::token(),
         }
@@ -233,7 +230,7 @@ impl Service {
         policy::trust_for(&self.root())
     }
 
-    /// Health of the design (or, with scope "code" or an empty design, of the indexed code), with
+    /// Findings for the design (or indexed code), with
     /// the workspace's evidence and languages.
     pub fn health(&self, scope: Option<&str>) -> Result<spide_core::health::HealthReport, String> {
         let design = self.with_store(|s| s.design.clone());
@@ -244,11 +241,8 @@ impl Service {
             _ => !design.classes.iter().any(|c| c.status.is_live()),
         };
         let target: spide_core::Design = if use_code {
-            let mut d = code.as_ref().map(|c| (*c.design).clone()).ok_or("no code indexed")?;
-            // the owner's priorities, exceptions and the agent's judgement live in the design file
-            d.health_assessments = design.health_assessments.clone();
+            let mut d = code.as_ref().map(|c| (*c.design).clone()).unwrap_or_default();
             d.health_exceptions = design.health_exceptions.clone();
-            d.health_priorities = design.health_priorities.clone();
             d
         } else {
             design
@@ -260,7 +254,7 @@ impl Service {
         let ev = self.evidence.set.lock().unwrap();
         let m = spide_core::metrics::compute_with(&target, false, spide_core::health::Context { evidence: Some(&ev), languages: &languages, now: spide_core::store::now_ms() });
         let mut r = m.health_report;
-        r.signals.truncate(200);
+        if use_code { r.scope = "code".into(); }
         Ok(r)
     }
 
@@ -304,7 +298,7 @@ impl Service {
                 "inputSchema":{"type":"object","properties":{"after":{"type":"integer","minimum":0}}},"annotations":{"readOnlyHint":true}}),
             json!({"name":"get_policy","description":"Effective permission and what each class of tool requires.",
                 "inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true}}),
-            json!({"name":"get_trace","description":"Compact trace of mediated operations, newest first: intent → changed symbols/files → health delta → checks → outcome. Filter only=failures|conflicts|unverified; detail=true adds full records.",
+            json!({"name":"get_trace","description":"Compact trace of mediated operations, newest first: intent → changed symbols/files → findings → checks → outcome. Filter only=failures|conflicts|unverified; detail=true adds full records.",
                 "inputSchema":{"type":"object","properties":{"only":{"type":"string","enum":["all","failures","conflicts","unverified"]},"run":{"type":"string"},"actor":{"type":"string"},
                     "offset":{"type":"integer"},"limit":{"type":"integer"},"detail":{"type":"boolean"}}},"annotations":{"readOnlyHint":true}}),
             json!({"name":"job_status","description":"Status/output of a job (or all jobs without `id`).",
@@ -319,17 +313,10 @@ impl Service {
             json!({"name":"dismiss_decision","description":"Dismiss a pending decision (autonomous only).",
                 "inputSchema": with_guard(json!({"id":{"type":"string"}}), vec!["id"])}),
             json!({"name":"undo","description":"Undo the last design change (autonomous only).","inputSchema": with_guard(json!({}), vec![])}),
-            json!({"name":"get_assessment_requests","description":"The health rubric, which dimensions need your judgement (missing/stale), queued requests, the project's forces and per-dimension evidence (measured score, gaps, top findings).",
-                "inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true}}),
-            json!({"name":"assess_health","description":"Record your judgement of health dimensions (rubric in get_assessment_requests). Each: {dimension, score 0-100, rationale, cited:[classes/modules], goals, counterevidence, confidence}. Counts 40% next to the measured score until a cited element changes.",
-                "inputSchema":{"type":"object","properties":{"assessments":{"type":"array","items":{"type":"object","properties":{"dimension":{"type":"string","enum":["extensibility","modularity","simplicity","implementation_quality"]},"score":{"type":"number"},"rationale":{"type":"string"},"cited":{"type":"array","items":{"type":"string"}},"goals":{"type":"array","items":{"type":"string"}},"counterevidence":{"type":"array","items":{"type":"string"}},"confidence":{"type":"number"}},"required":["dimension","score","rationale","cited"]}},"model":{"type":"string"},"run":{"type":"string"}},"required":["assessments"]}}),
-            json!({"name":"request_assessment","description":"Queue a (re)assessment of dimensions (default: missing/stale ones). At most one pending request per dimension.",
-                "inputSchema":{"type":"object","properties":{"dimensions":{"type":"array","items":{"type":"string"}},"reason":{"type":"string"}}}}),
-            json!({"name":"cancel_assessment","description":"Cancel a queued assessment request.","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}),
             json!({"name":"propose_exception","description":"Propose that a health rule doesn't apply somewhere (rule = signal rule id, scope = entity or prefix*), with reason, evidence, optional expires_at (ms) / review_when. Only the owner can approve; suppressed findings stay visible.",
                 "inputSchema":{"type":"object","properties":{"rule":{"type":"string"},"scope":{"type":"string"},"reason":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}},"expires_at":{"type":"integer"},"review_when":{"type":"string"}},"required":["rule","scope","reason"]}}),
             json!({"name":"list_exceptions","description":"Health exceptions (proposed and approved).","inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true}}),
-            json!({"name":"get_health","description":"Health v2 report: score (assisted when the agent's current judgement exists), measured (evidence only), coverage, provisional flag, per-dimension scores (extensibility, modularity, simplicity, implementation_quality) with gaps, verified errors, top signals with rule/provenance/fix, suppressed findings, stale agent assessments. scope=design|code (default: design, or code when the design is empty).",
+            json!({"name":"get_health","description":"Versioned design/code evidence: findings and provenance, tool status, gaps, and exceptions. No design grade. scope=design|code (default: design, or code when the design is empty).",
                 "inputSchema":{"type":"object","properties":{"scope":{"type":"string","enum":["design","code"]}}},"annotations":{"readOnlyHint":true}}),
             json!({"name":"doctor","description":"Per language: parser support and limits, the language server and linters Spide would use (available/missing, with install hints), build configs that matter (compile_commands.json, tsconfig.json…), and whether the workspace is trusted to run them.",
                 "inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true}}),
@@ -379,6 +366,9 @@ impl Service {
 
     /// The single entry point for every agent/client command: policy → guard → intent → run → outcome.
     pub fn call_tool(&self, name: &str, args: &Value, actor: &str) -> Result<String, String> {
+        if matches!(name, "get_assessment_requests" | "assess_health" | "request_assessment" | "cancel_assessment" | "set_priorities") {
+            return Err(format!("{name} is retired: numeric health ratings are no longer supported. Use get_health to inspect findings and evidence gaps."));
+        }
         let trust = self.trust();
         let decision = policy::check_caller(name, &trust, policy::Caller::from_actor(actor));
         let class = decision.class;
@@ -426,23 +416,10 @@ impl Service {
         let mut rec = Record { kind: "outcome".into(), base_rev: Some(base_rev), result_rev: Some(after.rev), at: spide_core::store::now_ms(), ms: Some(started.elapsed().as_millis() as u64), ..base };
         if after.rev != base_rev {
             let (mb, ma): (Metrics, Metrics) = (compute(&before, false), compute(&after, false));
-            rec.health_before = Some(mb.health as i64);
-            rec.health_after = Some(ma.health as i64);
             let (added, resolved) = spide_core::impact::issue_diff(&mb, &ma);
             rec.issues_added = added;
             rec.issues_resolved = resolved;
             rec.symbols = changed_classes(&before, &after);
-            let deltas: Vec<String> = spide_core::health::DIMENSIONS
-                .iter()
-                .filter_map(|dim| {
-                    let a = mb.health_report.dimensions.get(*dim).and_then(|x| x.best())?;
-                    let b = ma.health_report.dimensions.get(*dim).and_then(|x| x.best())?;
-                    ((a - b).abs() >= 1.0).then(|| format!("{dim} {a:.0}→{b:.0}"))
-                })
-                .collect();
-            if !deltas.is_empty() {
-                rec.changes = deltas.join(", ");
-            }
             if rec.symbols.is_empty() && rec.changes.is_empty() {
                 rec.changes = after.log.last().map(|l| l.summary.clone()).unwrap_or_default();
             }
@@ -679,55 +656,6 @@ impl Service {
                 self.emit(DomainEvent::EvidenceChanged);
                 Ok(ToolResult::text("ok"))
             }
-            "get_assessment_requests" => {
-                let d = self.with_store(|st| st.design.clone());
-                let report = self.health(None)?;
-                let needed = spide_core::health::assessment_needed(&d);
-                let per_dim: serde_json::Map<String, Value> = report.dimensions.iter().map(|(k, v)| {
-                    let top: Vec<String> = report.signals.iter().filter(|s| &s.dimension == k).take(6).map(|s| format!("{} · {}", s.rule, s.message)).collect();
-                    (k.clone(), json!({"measured": v.measured, "coverage": v.coverage, "gaps": v.gaps, "top": top}))
-                }).collect();
-                Ok(ToolResult::text(json!({
-                    "rubric": spide_core::health::RUBRIC, "rubric_version": spide_core::health::RUBRIC_VERSION,
-                    "needed": needed.iter().map(|(d, why)| json!({"dimension": d, "why": why})).collect::<Vec<_>>(),
-                    "queue": self.assessments.pending(),
-                    "forces": d.forces.iter().map(|f| json!({"name": f.name, "kind": f.kind.as_str(), "priority": f.priority, "description": f.description})).collect::<Vec<_>>(),
-                    "dimensions": per_dim, "languages": report.languages, "profiles": report.profiles,
-                    "how": "Read the code/design (get_design, get_symbols, get_source), then submit with assess_health. Your score counts 40% next to the measured score while the cited elements are unchanged.",
-                }).to_string()))
-            }
-            "assess_health" => {
-                let items: Vec<spide_core::health::DimensionAssessment> = serde_json::from_value(args.get("assessments").cloned().unwrap_or(json!([]))).map_err(|e| format!("assessments: {e}"))?;
-                if items.is_empty() {
-                    return Err("give assessments: [{dimension, score, rationale, cited, goals?, counterevidence?, confidence?}]".into());
-                }
-                let model = s("model");
-                let run = s("run");
-                let dims: Vec<String> = items.iter().map(|a| a.dimension.clone()).collect();
-                let items: Vec<_> = items.into_iter().map(|mut a| {
-                    if a.model.is_empty() { a.model = model.clone(); }
-                    if a.run.is_empty() { a.run = if run.is_empty() { self.run.clone() } else { run.clone() }; }
-                    a
-                }).collect();
-                let warnings = self.with_store(|st| spide_core::health::record(&mut st.design, items, spide_core::store::now_ms()))?;
-                self.commit("agent")?;
-                self.assessments.complete(&dims);
-                Ok(ToolResult { text: json!({"recorded": dims, "warnings": warnings}).to_string(), symbols: dims.iter().map(|d| format!("health:{d}")).collect(), ..Default::default() })
-            }
-            "request_assessment" => {
-                let dims: Vec<String> = args.get("dimensions").and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_else(|| {
-                    let d = self.with_store(|st| st.design.clone());
-                    spide_core::health::assessment_needed(&d).into_iter().map(|x| x.0).collect()
-                });
-                if dims.is_empty() {
-                    return Ok(ToolResult::text("all dimensions have current assessments"));
-                }
-                let reason = if s("reason").is_empty() { "requested".to_string() } else { s("reason") };
-                let id = self.assessments.request(dims.clone(), &reason)?;
-                self.emit(DomainEvent::AssessmentRequested { id: id.clone(), dimensions: dims, reason });
-                Ok(ToolResult::text(json!({"request": id}).to_string()))
-            }
-            "cancel_assessment" => self.assessments.cancel(&s("id")).map(|_| ToolResult::text("cancelled")),
             "list_exceptions" => Ok(ToolResult::text(serde_json::to_string(&self.with_store(|st| st.design.health_exceptions.clone())).unwrap())),
             "propose_exception" => {
                 let x = spide_core::health::HealthException {
@@ -746,15 +674,6 @@ impl Service {
                 self.with_store(|st| spide_core::health::decide_exception(&mut st.design, &s("id"), approve, spide_core::store::now_ms()))?;
                 self.commit("user")?;
                 Ok(ToolResult::text(if approve { "approved" } else { "rejected" }))
-            }
-            "set_priorities" => {
-                let p: std::collections::BTreeMap<String, f64> = serde_json::from_value(args.get("priorities").cloned().unwrap_or(json!({}))).map_err(|e| e.to_string())?;
-                if let Some(bad) = p.keys().find(|k| !spide_core::health::is_dimension(k)) {
-                    return Err(format!("unknown dimension {bad}"));
-                }
-                self.with_store(|st| st.design.health_priorities = p);
-                self.commit("user")?;
-                Ok(ToolResult::text("ok"))
             }
             "get_health" => Ok(ToolResult::text(serde_json::to_string(&self.health(args.get("scope").and_then(Value::as_str))?).unwrap())),
             "open_source" => {

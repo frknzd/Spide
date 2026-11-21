@@ -108,7 +108,7 @@ pub fn adr(d: &Design, x: &Decision, n: usize) -> String {
 
     if let Some(im) = &x.consequences {
         let _ = writeln!(o, "\n### Consequences\n");
-        let _ = writeln!(o, "* Architecture health {} → {}", im.health_before, im.health_after);
+        let _ = writeln!(o, "* Design preview: {}", im.summary());
         let list = |o: &mut String, label: &str, v: &Vec<String>| {
             if !v.is_empty() {
                 let _ = writeln!(o, "* {label}: {}", v.join("; "));

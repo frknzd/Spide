@@ -1,5 +1,5 @@
 //! The compact operation trace: one row per mediated change — intent → changed symbols/files →
-//! health delta → checks → outcome — newest first, filterable, each expandable into the full
+//! findings → checks → outcome — newest first, filterable, each expandable into the full
 //! record (policy decision, revisions, issues, errors) and, for source edits, the exact diff.
 
 use super::theme::{bold, css, sans};

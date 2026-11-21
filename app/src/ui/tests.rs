@@ -653,7 +653,7 @@ fn uml_sequence_with_fragments_creation_destruction_and_refs() {
     h.state_mut().on_click_target(spide_core::Target::Message { sequence: s.name.clone(), index: ref_index });
     assert_eq!(h.state().scenario.as_deref(), Some("Pay a fine"));
     // the same scene as an export image (readable size) for visual review
-    let meta = spide_diagram::svg::ExportMeta { title: "Library".into(), view: "Sequence".into(), health: None, legend: vec![], date: String::new() };
+    let meta = spide_diagram::svg::ExportMeta { title: "Library".into(), view: "Sequence".into(), legend: vec![], date: String::new() };
     let o = spide_diagram::svg::ExportOptions { theme: "dark".into(), ..Default::default() };
     let (svg, _, _) = spide_diagram::svg::build_export_svg(&scene, &h.state().measure, &meta, &o).unwrap();
     let png = spide_core::png::render(&svg, 1.5).unwrap();

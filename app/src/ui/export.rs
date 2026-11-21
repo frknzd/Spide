@@ -113,7 +113,7 @@ pub enum DialogOut {
 
 /// What an Obsidian Canvas shows of the export options (the preview draws the same).
 pub fn canvas_preview_options(o: &ExportOptions) -> ExportOptions {
-    ExportOptions { diagnostics: false, legend: false, health: false, ..o.clone() }
+    ExportOptions { diagnostics: false, legend: false, ..o.clone() }
 }
 
 /// The profiles a batch uses: the saved ones, or the current settings.
@@ -135,7 +135,7 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, current: &ExportView, v
     if scene_based || d.batch_mode {
         // the screen's pixel density is part of the key: moving to a Retina display re-renders sharply
         let ppp = ctx.pixels_per_point();
-        // a canvas has the same layout, but no diagnostics, legend or health score
+        // a canvas has the same layout, but no diagnostics or legend
         let shown = if d.settings.format == Format::Canvas && !d.batch_mode { canvas_preview_options(&d.settings.options) } else { d.settings.options.clone() };
         let key = format!("{}@{ppp}", serde_json::to_string(&shown).unwrap_or_default());
         if key != d.preview_key {
@@ -354,16 +354,15 @@ pub fn dialog(ctx: &egui::Context, d: &mut ExportDialog, current: &ExportView, v
                                     ui.horizontal_top(|ui| {
                                         ui.add_sized(Vec2::new(92.0, 20.0), egui::Label::new(RichText::new("INCLUDE").font(bold(11.0)).color(css::FAINT)));
                                         egui::Grid::new("includes").num_columns(2).spacing(Vec2::new(12.0, 6.0)).show(ui, |ui| {
-                                            let items: [(&mut bool, &str, &str); 7] = [
+                                            let items: [(&mut bool, &str, &str); 6] = [
                                                 (&mut o.title, "Title", ""),
                                                 (&mut o.date, "Date", ""),
-                                                (&mut o.health, "Health score", ""),
                                                 (&mut o.legend, "Legend", "Notation and colours used in this view"),
                                                 (&mut o.packages, "Package frames", ""),
                                                 (&mut o.ghosts, "Ghost proposals", "Proposed but not yet accepted changes"),
                                                 (&mut o.diagnostics, "Diagnostics", "Heat halos, issue chips, member finding markers, cycle glow and rule warnings. Off: clean UML shapes"),
                                             ];
-                                            // a canvas has no legend or health score and never shows diagnostics
+                                            // a canvas has no legend and never shows diagnostics
                                             let items = items.into_iter().filter(|(_, label, _)| !canvas || matches!(*label, "Title" | "Date" | "Package frames" | "Ghost proposals"));
                                             for (i, (v, label, help)) in items.enumerate() {
                                                 let r = ui.checkbox(v, RichText::new(label).font(sans(12.5)).color(css::TEXT));

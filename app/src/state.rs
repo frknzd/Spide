@@ -105,7 +105,6 @@ pub struct OptionPreview {
     pub decision: String,
     pub option: String,
     pub design: Option<Design>,
-    pub health: Option<u8>,
     pub error: Option<String>,
     /// Classes touched by the option (new or changed) — the preview focuses on these.
     pub focus: Vec<String>,
@@ -131,7 +130,6 @@ pub struct Snapshot {
     /// Metrics over accepted elements.
     pub metrics: Metrics,
     /// Health if all pending proposals were accepted.
-    pub ghost_health: Option<u8>,
     /// Ghost metrics (heat etc. for proposed classes too).
     pub ghost_metrics: Option<Metrics>,
     pub previews: Vec<OptionPreview>,
@@ -388,12 +386,7 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
     let hctx = spide_core::health::Context { evidence: ev_guard.as_deref(), languages: &languages, now: spide_core::store::now_ms() };
     let compute = |d: &Design, ghosts: bool| spide_core::metrics::compute_with(d, ghosts, hctx);
     let metrics = compute(&accepted, false);
-    let (ghost_health, ghost_metrics) = if store.design.proposals.is_empty() {
-        (None, None)
-    } else {
-        let gm = compute(&view, true);
-        (Some(gm.health), Some(gm))
-    };
+    let ghost_metrics = (!store.design.proposals.is_empty()).then(|| compute(&view, true));
     let mut previews = vec![];
     for d in store.design.decisions.iter().filter(|d| d.is_pending() || d.state == DecisionState::Accepted) {
         if !d.is_pending() {
@@ -405,12 +398,10 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
             let impact = impact_of_ops(&store.design, &o.ops).ok();
             match store.preview(&o.ops, &tag) {
                 Ok(p) => {
-                    let h = compute(&p, true).health;
                     previews.push(OptionPreview {
                         decision: d.id.clone(),
                         option: o.id.clone(),
                         design: Some(p),
-                        health: Some(h),
                         error: None,
                         focus,
                         impact,
@@ -420,7 +411,6 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
                     decision: d.id.clone(),
                     option: o.id.clone(),
                     design: None,
-                    health: None,
                     error: Some(e.0),
                     focus,
                     impact: None,
@@ -449,7 +439,6 @@ pub fn build_snapshot(s: &Shared) -> Snapshot {
         rev: store.design.rev,
         view,
         metrics,
-        ghost_health,
         ghost_metrics,
         previews,
         proposal_impacts,

@@ -53,7 +53,6 @@ pub struct CanvasInput<'a> {
     pub level: u8,
     pub show_implicit: bool,
     pub lens: Lens,
-    pub tension: f64,
     pub read_only: bool,
     pub review_focus: Option<&'a Footprint>,
     pub stress: Option<&'a Stress>,
@@ -235,7 +234,7 @@ impl ClassCanvas {
             self.boxes = class_view::boxes_for(m, inp.classes, inp.show_methods, level, inp.relations, None, &ext, Some(&ins.marks), Some(&ins.members), &self.revealed);
         }
         // sync the simulation with the model
-        let skey = hash_of((bkey, (inp.tension * 1000.0) as i64));
+        let skey = bkey;
         if skey != self.sync_key {
             self.sync_key = skey;
             let cm = inp.metrics.map(|m| &m.classes);
@@ -260,7 +259,7 @@ impl ClassCanvas {
                 .collect();
             let fresh = specs.iter().filter(|s| !self.layout.has(&s.id) && s.init.is_none()).count();
             let links: Vec<LinkSpec> = inp.relations.iter().map(|r| LinkSpec { from: r.from.clone(), to: r.to.clone(), kind: r.kind.as_str().into() }).collect();
-            self.layout.update(&specs, &links, inp.tension);
+            self.layout.update(&specs, &links);
             // any structural or size change: lay everything out again (quality over stability);
             // review keeps positions while alternatives are toggled
             if !inp.keep_layout {

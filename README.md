@@ -16,7 +16,7 @@ Spide is written in Rust with [egui](https://github.com/emilk/egui). It uses nat
 - [Usage](#usage)
 - [Spide Projects: design and code together](#spide-projects-design-and-code-together)
 - [Design diagnostics](#design-diagnostics)
-- [Health v2](#health-v2)
+- [Design evidence](#design-evidence)
 - [Languages, LSP and linters](#languages-lsp-and-linters)
 - [Neovim](#neovim)
 - [Agents, headless mode and permissions](#agents-headless-mode-and-permissions)
@@ -32,7 +32,7 @@ Spide is written in Rust with [egui](https://github.com/emilk/egui). It uses nat
 
 - **Agent-assisted design.** A real interactive pi terminal runs beside the canvas. The agent gathers a design brief, proposes classes and raises design decisions. All changes go through MCP tools and are only applied after you approve them.
 - **Review on the diagram.** Proposed changes are drawn in place as ghosts. You can switch between alternatives with one click, inspect their consequences and approve, dismiss or request revisions.
-- **Continuous design health.** Four dimensions — extensibility, modularity, simplicity and implementation quality — measured from the design, the code (seven languages), language servers and linters, with explicit coverage and a bounded, visible contribution from the agent's judgement. Problems are shown on the canvas: hot classes, red dependency cycles, misplaced methods with a suggested home, and duplicated behaviour.
+- **Design evidence.** Inspect findings from the design, source, language servers, and linters. The Evidence panel shows check status, gaps, and exceptions without grading the design.
 - **Architecture rules.** Presets for clean, hexagonal, layered and modular-monolith styles, plus custom forbidden dependencies and thresholds. Rules can be exported as ArchUnit tests.
 - **Scenarios and change impact.** Spide scores sequence scenarios for fit and shows the ripple effect of anticipated changes.
 - **History and branches.** Scrub through the design's timeline, restore earlier states, and fork, compare and merge branches.
@@ -154,7 +154,7 @@ Older `design.json` files (schema 1) open unchanged. Files from the removed sour
 ### Design workflow
 
 1. **Brief.** On an empty design, the agent asks one question at a time and records your answers as prioritised *forces*: goals, quality attributes, constraints and expected changes. ⌘B or `/brief` opens the brief panel for direct editing. `/skip` (or **Skip brief**) starts without a brief.
-2. **Review.** Pending decisions open in the **Review** rail, and the selected plan is drawn on the canvas. New and changed elements are teal, removals red, and everything else faded. The rail lists every pending plan with its question, alternatives (pros, cons and health), consequences, blocking problems and a readable list of changes.
+2. **Review.** Pending decisions open in the **Review** rail, and the selected plan is drawn on the canvas. New and changed elements are teal, removals red, and everything else faded. The rail lists every pending plan with its question, alternatives (pros, cons and findings), consequences, blocking problems and a readable list of changes.
    - Click an alternative to show it on the diagram. **Before / Proposed** and **Fit changes** are at the bottom of the canvas. `/compare` (or **Compare side by side**) compares alternatives on a shared layout.
    - Click diagram elements to see the before → after change and to attach them to a change request. **Request changes** sends your notes, the selected elements and the design revision to the agent. Nothing is applied; the revised plan replaces the current one.
    - **Approve design** applies exactly the visible plan, records any notes, and opens the next pending plan. **Dismiss** rejects it. ⌘Z undoes either. When the queue is empty, the rail suggests next steps.
@@ -176,7 +176,7 @@ Older `design.json` files (schema 1) open unchanged. Files from the removed sour
   - **Presets:** `clean` (dependencies point inward), `hexagonal` (adapters never depend on each other), `layered` (downward only), `modular_monolith` (`<module>.<layer>` packages; other modules only via `<module>.api`) or `none`.
   - **Custom rules:** forbidden dependencies (`*Controller -> *Repository : go via a service`) and forbidden types per layer (`Http*` in domain).
   - **Thresholds.**
-- Every issue explains why it matters and how to fix it, cites the principle it is based on (for example *GRASP Controller*), and states its confidence and source: structure, a heuristic, the agent or the code. From the health popover, **fix with agent** raises a decision with ranked resolutions.
+- Every issue explains why it matters and how to fix it, cites the principle it is based on (for example *GRASP Controller*), and states its confidence and source: structure, a heuristic, the agent or the code. From the Evidence panel, **fix with agent** can raise a decision with alternatives.
 
 ### Canvas
 
@@ -231,7 +231,7 @@ Older `design.json` files (schema 1) open unchanged. Files from the removed sour
 | Dashed purple edge (overlap lens) | Duplicated behaviour, or a method handling another class's concept. |
 | Red / amber ring | Stress test: directly impacted / ripple. |
 | Teal / violet / red / amber ring (sync lens) | Design ahead / code ahead / conflict / unreconciled. |
-| Health ring | Overall score, 0–100 (`~n`: provisional, `—`: unassessed). Hover for the four dimensions, coverage, gaps and findings. `→ n` is the score after accepting pending ghosts. |
+| Evidence | Findings, check status, gaps, and exceptions. |
 
 ### Layout
 
@@ -268,33 +268,19 @@ addOns/restextraction/      project root; pi runs here (repository AGENTS.md fil
 
 ## Design diagnostics
 
-The diagnostics below are the deterministic findings ("signals") health is computed from; each keeps its course principle, source, confidence and basis. The previous five-principle score is still reported as `legacy` during the migration (see [Health v2](#health-v2)).
+The diagnostics below are findings, not a design grade. Each retains its source and basis.
 
 - **Purpose vs behaviour.** Each class is assigned a role from, in order of precedence: an explicit `role`, the agent's assessment, its name, its stereotype or its layer. Possible roles are presentation, controller, service, domain, persistence, adapter, output, creator, utility and value. Each method is assigned a concern and an RDD kind (knowing, doing, deciding). Mismatches are flagged: UI classes doing domain work, entities persisting or formatting themselves, fat controllers, vague names (`*Manager`, `*Util`) and classes mixing concerns.
-- **Duplication and responsibility placement.** Method pairs get an explainable similarity score. Delegation, polymorphic overrides and UI event handlers are not counted as duplication. Spide also detects shotgun surgery and middle men. `suggest_home` ranks better homes for misplaced behaviour, using Information Expert and, where no expert fits, a new Pure Fabrication. It checks caller dependencies and simulates the effect on health.
+- **Duplication and responsibility placement.** Method pairs get an explainable similarity score. Delegation, polymorphic overrides and UI event handlers are not counted as duplication. Spide also detects shotgun surgery and middle men. `suggest_home` offers unranked candidates with legality, data ownership, role fit, and simulated fan-out and cohesion observations.
 - **Rule checks.** Law of Demeter, Feature Envy, data classes, UI driving the domain without a controller, Creator, type-code switches (replace with polymorphism), long methods and long parameter lists. UML checks cover argument types, repeated inherited attributes, incomplete Composites and single-element Visitors.
 - **Agent judgement.** The agent records a per-class assessment (`assess_class`). Agreement raises an issue's confidence. On serious issues, disagreement is surfaced for you to resolve. Assessments go stale when the class changes.
 - **Long methods.** Java methods with more than 30 non-blank, non-comment body lines are flagged. The threshold is configurable as `rules.thresholds.max_method_lines`. Methods in a pure design have unknown length and are not penalised.
 
-## Health v2
+## Design evidence
 
-Health (`health-2`) answers "is this a good design to extend and maintain?" with four dimensions:
+`get_health` returns the versioned `evidence-1` report: scope, findings and provenance, analysis status, evidence gaps, and exceptions. A missing check means unknown. No findings means only that the available checks reported none. Heuristics such as Java `instanceof` and private-method documentation checks are leads, not correctness verdicts.
 
-| Dimension | Measured from |
-|---|---|
-| **Extensibility** | change-scenario locality, type switches and Java `instanceof` smells, deep inheritance, volatile hubs, scattered concepts |
-| **Modularity** | cycles, coupling, cohesion, responsibility placement, architecture rules, encapsulation |
-| **Simplicity** | function complexity/nesting/length/parameters (per language), large classes/modules, duplication, middle men, speculative abstractions |
-| **Implementation quality** | LSP/linter correctness, safety, maintainability, complexity, performance and style findings; optional source-documentation presence |
-
-- **Formula.** Per dimension, an element's findings combine as independent risks (one root cause counts once); the load is the rate over eligible elements plus a bounded hotspot term, and `score = 100·e^(−2.2·load)`. Overall health is the geometric mean of the known dimensions, weighted by owner priorities (`set_priorities`, default equal).
-- **Unknown is not healthy.** A dimension without evidence (e.g. implementation quality without tool or supported source-documentation evidence, or a design without code) is *unknown*: it is excluded, and the score is marked *provisional* with its coverage and the gaps that would close it. An empty design is *unassessed*, not 100.
-- **Review checks.** Java `instanceof` produces a bounded extensibility smell, not a correctness error; consider polymorphism or a parser registry when new types would otherwise require edits. Separation-of-concerns checks judge responsibilities, not manager/controller names or boolean fields. UI lifecycle queries can be flagged when the UI bypasses an existing controller that mediates the same operation; display-only values do not automatically require a controller hop.
-- **Private documentation.** Default on per project in **Settings → Project health → Check private-method documentation**. Java imports measure attached nonempty explanatory comments or Javadoc on private concrete methods, excluding constructors. Design descriptions are not source comments. The small implementation-quality penalty is bounded per class; old/unsupported imports remain unknown. Documentation alone provides only partial coverage and never verifies correctness/safety. Agents can toggle it without replacing other rule fields: `set_rules({"rules":{"private_documentation":false}})`.
-- **Language profiles.** Thresholds and rule applicability follow each language's idioms: Rust structs + impls and Clojure records aren't "data classes", iterator chains and threading macros aren't Demeter violations, modules of functions are judged as modules, dynamic languages aren't asked for type annotations. Idioms (`unsafe`, `unwrap`, `any`, atoms, manual memory) are reported, never penalised for being used; linters judge them in context.
-- **Agent judgement.** The agent assesses dimensions against a versioned rubric (`get_assessment_requests` → `assess_health`) with rationale, citations, goals and counterevidence. A current assessment counts **40%** next to the measured score (`assisted`); `measured` stays reproducible. Changing a cited element makes the judgement stale. Verified correctness errors cap the assisted implementation quality. Ask from the health popover or with `request_assessment`; requests are queued, deduplicated and cancellable.
-- **Exceptions.** An agent may `propose_exception` (rule, scope, reason, evidence, expiry/review condition); only you approve it (health popover). Suppressed findings stay visible.
-- **Calibration.** `crates/spide-core/tests/calibration.rs` (course orderings), `tests/health.rs` (invariants: unknown ≠ healthy, correlated findings, size dilution, renaming, overengineering, exceptions, agent staleness) and `crates/spide-import/tests/health_calibration.rs` (tangled vs. split code in all seven languages; one design in six languages lands in one band).
+Agents can `propose_exception` with the rule, scope, reason, evidence, and expiry or review condition. Only the owner approves it; suppressed findings remain visible in Evidence. Numeric rating tools are retired.
 
 ## Languages, LSP and linters
 
@@ -328,12 +314,12 @@ Neovim is Spide's editor — there is no code editor in Spide itself.
 - **Headless.** `spide-headless [--project DIR] mcp` serves MCP over stdio; `serve [--port N]` over loopback HTTP with a bearer token published owner-only in `.spide/endpoint.json` and `$XDG_STATE_HOME/spide/endpoints/`. No window, pi or Neovim needed. `trace`, `call TOOL JSON` and `trust` are CLI helpers. One process owns a workspace (`.spide/lock`); when the desktop opens a workspace a headless Spide serves, the headless one hands it over and forwards its agents to the desktop, and takes it back when the desktop quits.
 - **Tools** cover the whole application: design (propose, decisions, approve, apply ops, prune, rules, mode), code (`get_symbols`, `find_symbol`, `element_at`, `get_source`, `propose_patch`, `apply_patch`, `revert_op`), evidence and health (`doctor`, `analyze`, `get_evidence`, `get_health`, assessments, exceptions), history and branches, exports, sync, Lucid (`lucid_*`, `get_comments`, `address_comment`), jobs (`run_check`, `job_status`, `cancel_job`), editor (`open_source`, `reveal`, `get_editor`, `editor_handoff`), events and trace. Purely visual commands (`ui_command`: lens, detail, focus …) need the desktop.
 - **Permissions** per project, kept outside the project in `~/.config/spide/trust.json` (an agent editing project files can't change them): **read-only** (inspect), **propose-only** (default: proposals, staged patches, assessments), **autonomous** (also apply decisions, ops and patches, and run owner-approved commands in trusted workspaces). Set with `spide-headless trust --permission autonomous [--trusted] [--approve-command "cargo test"]`. Owner-only actions (permissions, trust, rules, exceptions, priorities) are never available to agents. Changes need `expected_rev` (or a content hash) and accept an `idempotency_key`.
-- **Trace.** Every mediated operation is journaled (`.spide/trace/journal.jsonl`): intent before acting, outcome after (crashes show as *interrupted*). `/trace` (or `get_trace`, `spide-headless trace`) shows one line per change — intent → changed symbols/files → health and dimension deltas → checks → outcome — filterable to failures, conflicts or unverified changes; expand a row for the policy decision, revisions, issues, errors and the exact diff, and revert source changes as new guarded changes. Secrets are redacted and output is bounded. It is an operational record, not a tamper-proof audit log.
+- **Trace.** Every mediated operation is journaled (`.spide/trace/journal.jsonl`): intent before acting, outcome after (crashes show as *interrupted*). `/trace` (or `get_trace`, `spide-headless trace`) shows one line per change — intent → changed symbols/files → finding changes → checks → outcome — filterable to failures, conflicts or unverified changes; expand a row for the policy decision, revisions, issues, errors and the exact diff, and revert source changes as new guarded changes. Secrets are redacted and output is bounded. It is an operational record, not a tamper-proof audit log.
 
 ## Migration
 
 - Existing `design.json` files and Java Spide Projects open unchanged; schema-1 code links are Java links. New fields (`language`/`kind`/`id` on links, `languages`/`tools` in the manifest, health assessments/exceptions/priorities in the design) are optional and only written when used.
-- Health numbers change: the score is now health-2, the old one is shown as `legacy` in the popover, MCP (`legacy_health`) and exports' labels. Exporter goldens were updated accordingly.
+- Numeric health ratings are retired. Existing project ratings and trace history remain readable as historical data; new reports, previews, and exports are score-free.
 - The MCP endpoint now requires its bearer token. pi gets it through `SPIDE_MCP_TOKEN` (referenced from `.pi/mcp.json`, never written there); other clients read `.spide/endpoint.json`.
 - `history.rs`/`branches.rs` moved into `spide-service`, shared by desktop and headless.
 

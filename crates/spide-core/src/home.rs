@@ -1,8 +1,5 @@
-//! Suggested home for a misplaced or duplicated method: rank the classes that could own it by
-//! Information Expert (who has the data), layer legality, simulated impact (health, coupling,
-//! cohesion) and role fit — plus a new Pure Fabrication class when no existing class fits.
-//! Every candidate carries the ops that implement it, so the agent can turn the ranking straight
-//! into decision options.
+//! Candidate homes for misplaced or duplicated methods, with legality, data ownership,
+//! role fit and simulated dependency/cohesion observations. Candidates are not ranked.
 
 use crate::metrics::compute;
 use crate::model::*;
@@ -23,15 +20,12 @@ pub struct HomeCandidate {
     /// every caller may depend on it and it may depend on what the method needs (architecture rules)
     pub legal: bool,
     pub illegal_because: Vec<String>,
-    pub health_before: u8,
-    pub health_after: u8,
-    /// Fan-out change of the class(es) the method leaves.
-    pub source_fan_out_delta: i64,
+    /// Fan-out change of the class(es) the method leaves. Unknown if simulation fails.
+    pub source_fan_out_delta: Option<i64>,
+    pub lcom_before: Option<usize>,
     /// LCOM4 of the receiving class afterwards (1 = cohesive).
     pub lcom_after: Option<usize>,
     pub role_fit: bool,
-    /// Ranking score (higher is better).
-    pub score: f64,
     pub why: String,
     pub ops: Vec<Op>,
 }
@@ -41,8 +35,6 @@ pub struct HomeSuggestion {
     /// `Class.method` being placed
     pub methods: Vec<String>,
     pub candidates: Vec<HomeCandidate>,
-    /// Name of the best candidate (a class, or the new class).
-    pub recommended: String,
 }
 
 fn split(s: &str) -> Result<(String, String), String> {
@@ -401,15 +393,10 @@ pub fn suggest_home(d: &Design, methods: &[String]) -> Result<HomeSuggestion, St
         let lay = pkg.as_deref().and_then(|p| d.packages.iter().find(|x| x.name == p)).and_then(|p| p.layer);
         let illegal = if kind == "keep" { vec![] } else { legality(home, pkg.as_deref(), lay) };
         let after = if ops.is_empty() { None } else { apply_all(&base, &ops, Mode::Commit(Status::Accepted, None)).ok().map(|a| compute(&a, false)) };
-        let (h_after, fo_delta, lcom) = match &after {
-            Some(a) => (a.health, src_fan_out(a) - src_fan_out(&before), a.classes.get(home).and_then(|x| x.lcom)),
-            None => (before.health, 0, before.classes.get(home).and_then(|x| x.lcom)),
-        };
-        let gain = (h_after as f64 - before.health as f64) / 20.0;
-        let mut score = 0.45 * expert + 0.25 * gain.clamp(-1.0, 1.0) + if role_fit { 0.15 } else { 0.0 } + if lcom.unwrap_or(1) <= 1 { 0.15 } else { 0.0 };
-        if !illegal.is_empty() {
-            score -= 1.0;
-        }
+        let simulated = if ops.is_empty() { Some(&before) } else { after.as_ref() };
+        let fo_delta = simulated.map(|a| src_fan_out(a) - src_fan_out(&before));
+        let lcom_before = before.classes.get(home).and_then(|x| x.lcom);
+        let lcom_after = simulated.and_then(|a| a.classes.get(home)).and_then(|x| x.lcom);
         HomeCandidate {
             class: home.to_string(),
             kind: kind.to_string(),
@@ -417,12 +404,10 @@ pub fn suggest_home(d: &Design, methods: &[String]) -> Result<HomeSuggestion, St
             expert: (expert * 100.0).round() / 100.0,
             legal: illegal.is_empty(),
             illegal_because: illegal,
-            health_before: before.health,
-            health_after: h_after,
             source_fan_out_delta: fo_delta,
-            lcom_after: lcom,
+            lcom_before,
+            lcom_after,
             role_fit,
-            score: (score * 100.0).round() / 100.0,
             why,
             ops,
         }
@@ -478,24 +463,10 @@ pub fn suggest_home(d: &Design, methods: &[String]) -> Result<HomeSuggestion, St
         role: Some(role.into()),
     };
     let ops = move_ops(d, &ms, &name, Some(add));
-    let moves: Vec<&HomeCandidate> = cands.iter().filter(|c| c.kind == "move" && c.legal).collect();
-    let best_expert = moves.iter().map(|c| c.expert).fold(0.0, f64::max);
-    let expert_ok = moves.iter().any(|c| c.expert >= 0.25 && c.health_after >= c.health_before && c.lcom_after.unwrap_or(1) <= 1);
-    let mut fab = evaluate(&name, "new", pkg, ops, 0.0, true, format!("new class {name} (Pure Fabrication)"));
-    // the course: fabricate only when no expert can take it without hurting cohesion/coupling
-    // (or no existing home is legal)
-    if expert_ok {
-        fab.score -= 0.1;
-        fab.why = format!("new class {name} (Pure Fabrication) — not needed: an existing expert can take it");
-    } else {
-        fab.score += 0.3;
-        fab.why = format!(
-            "new class {name} (Pure Fabrication): no existing class can take it without hurting coupling or cohesion (best expert owns {:.0}% of the data)",
-            best_expert * 100.0
-        );
-    }
-    cands.push(fab);
-    cands.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap().then(a.class.cmp(&b.class)));
-    let recommended = cands.iter().find(|c| c.legal).map(|c| c.class.clone()).unwrap_or_else(|| cands[0].class.clone());
-    Ok(HomeSuggestion { methods: methods.to_vec(), candidates: cands, recommended })
+    cands.push(evaluate(&name, "new", pkg, ops, 0.0, true, format!(
+        "new class {name} (Pure Fabrication): separates this responsibility but adds a class and requires access to existing data"
+    )));
+    let kind_order = |kind: &str| match kind { "keep" => 0, "move" => 1, _ => 2 };
+    cands.sort_by(|a, b| (kind_order(&a.kind), &a.class).cmp(&(kind_order(&b.kind), &b.class)));
+    Ok(HomeSuggestion { methods: methods.to_vec(), candidates: cands })
 }

@@ -1013,14 +1013,13 @@ pub struct Design {
     pub counter: u64,
     /// The agent's judgement per class (purpose, role, per-method verdicts), layered on Spide's signals.
     pub assessments: BTreeMap<String, crate::assess::Assessment>,
-    /// The agent's judgement per health dimension (extensibility, modularity, simplicity,
-    /// implementation_quality): evidence-linked, stale when what it cites changes.
+    /// Retired health ratings: compatibility data only. Not used by evidence reports.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub health_assessments: BTreeMap<String, crate::health::DimensionAssessment>,
     /// Contextual exceptions to health rules: proposed by agents, approved only by the owner.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub health_exceptions: Vec<crate::health::HealthException>,
-    /// Owner's quality priorities (dimension → weight); empty: equal weights.
+    /// Retired health weights: preserved for legacy project round-trips only.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub health_priorities: BTreeMap<String, f64>,
 }

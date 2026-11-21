@@ -1014,11 +1014,6 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                 UiEvent::Reveal { symbol } => self.reveal(&symbol),
                 UiEvent::ShowEditor => self.show_editor(),
                 UiEvent::Command(c) => self.command(&c),
-                UiEvent::AssessmentRequested { dimensions, reason } => {
-                    let msg = format!("Spide asks for your health assessment of: {} ({reason}). Call get_assessment_requests for the rubric and evidence, read the relevant design/code (get_design, get_symbols, get_source), then submit with assess_health. Be specific, cite classes/modules, include counterevidence.", dimensions.join(", "));
-                    let label = format!("⚖ assess {}", dimensions.join(", "));
-                    self.run(move |st, pi| if pi.ready() { pi.prompt(pi.ticket(), st, msg, Some(label)) } else { Err("pi isn't ready: the assessment request stays queued for any agent (get_assessment_requests)".into()) });
-                }
                 UiEvent::ChangeRequest { text, context } => {
                     let place = match (context["file"].as_str(), context["line"].as_u64()) {
                         (Some(f), Some(l)) => format!(" (at {f}:{l})"),
@@ -1550,7 +1545,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         if let (true, Some(l)) = (v.has_detail(), level) {
             title = format!("{title} · {}", spide_diagram::visuals::DETAIL_LABELS[l.min(4) as usize]);
         }
-        let meta = ExportMeta { title: snap.view.name.clone(), view: title, health: snap.metrics.health_report.score, legend: self.legend_for(Self::export_tab(v)), date: super::format_date_today() };
+        let meta = ExportMeta { title: snap.view.name.clone(), view: title, legend: self.legend_for(Self::export_tab(v)), date: super::format_date_today() };
         let scene = self.export_scene(v, level, o)?;
         build_export_svg(&scene, &self.measure, &meta, o)
     }
@@ -2050,8 +2045,8 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                             app.branch_cmp = Some(BranchCmp {
                                 name: arg.clone(),
                                 cols: vec![
-                                    CompareCol { id: "●".into(), label: format!("{} (current)", snap.branch), design: Some(snap.view.clone()), health: Some(snap.metrics.health), impact: None, focus: focus.clone(), error: None, summary: None },
-                                    CompareCol { id: "⎇".into(), label: arg.clone(), design: Some(c.design), health: Some(c.health), impact: Some(c.impact), focus, error: None, summary: None },
+                                    CompareCol { id: "●".into(), label: format!("{} (current)", snap.branch), design: Some(snap.view.clone()), impact: None, focus: focus.clone(), error: None, summary: None },
+                                    CompareCol { id: "⎇".into(), label: arg.clone(), design: Some(c.design), impact: Some(c.impact), focus, error: None, summary: None },
                                 ],
                             });
                         },
@@ -2322,7 +2317,6 @@ The original file is not changed.", design.name, design.live_classes().count(), 
             level,
             show_implicit: class && self.show_implicit,
             lens: if class && self.preview.is_none() { self.lens } else { Lens::None },
-            tension: if class && self.preview.is_none() { snap.metrics.tension } else { 0.0 },
             read_only: snap.workspace_status != crate::state::WorkspaceStatus::Ready || (class && (self.preview.is_some() || self.review_active)),
             review_focus: None,
             stress: None,
@@ -3138,7 +3132,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         ui.scope_builder(egui::UiBuilder::new().max_rect(tb), |ui| {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                chrome::health_ring(ui, &mut self.health, metrics, snap.ghost_health, &mut health_actions, Some(&snap.view.health_exceptions));
+                chrome::evidence_button(ui, &mut self.health, metrics, &mut health_actions);
                 if matches!(self.tab, Tab::Class | Tab::Domain) {
                     let level = view.settings.detail_for(self.tab.key());
                     if let Some(l) = chrome::detail_slider(ui, level, self.preview.is_some()) {
@@ -3188,10 +3182,6 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                 HealthAction::Fix(i) => self.fix_issue(i),
                 HealthAction::Focus(i) => self.focus_issue(i),
                 HealthAction::FocusTarget(target) => self.reveal(&target),
-                HealthAction::Assess => self.backend.call(
-                    |st, _| crate::service::get(st).ok_or("service not ready".to_string())?.call_tool("request_assessment", &json!({"reason":"asked from the health popover"}), "user"),
-                    |app, r| if let Err(e) = r { app.toast("error", e) },
-                ),
                 HealthAction::Exception(id, approve) => {
                     let tool = if approve { "approve_exception" } else { "reject_exception" };
                     self.backend.call(
@@ -3547,7 +3537,7 @@ mod export_tests {
     use crate::ui::tests::{harness, project, steps, shot};
 
     #[test]
-    fn package_scope_keeps_full_layout_and_health() {
+    fn package_scope_keeps_full_layout_and_evidence() {
         let dir = project("rest-extraction");
         let mut h = harness(dir.path(), (1440.0, 900.0));
         steps(&mut h, 20);
@@ -3561,7 +3551,7 @@ mod export_tests {
         assert_eq!(data.classes.iter().map(|c| c.name.clone()).collect::<std::collections::BTreeSet<_>>(), expected.classes);
         assert!(data.saved.is_none());
         shot(&mut h, "package-boundary");
-        assert_eq!(h.state().snap.as_ref().unwrap().metrics.health_report.score, snap.metrics.health_report.score);
+        assert_eq!(h.state().snap.as_ref().unwrap().metrics.health_report, snap.metrics.health_report);
         assert_eq!(h.state().snap.as_ref().unwrap().view.layout, snap.view.layout);
         let v = ExportView::ClassPackage(package.clone());
         let options = ExportOptions { ghosts: true, ..Default::default() };

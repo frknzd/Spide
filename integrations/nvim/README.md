@@ -27,7 +27,7 @@ Spide's embedded Neovim loads the same plugin automatically.
 | `:SpideReveal` | select the element under the cursor on Spide's diagram |
 | `:SpideFollow` | toggle revealing on `CursorHold` |
 | `:SpideAsk [text]` | send a change request with this location to the agent |
-| `:SpideHealth` | the project's health (dimensions, coverage, top findings) |
+| `:SpideHealth` | the project's design evidence (findings, analysis status, gaps) |
 | `:SpideTrace` | what agents changed, one line per operation |
 | `:SpidePatches` / `:SpideApplyPatch {id}` | review (diff) and apply a staged agent patch |
 

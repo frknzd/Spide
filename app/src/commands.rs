@@ -683,7 +683,6 @@ pub struct BranchInfo {
     pub name: String,
     pub active: bool,
     pub classes: usize,
-    pub health: u8,
 }
 
 pub fn branch_list(st: &AppState) -> Vec<BranchInfo> {
@@ -695,7 +694,6 @@ pub fn branch_list(st: &AppState) -> Vec<BranchInfo> {
         name,
         active,
         classes: d.live_classes().count(),
-        health: spide_core::metrics::compute(d, false).health,
     };
     let mut out = vec![info(active.clone(), &cur, true)];
     for name in crate::branches::list(&dir).into_iter().filter(|n| *n != active) {
@@ -765,7 +763,6 @@ pub fn branch_delete(st: &AppState, name: String) -> R {
 pub struct BranchCompare {
     pub name: String,
     pub design: Design,
-    pub health: u8,
     /// From the active design to the branch.
     pub impact: spide_core::impact::Impact,
 }
@@ -777,7 +774,7 @@ pub fn branch_compare(st: &AppState, name: String) -> R<BranchCompare> {
     };
     let other = crate::branches::read(&dir, &name)?;
     let impact = spide_core::impact::impact(&cur, &other);
-    Ok(BranchCompare { name, health: impact.health_after, design: other, impact })
+    Ok(BranchCompare { name, design: other, impact })
 }
 
 /// Bring another branch's changes in as proposals: additions/changes and removals separately,

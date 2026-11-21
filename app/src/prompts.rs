@@ -80,9 +80,9 @@ pub fn fix_issue(message: &str, rule: Option<&str>, fix_hint: Option<&str>, kind
     let placement = matches!(kind, Some("misplaced_responsibility" | "duplication" | "concept_elsewhere" | "feature_envy" | "fat_controller" | "data_class"));
     let how = if placement && !method_targets.is_empty() {
         format!(
-            "This is about WHERE behaviour lives. Call suggest_home with {} and build the decision from its top candidates: \
+            "This is about WHERE behaviour lives. Call suggest_home with {} and build the decision from the candidates that illustrate the relevant trade-offs: \
              the best existing home (Information Expert), a new Pure Fabrication class if offered, and — if defensible — keeping it \
-             (copy each candidate's ops; put its health before→after and why into the option's pros/cons and trade-offs).",
+             (copy each candidate's ops; explain legality, data ownership, dependency changes, cohesion observations and trade-offs; candidates are not ranked).",
             if method_targets.len() > 1 && kind == Some("duplication") {
                 format!("group: [{}]", method_targets.iter().map(|m| format!("\"{m}\"")).collect::<Vec<_>>().join(", "))
             } else {

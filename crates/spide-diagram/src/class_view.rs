@@ -5,7 +5,7 @@ use crate::focus::Footprint;
 use crate::insights::{concern_color, finding_color, Marks, Members, OverlapLink};
 use crate::route::{self, deco_for, label_point, route_cmds, Deco, PathCmd, Pt, RBox, REdge, RZone, Route, RouteCache};
 use crate::scene::{paint, solid, stroke, tag, Anchor, Anim, Group, Hit, HitShape, HitTarget, Prim, Scene, Xf};
-use crate::visuals::{self, badges, border_point, c, class_box, f, heat_bucket, heat_color, layer_color, layer_name, node_scale, status_opacity, vis_label, BoxContext, BoxInput, ClassBox, FontSpec, Measure, Rect, Rgb, RowKind, MARKER_W, PAD_X};
+use crate::visuals::{badges, border_point, c, class_box, f, heat_bucket, heat_color, layer_color, layer_name, node_scale, status_opacity, vis_label, BoxContext, BoxInput, ClassBox, FontSpec, Measure, Rect, Rgb, RowKind, MARKER_W, PAD_X};
 use spide_core::metrics::{ClassMetrics, ImplicitEdge, Metrics};
 use spide_core::model::{Class, Interaction, Package, Relation, RelationKind, Status};
 use spide_core::Target;
@@ -1349,6 +1349,3 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
     scene.hits = hits;
     scene
 }
-
-/// `visuals` re-export for callers building legends etc.
-pub use visuals::health_color;

@@ -76,7 +76,6 @@ impl EventSink for DesktopSink {
             DomainEvent::Notice { kind, text } => self.0.toast(&kind, text),
             DomainEvent::Reveal { symbol, origin } => crate::editor::on_reveal(&self.0, &symbol, &origin),
             DomainEvent::EvidenceChanged => self.0.emit(),
-            DomainEvent::AssessmentRequested { dimensions, reason, .. } => self.0.events.send(crate::events::UiEvent::AssessmentRequested { dimensions, reason }),
             DomainEvent::ChangeRequest { text, context } => self.0.events.send(crate::events::UiEvent::ChangeRequest { text, context }),
             _ => {}
         }

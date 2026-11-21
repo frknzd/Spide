@@ -459,18 +459,6 @@ pub fn heat_color(h: f64) -> Rgb {
     }
 }
 
-pub fn health_color(score: f64) -> Rgb {
-    if score >= 85.0 {
-        c::GOOD
-    } else if score >= 65.0 {
-        c::LIME
-    } else if score >= 45.0 {
-        c::WARN
-    } else {
-        c::CYCLE
-    }
-}
-
 pub fn heat_bucket(h: f64) -> u8 {
     (h * 5.0).round().clamp(0.0, 5.0) as u8
 }

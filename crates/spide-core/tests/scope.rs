@@ -35,7 +35,7 @@ fn package_scope_is_bidirectional_one_hop_and_preserves_health() {
     assert!(!scope.includes_edge("Caller","Model"));
     let projected = scope.design(&d);
     assert_eq!(projected.relations.len(),2);
-    assert_eq!(scope.metrics(&m,&d).health_report.score,m.health_report.score);
+    assert_eq!(scope.metrics(&m,&d).health_report,m.health_report);
     assert_eq!(d.classes.len(),8);
     assert!(PackageScope::new(&d,&m,"empty",false).unwrap().classes.is_empty());
     assert!(PackageScope::new(&d,&m,"missing",false).is_err());

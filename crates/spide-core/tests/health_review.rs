@@ -2,7 +2,7 @@
 use spide_core::{metrics::compute, *};
 
 fn design(value: serde_json::Value) -> Design { Design::from_json(&value.to_string()).unwrap() }
-fn measured(d: &Design, dim: &str) -> f64 { compute(d, false).health_report.dimensions[dim].measured.unwrap() }
+fn has(d: &Design, rule: &str) -> bool { compute(d, false).health_report.signals.iter().any(|s| s.rule == rule) }
 
 #[test]
 fn private_documentation_is_default_on_optional_and_unknown_safe() {
@@ -17,7 +17,7 @@ fn private_documentation_is_default_on_optional_and_unknown_safe() {
     assert_eq!(signal.line, Some(7));
     let mut documented = input.clone();
     documented["classes"][0]["methods"][0]["code"]["source_documented"] = true.into();
-    assert!(report.measured < compute(&design(documented), false).health_report.measured);
+    assert!(!has(&design(documented), "private_documentation"));
     let mut disabled = input.clone();
     disabled["rules"] = serde_json::json!({"private_documentation":false});
     assert!(!compute(&design(disabled), false).health_report.signals.iter().any(|s| s.rule == "private_documentation"));
@@ -28,23 +28,21 @@ fn private_documentation_is_default_on_optional_and_unknown_safe() {
 
 
 #[test]
-fn documentation_penalty_is_bounded_per_class_and_type_checks_per_method() {
+fn documentation_and_type_checks_report_method_findings() {
     let mut d = design(serde_json::json!({"classes":[{"name":"Parser","methods":[{"name":"parse","visibility":"private","code":{"source_documented":false,"instanceofs":1}}]}]}));
-    let initial = compute(&d, false).health_report;
     for i in 0..100 {
         let mut m = d.classes[0].methods[0].clone();
         m.name = format!("helper{i}");
         m.code.as_mut().unwrap().instanceofs = 0;
         d.classes[0].methods.push(m);
     }
-    assert_eq!(initial.dimensions["implementation_quality"].measured, compute(&d, false).health_report.dimensions["implementation_quality"].measured);
+    assert_eq!(compute(&d, false).health_report.signals.iter().filter(|s| s.rule == "private_documentation").count(), 101);
     d.classes[0].methods.truncate(1);
     d.classes[0].methods[0].code.as_mut().unwrap().instanceofs = 100;
     let many = compute(&d, false).health_report;
     let s = many.signals.iter().find(|s| s.rule == "instanceof").unwrap();
     assert!(s.severity <= 0.35);
     assert_eq!(many.signals.iter().filter(|s| s.rule == "instanceof").count(), 1);
-    assert!(many.dimensions["extensibility"].measured < initial.dimensions["extensibility"].measured);
 }
 
 #[test]
@@ -57,7 +55,7 @@ fn lifecycle_queries_use_an_existing_application_boundary() {
     let mut mediated = direct.clone();
     mediated.classes[0].methods[0].calls = vec!["Controller.isRunning".into()];
     assert!(compute(&direct, false).issues.iter().any(|i| i.kind == "ui_bypasses_controller"));
-    assert!(measured(&direct, "modularity") < measured(&mediated, "modularity"));
+    assert!(!has(&mediated, "ui_bypasses_controller"));
 }
 
 #[test]
@@ -75,10 +73,10 @@ fn namespace_concerns_not_boolean_or_collection_ownership() {
     separated.classes.push(Class { name: "Storage".into(), methods: methods[2..4].to_vec(), ..Default::default() });
     separated.classes.push(Class { name: "View".into(), methods: vec![methods[4].clone()], ..Default::default() });
     assert!(compute(&mixed, false).issues.iter().any(|i| i.kind == "mixed_concerns"));
-    assert!(measured(&mixed, "modularity") < measured(&separated, "modularity"));
+    assert!(!has(&separated, "mixed_concerns"));
     let mut padded = mixed.clone();
     padded.classes.extend(separated.classes[1..].iter().map(|c| Class { name: c.name.clone(), ..Default::default() }));
-    assert!(measured(&padded, "modularity") < measured(&separated, "modularity"), "empty abstractions must not explain the separation benefit");
+    assert!(has(&padded, "mixed_concerns"), "padding does not resolve the finding");
     mixed.classes[0].methods.retain(|m| m.concern.as_deref() == Some("coordination"));
     assert!(!compute(&mixed, false).issues.iter().any(|i| i.kind == "mixed_concerns"));
 }
@@ -100,9 +98,8 @@ fn tree_type_dispatch_vs_registry_has_the_same_public_contract() {
     // The registry keeps the same class/API: no benefit from merely adding abstractions.
     assert_eq!(dispatch.classes.len(), registry.classes.len());
     assert_eq!(dispatch.classes[0].methods[0].params, registry.classes[0].methods[0].params);
-    // Strict ordering is asserted with the signal implementation below.
-    assert!(measured(&dispatch, "extensibility") < measured(&registry, "extensibility"));
-    assert!(compute(&dispatch, false).health_report.measured < compute(&registry, false).health_report.measured);
+    assert!(has(&dispatch, "instanceof"));
+    assert!(!has(&registry, "instanceof"));
 }
 
 #[test]
@@ -114,5 +111,6 @@ fn application_commands_belong_behind_a_boundary() {
     let mut mediated = direct.clone();
     mediated.classes[0].methods[0].calls = vec!["Controller.start".into()];
     mediated.classes.push(Class { name:"Controller".into(), stereotype:Some("controller".into()), methods:vec![Method {name:"start".into(),calls:vec!["Session.start".into()],..Default::default()}],..Default::default() });
-    assert!(measured(&direct,"modularity") < measured(&mediated,"modularity"));
+    assert!(compute(&direct, false).implicit_edges.iter().any(|e| e.from == "Panel" && e.to == "Session"));
+    assert!(!compute(&mediated, false).implicit_edges.iter().any(|e| e.from == "Panel" && e.to == "Session"));
 }

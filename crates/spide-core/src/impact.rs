@@ -1,4 +1,4 @@
-//! Consequences of a change: what is added/changed/removed, how health and issues move,
+//! Consequences of a change: what is added/changed/removed, which findings change,
 //! which dependencies flip direction, which rules break, which scenarios are affected.
 
 use crate::diff::diff;
@@ -24,8 +24,6 @@ pub struct Impact {
     pub added: Vec<String>,
     pub changed: Vec<String>,
     pub removed: Vec<String>,
-    pub health_before: u8,
-    pub health_after: u8,
     pub new_issues: Vec<String>,
     pub resolved_issues: Vec<String>,
     /// Class dependencies whose direction reversed (`from` now depends on `to`, used to be the other way).
@@ -38,10 +36,6 @@ pub struct Impact {
 }
 
 impl Impact {
-    pub fn health_delta(&self) -> i64 {
-        self.health_after as i64 - self.health_before as i64
-    }
-
     /// One-line summary for prompts and option cards.
     pub fn summary(&self) -> String {
         let mut parts = vec![];
@@ -49,23 +43,16 @@ impl Impact {
         parts.extend(n(&self.added, "added"));
         parts.extend(n(&self.changed, "changed"));
         parts.extend(n(&self.removed, "removed"));
-        let mut s = format!("health {} → {}", self.health_before, self.health_after);
-        if !parts.is_empty() {
-            s = format!("{} · {s}", parts.join(", "));
-        }
-        if !self.new_issues.is_empty() {
-            s.push_str(&format!(" · {} new issue(s)", self.new_issues.len()));
-        }
-        if !self.resolved_issues.is_empty() {
-            s.push_str(&format!(" · {} resolved", self.resolved_issues.len()));
-        }
+        parts.extend(n(&self.new_issues, "new finding(s)"));
+        parts.extend(n(&self.resolved_issues, "resolved finding(s)"));
+        parts.extend(n(&self.rule_breaks, "new rule break(s)"));
         if !self.flipped_deps.is_empty() {
-            s.push_str(&format!(" · {} flipped dependency(ies)", self.flipped_deps.len()));
+            parts.push(format!("{} flipped dependency(ies)", self.flipped_deps.len()));
         }
         if !self.affected_scenarios.is_empty() {
-            s.push_str(&format!(" · affects {}", self.affected_scenarios.join(", ")));
+            parts.push(format!("affects {}", self.affected_scenarios.join(", ")));
         }
-        s
+        if parts.is_empty() { "No changes detected by preview".into() } else { parts.join(" · ") }
     }
 }
 
@@ -73,23 +60,22 @@ impl Impact {
 pub fn issue_diff(before: &Metrics, after: &Metrics) -> (Vec<String>, Vec<String>) {
     let old: BTreeSet<&str> = before.issues.iter().map(|i| i.message.as_str()).collect();
     let new: BTreeSet<&str> = after.issues.iter().map(|i| i.message.as_str()).collect();
+    let describe = |i: &crate::metrics::Issue| {
+        if i.basis.contains("heuristic") { format!("[heuristic] {}", i.message) } else { i.message.clone() }
+    };
     (
-        after.issues.iter().filter(|i| !old.contains(i.message.as_str())).map(|i| i.message.clone()).collect(),
-        before.issues.iter().filter(|i| !new.contains(i.message.as_str())).map(|i| i.message.clone()).collect(),
+        after.issues.iter().filter(|i| !old.contains(i.message.as_str())).map(describe).collect(),
+        before.issues.iter().filter(|i| !new.contains(i.message.as_str())).map(describe).collect(),
     )
 }
 
-/// Human text for agents: "Health if accepted: a → b. New issues: …".
-pub fn health_delta(before: &Metrics, after: &Metrics) -> String {
-    let mut s = format!("Health if accepted: {} → {}.", before.health, after.health);
+/// Preview findings, not a verdict or verification of the change.
+pub fn finding_delta(before: &Metrics, after: &Metrics) -> String {
     let (new, resolved) = issue_diff(before, after);
-    if !new.is_empty() {
-        s.push_str(&format!(" New issues: {}.", new.join("; ")));
-    }
-    if !resolved.is_empty() {
-        s.push_str(&format!(" Resolved: {}.", resolved.join("; ")));
-    }
-    s
+    let mut parts = Vec::new();
+    if !new.is_empty() { parts.push(format!("New findings: {}.", new.join("; "))); }
+    if !resolved.is_empty() { parts.push(format!("Resolved findings: {}.", resolved.join("; "))); }
+    if parts.is_empty() { "No finding changes detected by preview.".into() } else { parts.join(" ") }
 }
 
 /// Class-level dependency pairs (explicit relations, both ways for bidirectional associations, + implicit).
@@ -162,7 +148,7 @@ pub fn impact(before: &Design, after: &Design) -> Impact {
     let mb = compute_before(before);
     let ma = compute(after, false);
     let ops = diff(before, after);
-    let mut out = Impact { health_before: mb.health, health_after: ma.health, ..Default::default() };
+    let mut out = Impact::default();
     let mut touched: BTreeSet<String> = BTreeSet::new();
     for op in &ops {
         let (bucket, label) = classify(op);
@@ -174,10 +160,11 @@ pub fn impact(before: &Design, after: &Design) -> Impact {
         touched.extend(op.touched_classes());
     }
     let (new, resolved) = issue_diff(&mb, &ma);
+    let old_rules: BTreeSet<_> = mb.issues.iter().filter_map(|i| i.rule.as_deref().map(|r| (r, i.message.as_str()))).collect();
     out.rule_breaks = ma
         .issues
         .iter()
-        .filter(|i| i.rule.is_some() && new.contains(&i.message))
+        .filter(|i| i.rule.as_deref().is_some_and(|r| !old_rules.contains(&(r, i.message.as_str()))))
         .map(|i| i.message.clone())
         .collect();
     out.new_issues = new;

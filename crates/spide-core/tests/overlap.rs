@@ -63,9 +63,9 @@ fn detects_real_duplication() {
 }
 
 fn show(s: &home::HomeSuggestion) {
-    println!("== {:?} → {}", s.methods, s.recommended);
+    println!("== {:?}", s.methods);
     for c in &s.candidates {
-        println!("  {:5} {:24} pkg {:?} expert {:.2} legal {} health {}→{} fo {:+} lcom {:?} fit {} score {:.2} | {} | {:?}", c.kind, c.class, c.package, c.expert, c.legal, c.health_before, c.health_after, c.source_fan_out_delta, c.lcom_after, c.role_fit, c.score, c.why, c.illegal_because);
+        println!("{c:?}");
     }
 }
 
@@ -95,16 +95,17 @@ fn suggested_homes() {
     let best = |m: &str| home::suggest_home(&d, &[m.to_string()]).unwrap();
     // Demeter chain + counting in the UI → the report that holds the endpoints
     let s = best("RestExtractionPanel.callsOf");
-    assert_eq!(s.recommended, "ApiReport", "{:#?}", s.candidates.iter().map(|c| (&c.class, c.score)).collect::<Vec<_>>());
-    let top = &s.candidates[0];
-    assert!(top.health_after > top.health_before && top.legal);
+    let top = s.candidates.iter().find(|c| c.class == "ApiReport" && c.legal).unwrap();
+    let payload = serde_json::to_value(&s).unwrap();
+    assert!(payload.get("recommended").is_none());
+    assert_eq!(s.candidates[0].kind, "keep");
     // the moved method no longer needs the extractor: the panel obtains the report itself
     let added = top.ops.iter().find_map(|o| match o { Op::AddMethod { class, method } if class == "ApiReport" => Some(method), _ => None }).unwrap();
     assert!(added.params.iter().all(|p| p.ty != "RestExtractor" && p.ty != "ApiNamespace"), "{added:?}");
     // trailing-slash rule → the class that claims all path rules
-    assert_eq!(best("ApiNamespace.withoutTrailingSlash").recommended, "UrlPath");
+    assert!(best("ApiNamespace.withoutTrailingSlash").candidates.iter().any(|c| c.class == "UrlPath" && c.legal));
     // counting calls per method → the report that keeps callCounts
-    assert_eq!(best("Endpoint.countCalls").recommended, "EndpointReport");
+    assert!(best("Endpoint.countCalls").candidates.iter().any(|c| c.class == "EndpointReport" && c.legal));
     // every candidate is applicable as is
     for c in &best("Endpoint.countCalls").candidates {
         ops::apply_all(&d, &c.ops, ops::Mode::Commit(Status::Accepted, None)).unwrap();
@@ -125,8 +126,7 @@ fn duplicates_get_one_home_and_pure_fabrication_when_no_expert_fits() {
             {"op":"add_relation","from":"InvoicePrinter","to":"OrderLine","kind":"association"}]"#,
     );
     let s = home::suggest_home(&d, &["Order.computeTotal".into(), "InvoicePrinter.calculateTotal".into()]).unwrap();
-    assert_eq!(s.recommended, "Order", "{:#?}", s.candidates.iter().map(|c| (&c.class, c.score, &c.why)).collect::<Vec<_>>());
-    let c = &s.candidates[0];
+    let c = s.candidates.iter().find(|c| c.class == "Order" && c.legal).unwrap();
     let after = ops::apply_all(&d, &c.ops, ops::Mode::Commit(Status::Accepted, None)).unwrap();
     assert!(after.class("InvoicePrinter").unwrap().methods.iter().all(|m| m.name != "calculateTotal"));
     assert!(after.class("InvoicePrinter").unwrap().methods.iter().find(|m| m.name == "print").unwrap().calls.contains(&"Order.computeTotal".to_string()));
@@ -138,8 +138,7 @@ fn duplicates_get_one_home_and_pure_fabrication_when_no_expert_fits() {
             {"op":"add_class","name":"Receipt","methods":[{"name":"formatAmount","params":[{"name":"cents","type":"long"}],"returns":"String"}]}]"#,
     );
     let s = home::suggest_home(&d, &["Invoice.formatAmount".into(), "Receipt.formatAmount".into()]).unwrap();
-    assert_eq!(s.candidates[0].kind, "new", "{:#?}", s.candidates);
-    assert!(s.recommended.ends_with("Formatter"), "{}", s.recommended);
+    assert!(s.candidates.iter().any(|c| c.kind == "new" && c.class.ends_with("Formatter")));
 }
 
 #[test]
@@ -156,10 +155,10 @@ fn agent_tools_answer() {
     assert!(o["owned_elsewhere"].as_array().unwrap().iter().any(|c| c["owner"] == "UrlPath"));
     assert!(o["delegations"].as_array().unwrap().len() >= 5);
     let h: serde_json::Value = serde_json::from_str(&tools::call(&mut s, "suggest_home", &serde_json::json!({"method": "Endpoint.countCalls"})).unwrap().text).unwrap();
-    assert_eq!(h["recommended"], "EndpointReport");
-    assert!(!h["candidates"][0]["ops"].as_array().unwrap().is_empty());
+    assert!(h.get("recommended").is_none());
+    assert!(h["candidates"].as_array().unwrap().iter().any(|c| c["class"] == "EndpointReport" && !c["ops"].as_array().unwrap().is_empty()));
     let m: serde_json::Value = serde_json::from_str(&tools::call(&mut s, "get_metrics", &serde_json::json!({})).unwrap().text).unwrap();
-    assert!(m["principles"]["responsibility"]["score"].is_number());
+    assert!(m["health_report"]["signals"].is_array());
     assert!(m["issues"][0]["principle"].is_string());
     let a = tools::call(&mut s, "assess_class", &serde_json::json!({"assessments": [{"class": "UrlPath", "purpose": "path rules", "role": "value",
         "methods": [{"name": "startsWith", "verdict": "fits", "reason": "own data"}]}]})).unwrap();

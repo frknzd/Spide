@@ -36,7 +36,10 @@ pub struct Record {
     pub symbols: Vec<String>,
     /// Compact change summary (ops summary or diffstat).
     pub changes: String,
+    // Retained only for historical journal records and compaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub health_before: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub health_after: Option<i64>,
     pub issues_added: Vec<String>,
     pub issues_resolved: Vec<String>,
@@ -47,10 +50,6 @@ pub struct Record {
     pub ms: Option<u64>,
     /// Pointer to a stored artifact (patch, proposal id, job output).
     pub artifact: Option<String>,
-}
-
-fn touched_empty(symbols: &[String], files: &[String]) -> bool {
-    symbols.is_empty() && files.is_empty()
 }
 
 /// Mask obvious secrets: `key=…`, `Bearer …`, common token prefixes.
@@ -111,7 +110,11 @@ impl Record {
         self
     }
 
-    /// One compact line: intent → changes → health → checks → outcome.
+    fn retired_delta_text(&self) -> bool {
+        (self.health_before.is_some() || self.health_after.is_some()) && self.changes.contains('→')
+    }
+
+    /// One compact line: intent → changes → findings → checks → outcome.
     pub fn summary(&self) -> String {
         let mut parts = vec![if self.intent.is_empty() { self.tool.clone() } else { self.intent.clone() }];
         let mut touched: Vec<String> = self.symbols.iter().take(4).cloned().collect();
@@ -119,16 +122,8 @@ impl Record {
         if !touched.is_empty() {
             let more = self.symbols.len().saturating_sub(4) + self.files.len().saturating_sub(3);
             parts.push(format!("{}{}", touched.join(", "), if more > 0 { format!(" +{more}") } else { String::new() }));
-        } else if !self.changes.is_empty() {
+        } else if !self.changes.is_empty() && !self.retired_delta_text() {
             parts.push(self.changes.lines().next().unwrap_or("").to_string());
-        }
-        if let (Some(a), Some(b)) = (self.health_before, self.health_after) {
-            if a != b {
-                parts.push(format!("health {a}→{b} ({:+})", b - a));
-            }
-        }
-        if !touched_empty(&self.symbols, &self.files) && !self.changes.is_empty() && self.changes.contains('→') {
-            parts.push(self.changes.clone());
         }
         if !self.issues_added.is_empty() || !self.issues_resolved.is_empty() {
             parts.push(format!("issues +{} −{}", self.issues_added.len(), self.issues_resolved.len()));
@@ -223,7 +218,18 @@ impl Journal {
             .map(|r| {
                 let mut v = serde_json::json!({"op": r.op, "run": r.run, "at": r.at, "actor": r.actor, "tool": r.tool, "summary": r.summary()});
                 if filter.detail {
-                    v["record"] = serde_json::to_value(r).unwrap();
+                    let mut record = serde_json::to_value(r).unwrap();
+                    let fields = record.as_object_mut().unwrap();
+                    let before = fields.remove("health_before");
+                    let after = fields.remove("health_after");
+                    if before.is_some() || after.is_some() {
+                        let mut retired = serde_json::json!({"before": before, "after": after});
+                        if r.retired_delta_text() {
+                            retired["dimension_deltas"] = fields.remove("changes").unwrap();
+                        }
+                        fields.insert("retired_health_ratings".into(), retired);
+                    }
+                    v["record"] = record;
                 }
                 v
             })
@@ -296,6 +302,22 @@ mod tests {
     }
 
     #[test]
+    fn legacy_ratings_survive_compaction_but_are_labeled_in_details() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::new(dir.path());
+        let legacy = r#"{"v":1,"op":"legacy","kind":"outcome","health_before":70,"health_after":76,"changes":"modularity 70→76"}"#;
+        std::fs::create_dir_all(journal.path().parent().unwrap()).unwrap();
+        std::fs::write(journal.path(), format!("{}{legacy}\n", "{}\n".repeat(RETAIN))).unwrap();
+        assert_eq!(journal.compact().unwrap(), 1);
+        assert_eq!(journal.read().last().unwrap().health_before, Some(70));
+        let (rows, _) = journal.timeline(&Filter { detail:true, limit:1, ..Default::default() });
+        assert!(rows[0]["record"].get("health_before").is_none());
+        assert_eq!(rows[0]["record"]["retired_health_ratings"]["before"], 70);
+        assert!(!rows[0]["summary"].as_str().unwrap().contains("modularity"));
+        assert!(serde_json::to_value(Record::default()).unwrap().get("health_before").is_none());
+    }
+
+    #[test]
     fn compact_summary() {
         let r = Record {
             intent: "move pricing to Order".into(),
@@ -307,6 +329,6 @@ mod tests {
             kind: "outcome".into(),
             ..Default::default()
         };
-        assert_eq!(r.summary(), "move pricing to Order → Order.total → health 70→76 (+6) → cargo test: passed → ok");
+        assert_eq!(r.summary(), "move pricing to Order → Order.total → cargo test: passed → ok");
     }
 }

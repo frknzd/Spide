@@ -41,7 +41,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("brief", "Brief and rules", "Design", "Edit goals, quality attributes and constraints"),
     t("mode", "Partner mode", "Design", "Show or set examiner, socratic, devils_advocate or sketch", "mode ", false),
     c("timeline", "Timeline", "History", "Browse previous revisions"),
-    c("trace", "Trace", "History", "What agents changed: intent, symbols, health delta, checks, outcome"),
+    c("trace", "Trace", "History", "What agents changed: intent, symbols, findings, checks, outcome"),
     c("goto", "Open in Neovim", "Code", "Open a class or Class.method in Neovim (⌘-click on the canvas)"),
     c("nvim", "Embedded Neovim", "Code", "Show Neovim in the side pane (your config)"),
     t("branch", "Create branch", "History", "Branch from this design", "branch ", true),

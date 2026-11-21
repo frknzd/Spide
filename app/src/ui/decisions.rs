@@ -15,10 +15,6 @@ use spide_diagram::layout::{self, Direction, LayoutEdge, LayoutNode};
 use spide_diagram::scene::{bbox, Scene};
 use std::collections::{HashMap, HashSet};
 
-fn hc(v: f64) -> Color32 {
-    super::chrome::hc(v)
-}
-
 /// Paint a scene fitted into `rect` (static: previews, comparisons).
 pub fn paint_fitted(ui: &mut Ui, rect: Rect, scene: &Scene, m: &EguiMeasure, pad: f64) {
     let painter = ui.painter_at(rect);
@@ -55,7 +51,6 @@ pub fn static_scene(m: &EguiMeasure, classes: &[Class], design: &Design, highlig
 // ---------------------------------------------------------------- impact
 
 pub fn impact_line(ui: &mut Ui, impact: &Impact, open: &mut bool, expandable: bool) {
-    let d = impact.health_after as i64 - impact.health_before as i64;
     let mut bits: Vec<(String, Color32)> = vec![];
     if !impact.added.is_empty() {
         bits.push((format!("+{}", impact.added.len()), css::PRO));
@@ -89,10 +84,7 @@ pub fn impact_line(ui: &mut Ui, impact: &Impact, open: &mut bool, expandable: bo
         for (t, c) in &bits {
             ui.label(RichText::new(t).font(sans(11.5)).color(*c));
         }
-        if d != 0 {
-            ui.label(RichText::new(if d > 0 { format!("▲{d} health") } else { format!("▼{} health", -d) }).font(sans(11.5)).color(hc(impact.health_after as f64)));
-        }
-        if bits.is_empty() && d == 0 {
+        if bits.is_empty() {
             ui.label(RichText::new("no structural change").font(sans(11.5)).color(css::FAINT));
         }
         if expandable {
@@ -100,7 +92,7 @@ pub fn impact_line(ui: &mut Ui, impact: &Impact, open: &mut bool, expandable: bo
         }
     });
     if expandable {
-        let resp = ui.interact(r.response.rect, ui.scope_id().with(("impact", impact.health_after, impact.added.len(), impact.changed.len())), Sense::click()).on_hover_text("consequences if chosen");
+        let resp = ui.interact(r.response.rect, ui.scope_id().with(("impact", &impact.added, &impact.changed, &impact.removed)), Sense::click()).on_hover_text("consequences if chosen");
         if resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -228,7 +220,6 @@ pub fn panel(ui: &mut Ui, st: &mut DecisionUi, pending: &[&Decision], snap: &Sna
     let mut draft = st.drafts.get(&snap.project_dir, d);
     let before = draft.clone();
     let previews: Vec<&OptionPreview> = snap.previews.iter().filter(|p| p.decision == d.id).collect();
-    let health = snap.metrics.health as i64;
     let options_h = (ui.available_height() - footer_h).max(50.0);
     egui::ScrollArea::vertical().id_salt(("options", &d.id)).max_height(options_h).auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::new().inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
@@ -251,19 +242,11 @@ pub fn panel(ui: &mut Ui, st: &mut DecisionUi, pending: &[&Decision], snap: &Sna
                                 draft.own_mode = false;
                             }
                             ui.label(RichText::new(&o.id).font(bold(13.0)).color(css::DIM));
-                            let health_w = if pv.and_then(|p| p.health).is_some() { 52.0 } else { 0.0 };
-                            let lw = (ui.available_width() - health_w).max(40.0);
+                            let lw = ui.available_width().max(40.0);
                             let lr = ui.add_sized(Vec2::new(lw, 18.0), egui::Label::new(RichText::new(&o.label).font(bold(13.5)).color(css::TEXT)).sense(Sense::click()).wrap().halign(egui::Align::Min));
                             if lr.clicked() {
                                 draft.choice = Some(o.id.clone());
                                 draft.own_mode = false;
-                            }
-                            if let Some(h) = pv.and_then(|p| p.health) {
-                                let delta = h as i64 - health;
-                                let mut job = egui::text::LayoutJob::default();
-                                job.append(&h.to_string(), 0.0, egui::TextFormat { font_id: bold(12.0), color: hc(h as f64), ..Default::default() });
-                                job.append(&format!(" {}{delta}", if delta >= 0 { "+" } else { "" }), 0.0, egui::TextFormat { font_id: sans(11.0), color: hc(h as f64).gamma_multiply(0.8), ..Default::default() });
-                                ui.label(job).on_hover_text("Health if chosen (delta from current)");
                             }
                         });
                         if let Some(s) = &o.summary {
@@ -552,7 +535,6 @@ pub struct CompareCol {
     pub id: String,
     pub label: String,
     pub design: Option<Design>,
-    pub health: Option<u8>,
     pub impact: Option<Impact>,
     pub focus: Vec<String>,
     pub error: Option<String>,
@@ -569,7 +551,6 @@ pub fn decision_cols(d: &Decision, snap: &Snapshot) -> Vec<CompareCol> {
                 id: o.id.clone(),
                 label: o.label.clone(),
                 design: pv.and_then(|p| p.design.clone()),
-                health: pv.and_then(|p| p.health),
                 impact: pv.and_then(|p| p.impact.clone()),
                 focus: pv.map(|p| p.focus.clone()).unwrap_or_default(),
                 error: pv.and_then(|p| p.error.clone()),
@@ -655,9 +636,6 @@ pub fn compare(ctx: &egui::Context, area: Rect, st: &mut CompareUi, kicker: &str
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new(&col.id).font(bold(13.0)).color(css::DIM));
                                         ui.add(egui::Label::new(RichText::new(&col.label).font(bold(13.5)).color(css::TEXT)).wrap());
-                                        if let Some(h) = col.health {
-                                            ui.label(RichText::new(h.to_string()).font(bold(12.0)).color(hc(h as f64)));
-                                        }
                                     });
                                     let h = ui.ctx().content_rect().height() * 0.52;
                                     if let Some(e) = &col.error {

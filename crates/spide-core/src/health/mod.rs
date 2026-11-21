@@ -1,41 +1,14 @@
-//! Health v2: four quality dimensions — extensibility, modularity, simplicity and implementation
-//! quality — computed from evidence with explicit coverage, language profiles, owner-approved
-//! exceptions, and a bounded, visible agent contribution.
-//!
-//! Formula (version `health-2`), per dimension:
-//! * signals are grouped by entity; an entity's penalty combines its signals as independent
-//!   risks, `p = 1 − Π(1 − severity·confidence)`, so correlated findings about one root cause
-//!   saturate instead of adding up;
-//! * `load = Σp / n + 0.15 · max p` over the `n` entities eligible for the dimension: a rate, so
-//!   unrelated files don't dilute or inflate it, plus a bounded hotspot term so one severe
-//!   problem stays visible in a large codebase;
-//! * `measured = 100 · e^(−2.2 · load)`;
-//! * with a current agent assessment: `assisted = 0.6 · measured + 0.4 · agent` (agent-only
-//!   dimensions are judgement-only and add no coverage). Verified correctness errors cap the
-//!   assisted implementation-quality score at its measured value.
-//!
-//! Overall = weighted geometric mean of the known dimensions (owner priorities, else equal).
-//! Unknown dimensions are excluded and make the score provisional; nothing measured = unassessed.
+//! Design and source evidence: findings, check status, and gaps, not a quality grade.
 
 pub mod profiles;
 
-use crate::evidence::{Category, EvidenceSet, Level};
+use crate::evidence::{Category, EvidenceSet, Level, ToolRun};
 use crate::metrics::{Issue, Metrics};
 use crate::model::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const VERSION: &str = "health-2";
-pub const RUBRIC_VERSION: &str = "rubric-1";
-pub const AGENT_WEIGHT: f64 = 0.4;
-const BETA: f64 = 2.2;
-const HOTSPOT: f64 = 0.15;
-
-pub const DIMENSIONS: [&str; 4] = ["extensibility", "modularity", "simplicity", "implementation_quality"];
-
-pub fn is_dimension(d: &str) -> bool {
-    DIMENSIONS.contains(&d)
-}
+pub const VERSION: &str = "evidence-1";
 
 /// One finding feeding health: a rule, its evidence and provenance.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -66,58 +39,22 @@ pub struct Signal {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
-pub struct DimensionScore {
-    pub measured: Option<f64>,
-    pub agent: Option<f64>,
-    pub assisted: Option<f64>,
-    /// 0..1: how much of what this dimension needs was observed.
-    pub coverage: f64,
-    pub signals: usize,
-    pub entities: usize,
-    /// Only the agent's judgement exists for it.
-    pub judgement_only: bool,
-    pub weight: f64,
-    /// Why coverage is partial / what is unknown.
-    pub gaps: Vec<String>,
-}
-
-impl DimensionScore {
-    pub fn best(&self) -> Option<f64> {
-        self.assisted.or(self.measured)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(default)]
 pub struct HealthReport {
     pub version: String,
-    /// Final score (assisted when the agent contributed), None = unassessed.
-    pub score: Option<u8>,
-    /// Reproducible score from evidence only.
-    pub measured: Option<u8>,
-    pub assisted: Option<u8>,
-    pub provisional: bool,
-    /// 0..100 overall evidence coverage.
-    pub coverage: u8,
-    pub dimensions: BTreeMap<String, DimensionScore>,
-    /// Highest-impact signals first (correctness errors always on top).
-    pub top: Vec<Signal>,
+    pub scope: String,
     pub signals: Vec<Signal>,
     pub suppressed: Vec<Signal>,
-    /// Verified correctness/safety errors (shown regardless of score).
-    pub blocking: Vec<Signal>,
+    pub exceptions: Vec<HealthException>,
+    pub runs: Vec<ToolRun>,
+    pub gaps: Vec<String>,
     pub languages: Vec<String>,
     pub profiles: Vec<String>,
-    /// Idioms observed (informational: never penalised by presence).
+    /// Language idioms observed, for information only.
     pub idioms: BTreeMap<String, u32>,
-    /// Agent assessments that are out of date (re-assess them).
-    pub stale_assessments: Vec<String>,
-    /// The previous formula's score, kept during migration.
-    pub legacy: u8,
     pub explain: String,
 }
 
-/// The agent's judgement of one dimension.
+/// Retired rating, preserved only to round-trip historical project data.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct DimensionAssessment {
@@ -176,14 +113,6 @@ impl HealthException {
     }
 }
 
-/// What the agent is asked to judge, per dimension, with score anchors. Versioned: a new rubric
-/// makes existing assessments stale.
-pub const RUBRIC: &str = "Score each dimension 0–100 for THIS project's goals (the brief's forces) and its languages' idioms. Cite the classes/modules you based it on (they make the judgement stale when they change), list counterevidence, and say what would raise the score.
-- extensibility: can the expected changes (change scenarios, forces) be made by adding code at a seam rather than editing many places? 90+: variation points match the expected changes; 60: some changes ripple; 30: most changes touch many modules. Don't reward abstractions nobody needs.
-- modularity: clear boundaries, dependencies point one way, each module/class has one reason to change, data and behaviour live together (or, in functional/procedural code, pure functions separated from effects). 90+: acyclic, cohesive, minimal coupling; 30: tangled.
-- simplicity: the least machinery that does the job; small functions, no speculative generality, no duplicated logic, idiomatic for the language. 90+: obvious; 30: hard to follow.
-- implementation_quality: correctness risks, error handling, resource/ownership safety, tests where they matter, consistency with the language's conventions (read the code: get_source). Verified compiler/linter errors cap this regardless of your score.";
-
 /// Add an agent-proposed exception (never approved by the proposer).
 pub fn propose_exception(d: &mut Design, mut x: HealthException, proposed_by: &str) -> Result<String, String> {
     if x.rule.trim().is_empty() || x.scope.trim().is_empty() {
@@ -216,74 +145,11 @@ pub fn decide_exception(d: &mut Design, id: &str, approve: bool, now: u64) -> Re
     Ok(())
 }
 
-/// Dimensions whose agent judgement is missing or stale.
-pub fn assessment_needed(d: &Design) -> Vec<(String, &'static str)> {
-    DIMENSIONS
-        .iter()
-        .filter_map(|dim| match d.health_assessments.get(*dim) {
-            None => Some((dim.to_string(), "missing")),
-            Some(a) if !assessment_current(d, a) => Some((dim.to_string(), "stale")),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Hash of what an assessment cites (classes by content hash; unknown names by name).
-pub fn basis_hash(d: &Design, cited: &[String]) -> String {
-    let mut parts: Vec<String> = cited
-        .iter()
-        .map(|c| {
-            let class = c.split(['.', '#']).next().unwrap_or(c);
-            match d.class(class) {
-                Some(cl) => format!("{class}:{}", crate::assess::class_hash(cl)),
-                None => format!("{class}:missing"),
-            }
-        })
-        .collect();
-    parts.sort();
-    crate::assess::fnv(&format!("{RUBRIC_VERSION}|{}", parts.join("|")))
-}
-
-pub fn assessment_current(d: &Design, a: &DimensionAssessment) -> bool {
-    !a.cited.is_empty() && a.rubric_version == RUBRIC_VERSION && a.basis_hash == basis_hash(d, &a.cited)
-}
-
-/// Validate and record dimension assessments (agent). Returns warnings.
-pub fn record(d: &mut Design, items: Vec<DimensionAssessment>, now: u64) -> Result<Vec<String>, String> {
-    let mut warnings = vec![];
-    for mut a in items {
-        if !is_dimension(&a.dimension) {
-            return Err(format!("unknown dimension {} ({})", a.dimension, DIMENSIONS.join(", ")));
-        }
-        if !(0.0..=100.0).contains(&a.score) {
-            return Err("score must be 0..100".into());
-        }
-        if a.cited.is_empty() {
-            return Err(format!("{}: cite the classes/symbols the judgement is based on", a.dimension));
-        }
-        if a.rationale.trim().len() < 20 {
-            return Err(format!("{}: give a rationale (why this score, what would raise it)", a.dimension));
-        }
-        for c in &a.cited {
-            let class = c.split(['.', '#']).next().unwrap_or(c);
-            if d.class(class).is_none() {
-                warnings.push(format!("{c} is not a design class: it can't make the assessment stale"));
-            }
-        }
-        a.confidence = if a.confidence <= 0.0 { 0.7 } else { a.confidence.min(1.0) };
-        a.rubric_version = RUBRIC_VERSION.into();
-        a.basis_hash = basis_hash(d, &a.cited);
-        a.at = now;
-        d.health_assessments.insert(a.dimension.clone(), a);
-    }
-    Ok(warnings)
-}
-
 /// Inputs beyond the design.
 #[derive(Default, Clone, Copy)]
 pub struct Context<'a> {
     pub evidence: Option<&'a EvidenceSet>,
-    /// Languages of the workspace (for coverage).
+    /// Languages of the workspace (for interpreting check status).
     pub languages: &'a [String],
     pub now: u64,
 }
@@ -504,22 +370,6 @@ fn evidence_signals(d: &Design, ev: &EvidenceSet) -> Vec<Signal> {
         .collect()
 }
 
-fn score_of(signals: &[&Signal], eligible: usize) -> (f64, usize) {
-    let mut by_entity: BTreeMap<&str, BTreeMap<&str, f64>> = BTreeMap::new();
-    for s in signals {
-        // one root cause counts once per entity (its strongest report)
-        let w = s.severity * s.confidence;
-        let e = by_entity.entry(s.entity.as_str()).or_default().entry(s.root_cause.as_str()).or_insert(0.0);
-        *e = e.max(w);
-    }
-    let penalties: Vec<f64> = by_entity.values().map(|rc| 1.0 - rc.values().fold(1.0, |acc, w| acc * (1.0 - w.min(0.99)))).collect();
-    let n = eligible.max(3) as f64;
-    let density = penalties.iter().sum::<f64>() / n;
-    let hotspot = penalties.iter().cloned().fold(0.0, f64::max);
-    let load = density + HOTSPOT * hotspot;
-    ((100.0 * (-BETA * load).exp()).clamp(0.0, 100.0), by_entity.len())
-}
-
 /// The health report for a design (and, when present, its code facts and evidence).
 pub fn report(d: &Design, m: &Metrics, ctx: Context) -> HealthReport {
     let live: Vec<&Class> = d.classes.iter().filter(|c| c.status.is_live() && !d.is_external(&c.name)).collect();
@@ -533,10 +383,6 @@ pub fn report(d: &Design, m: &Metrics, ctx: Context) -> HealthReport {
             continue;
         }
         signals.extend(from_issue(i, d, dimension_of(i.kind)));
-        // a god class is also a simplicity problem
-        if i.kind == "god" {
-            signals.extend(from_issue(i, d, "simplicity"));
-        }
     }
     signals.extend(profile_signals(d, m, &live, &mut idioms));
     if let Some(ev) = ctx.evidence {
@@ -553,108 +399,53 @@ pub fn report(d: &Design, m: &Metrics, ctx: Context) -> HealthReport {
         }
         None => true,
     });
-    // ---- per dimension
-    let has_code = live.iter().any(|c| c.methods.iter().any(|m| m.code.is_some()));
-    let code_coverage = if live.is_empty() { 0.0 } else { live.iter().filter(|c| c.methods.iter().any(|m| m.code.is_some()) || c.methods.is_empty()).count() as f64 / live.len() as f64 };
-    let langs: Vec<String> = if ctx.languages.is_empty() { live.iter().filter_map(|c| profiles::language_of(c).map(str::to_string)).collect::<BTreeSet<_>>().into_iter().collect() } else { ctx.languages.to_vec() };
-    let ran: BTreeSet<&str> = ctx.evidence.map(|e| e.runs.iter().filter(|r| r.ran()).map(|r| r.language.as_str()).collect()).unwrap_or_default();
-    let tool_coverage = if langs.is_empty() { 0.0 } else { langs.iter().filter(|l| ran.contains(l.as_str())).count() as f64 / langs.len() as f64 };
-    let documented_classes = live.iter().filter(|c| c.methods.iter().any(|meth| meth.status.is_live()
-        && meth.visibility == crate::model::Visibility::Private && !meth.is_abstract
-        && !crate::detail::is_constructor(&c.name, meth)
-        && meth.code.as_ref().is_some_and(|f| f.source_documented.is_some()))).count();
-    let documentation_coverage = if d.rules.private_documentation && !live.is_empty() { 0.15 * documented_classes as f64 / live.len() as f64 } else { 0.0 };
-    let analysed_changes = m.changes.iter().filter(|c| c.analysed && !c.stale).count();
-    let mut dims: BTreeMap<String, DimensionScore> = BTreeMap::new();
-    let total_w: f64 = DIMENSIONS.iter().map(|k| d.health_priorities.get(*k).copied().unwrap_or(1.0).max(0.0)).sum::<f64>().max(1e-9);
-    for dim in DIMENSIONS {
-        let sigs: Vec<&Signal> = signals.iter().filter(|s| s.dimension == dim).collect();
-        let mut ds = DimensionScore { weight: d.health_priorities.get(dim).copied().unwrap_or(1.0).max(0.0) / total_w * DIMENSIONS.len() as f64, ..Default::default() };
-        let measurable = match dim {
-            "implementation_quality" => tool_coverage > 0.0 || documentation_coverage > 0.0,
-            _ => !live.is_empty(),
-        };
-        ds.coverage = match dim {
-            "implementation_quality" => tool_coverage.max(documentation_coverage),
-            "simplicity" => if has_code { code_coverage } else { 0.7 },
-            "extensibility" => if d.change_scenarios.is_empty() { 0.7 } else if analysed_changes > 0 { 1.0 } else { 0.8 },
-            _ => if live.is_empty() { 0.0 } else { 1.0 },
-        };
-        if dim == "implementation_quality" && !measurable {
-            ds.gaps.push(if langs.is_empty() { "no code: implementation quality can't be verified from a design".into() } else { format!("no language server/linter has run for {} (run analyze; see doctor)", langs.join(", ")) });
-        } else if dim == "implementation_quality" && tool_coverage < 1.0 {
-            ds.gaps.push(format!("tools ran for {} of {} languages; source documentation alone does not verify correctness or safety", ran.len(), langs.len()));
-        }
-        if dim == "simplicity" && !has_code && !live.is_empty() {
-            ds.gaps.push("design-only: function bodies are unknown".into());
-        }
-        if dim == "extensibility" && d.change_scenarios.is_empty() {
-            ds.gaps.push("no expected changes recorded: change locality is unmeasured".into());
-        }
-        if measurable {
-            let eligible = match dim {
-                "implementation_quality" => live.len().max(ctx.evidence.map(|e| e.findings.iter().map(|f| f.file.as_str()).collect::<BTreeSet<_>>().len()).unwrap_or(0)),
-                _ => live.len(),
-            };
-            let (score, entities) = score_of(&sigs, eligible);
-            ds.measured = Some(score);
-            ds.entities = entities;
-        }
-        ds.signals = sigs.len();
-        if let Some(a) = d.health_assessments.get(dim).filter(|a| assessment_current(d, a)) {
-            ds.agent = Some(a.score);
-            ds.assisted = Some(match ds.measured {
-                Some(mv) => {
-                    let v = (1.0 - AGENT_WEIGHT) * mv + AGENT_WEIGHT * a.score;
-                    // verified correctness errors can't be argued away
-                    let blocked = dim == "implementation_quality" && signals.iter().any(|s| s.dimension == dim && s.severity >= 0.9);
-                    if blocked { v.min(mv) } else { v }
-                }
-                None => {
-                    ds.judgement_only = true;
-                    a.score
-                }
-            });
-        }
-        dims.insert(dim.to_string(), ds);
+    let languages: Vec<_> = ctx.languages.iter().cloned()
+        .chain(live.iter().filter_map(|c| profiles::language_of(c).map(str::to_string)))
+        .collect::<BTreeSet<_>>().into_iter().collect();
+    let mut runs = ctx.evidence.map(|e| e.runs.clone()).unwrap_or_default();
+    runs.sort_by(|a, b| (&a.language, &a.tool).cmp(&(&b.language, &b.tool)));
+    let mut gaps = Vec::new();
+    if live.is_empty() {
+        gaps.push("No internal design or indexed code units to inspect.".into());
+    } else if !live.iter().any(|c| c.methods.iter().any(|m| m.code.is_some())) {
+        gaps.push("No function body facts available.".into());
     }
-    // ---- aggregate
-    let geo = |pick: &dyn Fn(&DimensionScore) -> Option<f64>| -> Option<f64> {
-        let parts: Vec<(f64, f64)> = dims.values().filter_map(|x| pick(x).map(|v| (v.max(1.0), x.weight))).collect();
-        let wsum: f64 = parts.iter().map(|p| p.1).sum();
-        (wsum > 0.0).then(|| (parts.iter().map(|(v, w)| w * v.ln()).sum::<f64>() / wsum).exp())
+    if runs.is_empty() {
+        gaps.push("No tool-run status available.".into());
+    }
+    for lang in &languages {
+        if !runs.iter().any(|r| &r.language == lang && r.ran()) {
+            gaps.push(format!("No successful analysis run recorded for {lang}."));
+        }
+    }
+    if let Some(ev) = ctx.evidence {
+        if ev.stale_findings > 0 {
+            gaps.push(format!("{} stale diagnostic(s) excluded; rerun analysis for current evidence.", ev.stale_findings));
+        }
+    }
+    if d.change_scenarios.is_empty() {
+        gaps.push("No expected change scenarios recorded.".into());
+    } else if m.changes.iter().any(|c| !c.analysed || c.stale) {
+        gaps.push("Some change scenarios have no current analysis.".into());
+    }
+    let compare = |a: &Signal, b: &Signal| {
+        (&a.dimension, &a.rule, &a.target, &a.provenance, &a.message)
+            .cmp(&(&b.dimension, &b.rule, &b.target, &b.provenance, &b.message))
     };
-    let measured = geo(&|x| x.measured);
-    let any_agent = dims.values().any(|x| x.agent.is_some());
-    let assisted = any_agent.then(|| geo(&|x| x.best())).flatten();
-    let known = dims.values().filter(|x| x.measured.is_some()).count();
-    let coverage = dims.values().map(|x| x.coverage).sum::<f64>() / DIMENSIONS.len() as f64;
-    let mut blocking: Vec<Signal> = signals.iter().filter(|s| s.dimension == "implementation_quality" && s.severity >= 0.9).cloned().collect();
-    blocking.truncate(20);
-    let mut ranked: Vec<Signal> = signals.clone();
-    ranked.sort_by(|a, b| (b.severity * b.confidence).partial_cmp(&(a.severity * a.confidence)).unwrap_or(std::cmp::Ordering::Equal));
-    let mut top: Vec<Signal> = blocking.clone();
-    top.extend(ranked.into_iter().filter(|s| s.severity < 0.9 || s.dimension != "implementation_quality").take(15));
-    let stale_assessments = d.health_assessments.values().filter(|a| !assessment_current(d, a)).map(|a| a.dimension.clone()).collect();
-    let profiles_used: BTreeSet<String> = live.iter().map(|c| profiles::of_class(c).language.to_string()).collect();
+    signals.sort_by(compare);
+    suppressed.sort_by(compare);
     HealthReport {
         version: VERSION.into(),
-        score: assisted.or(measured).map(|v| v.round() as u8),
-        measured: measured.map(|v| v.round() as u8),
-        assisted: assisted.map(|v| v.round() as u8),
-        provisional: known < DIMENSIONS.len() || coverage < 0.8,
-        coverage: (coverage * 100.0).round() as u8,
-        dimensions: dims,
-        top,
+        scope: "design".into(),
         signals,
         suppressed,
-        blocking,
-        languages: langs,
-        profiles: profiles_used.into_iter().collect(),
+        exceptions: d.health_exceptions.clone(),
+        runs,
+        gaps,
+        languages,
+        profiles: live.iter().map(|c| profiles::of_class(c).language.to_string()).collect::<BTreeSet<_>>().into_iter().collect(),
         idioms,
-        stale_assessments,
-        legacy: m.health,
-        explain: format!("{VERSION}: per dimension, entity penalties combine as independent risks (one root cause counts once); load = rate over eligible entities + {HOTSPOT}·worst hotspot; score = 100·e^(−{BETA}·load). Agent judgement contributes {:.0}% where current; unknown dimensions are excluded and make the score provisional.", AGENT_WEIGHT * 100.0),
+        explain: "Findings describe available checks only. Heuristics are leads, not verdicts; no findings does not establish design quality.".into(),
     }
 }
 

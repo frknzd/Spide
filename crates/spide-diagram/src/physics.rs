@@ -63,7 +63,6 @@ pub struct LivingLayout {
     pub nodes: Vec<SimNode>,
     index: HashMap<String, usize>,
     links: Vec<LinkSpec>,
-    pub tension: f64,
     alpha: f64,
     alpha_target: f64,
     running: bool,
@@ -82,7 +81,7 @@ impl Default for LivingLayout {
 
 impl LivingLayout {
     pub fn new() -> Self {
-        Self { nodes: vec![], index: HashMap::new(), links: vec![], tension: 0.0, alpha: 1.0, alpha_target: 0.0, running: false, tidy_until: None, settle_due: None, clock: 0.0, last: None, seed: 0x5eed }
+        Self { nodes: vec![], index: HashMap::new(), links: vec![], alpha: 1.0, alpha_target: 0.0, running: false, tidy_until: None, settle_due: None, clock: 0.0, last: None, seed: 0x5eed }
     }
 
     fn random(&mut self) -> f64 {
@@ -113,7 +112,7 @@ impl LivingLayout {
         self.running = true;
     }
 
-    pub fn update(&mut self, specs: &[NodeSpec], links: &[LinkSpec], tension: f64) {
+    pub fn update(&mut self, specs: &[NodeSpec], links: &[LinkSpec]) {
         let before: HashSet<String> = self.index.keys().cloned().collect();
         let mut next: Vec<SimNode> = vec![];
         let mut next_index: HashMap<String, usize> = HashMap::new();
@@ -173,7 +172,6 @@ impl LivingLayout {
         let new_links: Vec<LinkSpec> = links.iter().filter(|l| self.index.contains_key(&l.from) && self.index.contains_key(&l.to) && l.from != l.to).cloned().collect();
         let links_changed = new_links.len() != old.len() || new_links.iter().any(|l| !old.contains(l));
         self.links = new_links;
-        self.tension = tension;
         let kick = if added > 0 || removed > 0 {
             0.6
         } else if links_changed {
@@ -453,7 +451,7 @@ mod tests {
     #[test]
     fn overlapping_nodes_separate_and_settle() {
         let mut l = LivingLayout::new();
-        l.update(&[spec("A", 0.0, 0.0), spec("B", 10.0, 5.0)], &[], 0.0);
+        l.update(&[spec("A", 0.0, 0.0), spec("B", 10.0, 5.0)], &[]);
         assert!(l.active());
         l.settle();
         assert!(!l.active());
@@ -466,7 +464,7 @@ mod tests {
         let mut l = LivingLayout::new();
         let mut s = spec("A", 0.0, 0.0);
         s.init = Some(Pos { x: 0.0, y: 0.0, pinned: true });
-        l.update(&[s, spec("B", 10.0, 5.0)], &[], 0.0);
+        l.update(&[s, spec("B", 10.0, 5.0)], &[]);
         l.settle();
         let a = l.get("A").unwrap();
         assert_eq!((a.x, a.y), (0.0, 0.0));
@@ -476,7 +474,7 @@ mod tests {
     #[test]
     fn tidy_lands_on_targets() {
         let mut l = LivingLayout::new();
-        l.update(&[spec("A", 0.0, 0.0), spec("B", 400.0, 0.0)], &[], 0.0);
+        l.update(&[spec("A", 0.0, 0.0), spec("B", 400.0, 0.0)], &[]);
         l.settle();
         let pos: HashMap<String, [f64; 2]> = [("A".to_string(), [-300.0, 50.0]), ("B".to_string(), [300.0, 50.0])].into();
         l.tidy(&pos);

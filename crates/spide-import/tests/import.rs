@@ -81,7 +81,7 @@ fn smoke_on_zap_addon_if_present() {
     // the code judged on its own (no intended design): what stands out
     let t = std::time::Instant::now();
     let f = compute(&r.design, false);
-    eprintln!("code health {} ({} ms)", f.health, t.elapsed().as_millis());
+    eprintln!("{} findings ({} ms)", f.issues.len(), t.elapsed().as_millis());
     for i in f.issues.iter().take(if std::env::var("SPIDE_SMOKE_VERBOSE").is_ok() { 60 } else { 0 }) {
         eprintln!("  [{} {:.2}/{:.2} {}] {}", i.kind, i.severity, i.confidence, i.basis, i.message);
     }
@@ -189,5 +189,4 @@ fn code_is_judged_like_the_design() {
     assert!(m.issues.iter().any(|i| i.kind == "misplaced_responsibility" && i.targets.contains(&"GamePanel.richestCash".to_string())));
     // two loops summing positive values are the same code
     assert!(m.overlap.pairs.iter().filter(|p| p.code >= overlap::DUPLICATE).any(|p| (p.a.contains("totalPrice") && p.b.contains("netWorth")) || (p.b.contains("totalPrice") && p.a.contains("netWorth"))));
-    assert!(m.health < 100);
 }

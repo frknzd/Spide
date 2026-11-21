@@ -134,7 +134,6 @@ fn agent_assessments_merge_with_signals_and_go_stale() {
     let disputed = metrics::compute(&d, false);
     assert!(flagged(&disputed, "RestExtractionPanel.callsOf").unwrap().confidence < base.confidence);
     assert!(disputed.issues.iter().any(|i| i.kind == "disagreement"));
-    assert!(disputed.health > agreed.health);
 
     // the class changes → the assessment is stale and no longer counts
     d.class_mut("RestExtractionPanel").unwrap().methods.retain(|m| m.name != "confirm");

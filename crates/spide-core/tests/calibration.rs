@@ -1,4 +1,4 @@
-//! Calibration: health must rank designs the way the DOSS course does. Orderings, not numbers.
+//! Concrete findings and dependency observations on DOSS course examples.
 //! Each pair is a "worse" and a "better" version of the same design, taken from the course's
 //! examples (Monopoly, POS/Sale, CigarOperator, the Brewery exam) and from the REST-extraction design.
 
@@ -10,20 +10,7 @@ fn design(ops_json: &str) -> Design {
     ops::apply_all(&Design::default(), &ops, ops::Mode::Commit(Status::Accepted, None)).unwrap()
 }
 
-fn report(label: &str, d: &Design) -> u8 {
-    let m = compute(d, false);
-    let principles: Vec<String> = m.principles.iter().map(|(k, v)| format!("{k} {}", v.score)).collect();
-    println!("{label}: health {} [{}]", m.health, principles.join(", "));
-    for i in m.issues.iter().take(8) {
-        println!("    {} {:.2}/{:.2} {}", i.kind, i.severity, i.confidence, i.message);
-    }
-    m.health
-}
-
-fn worse_than(worse: &Design, better: &Design, what: &str) {
-    let (w, b) = (report(&format!("{what} (worse)"), worse), report(&format!("{what} (better)"), better));
-    assert!(w < b, "{what}: expected {w} < {b}");
-}
+fn has(d: &Design, kind: &str) -> bool { compute(d, false).issues.iter().any(|i| i.kind == kind) }
 
 #[test]
 fn monopoly_game_doing_everything_is_worse_than_delegating() {
@@ -69,7 +56,7 @@ fn monopoly_game_doing_everything_is_worse_than_delegating() {
             {"op":"add_relation","from":"Board","to":"Square","kind":"composition"},{"op":"add_relation","from":"Piece","to":"Square","kind":"association"},
             {"op":"add_relation","from":"Cup","to":"Die","kind":"composition"}]"#,
     );
-    worse_than(&worse, &better, "Monopoly");
+    assert!(compute(&worse, false).classes["MonopolyGame"].fan_out > compute(&better, false).classes["MonopolyGame"].fan_out);
 }
 
 #[test]
@@ -94,7 +81,8 @@ fn sale_saving_itself_is_worse_than_a_pure_fabrication() {
             {{"op":"add_class","name":"DbConnection","package":"persistence","methods":[{{"name":"execute","params":[{{"name":"sql","type":"String"}}]}},{{"name":"query","params":[{{"name":"sql","type":"String"}}],"returns":"ResultSet"}}]}},
             {{"op":"add_relation","from":"PersistentStorage","to":"DbConnection","kind":"association"}},{{"op":"add_relation","from":"PersistentStorage","to":"Sale","kind":"dependency"}}]"#
     ));
-    worse_than(&worse, &better, "Sale.save vs PersistentStorage");
+    assert!(has(&worse, "layer"));
+    assert!(!has(&better, "layer"));
 }
 
 #[test]
@@ -129,7 +117,8 @@ fn switching_on_a_type_code_everywhere_is_worse_than_polymorphism() {
             {"op":"add_relation","from":"SWPairwiseAlignment","to":"CigarOperator","kind":"dependency"},
             {"op":"add_relation","from":"ReadUtils","to":"CigarOperator","kind":"dependency"}]"#,
     );
-    worse_than(&worse, &better, "CigarOperator switch vs polymorphism");
+    assert!(has(&worse, "type_switch"));
+    assert!(!has(&better, "type_switch"));
 }
 
 /// `n` small, clean, connected classes plus one god class.
@@ -146,10 +135,10 @@ fn with_one_god(n: usize) -> Design {
 }
 
 #[test]
-fn one_bad_class_hurts_a_small_design_more() {
-    worse_than(&with_one_god(4), &with_one_god(49), "one god class in 5 vs in 50");
-    let m = compute(&with_one_god(4), false);
-    assert!(m.health < 85, "a god class in a 5-class design is serious: {}", m.health);
+fn god_class_finding_survives_unrelated_additions() {
+    for n in [4, 49] {
+        assert!(compute(&with_one_god(n), false).issues.iter().any(|i| i.kind == "god" && i.targets.iter().any(|t| t == "God")));
+    }
 }
 
 #[test]
@@ -159,20 +148,18 @@ fn rest_extraction_improves_when_methods_move_home() {
     for p in d.packages.iter_mut().filter(|p| p.name == "zap" || p.name == "swing") {
         p.external = true;
     }
-    let before = d.clone();
-    for m in ["RestExtractionPanel.callsOf", "ApiNamespace.withoutTrailingSlash", "Endpoint.countCalls"] {
+    for (m, target) in [("RestExtractionPanel.callsOf", "ApiReport"), ("ApiNamespace.withoutTrailingSlash", "UrlPath"), ("Endpoint.countCalls", "EndpointReport")] {
         let s = home::suggest_home(&d, &[m.to_string()]).unwrap();
-        let c = s.candidates.iter().find(|c| c.class == s.recommended).unwrap();
+        let c = s.candidates.iter().find(|c| c.class == target && c.legal).unwrap();
         d = ops::apply_all(&d, &c.ops, ops::Mode::Commit(Status::Accepted, None)).unwrap();
+        assert!(d.class(target).unwrap().methods.iter().any(|method| m.ends_with(&format!(".{}", method.name))));
     }
-    worse_than(&before, &d, "REST extraction before/after suggested homes");
 }
 
 #[test]
-fn principle_scores_explain_the_number() {
+fn findings_cite_principle_and_source() {
     let m = compute(&with_one_god(4), false);
-    assert_eq!(m.principles.len(), 5);
-    assert!(m.principles["cohesion"].score < m.principles["architecture"].score);
+    assert!(!m.issues.is_empty());
     for i in &m.issues {
         assert!(["coupling", "cohesion", "responsibility", "architecture", "uml"].contains(&i.principle), "{}", i.kind);
         assert!(!i.source.is_empty());
@@ -203,7 +190,8 @@ fn ui_calling_the_domain_directly_is_worse_than_a_controller() {
             {{"op":"add_relation","from":"SaleFrame","to":"Register","kind":"association"}},{{"op":"add_relation","from":"Register","to":"Sale","kind":"association"}}]"#
     ));
     assert!(compute(&worse, false).issues.iter().any(|i| i.kind == "ui_bypasses_controller"));
-    worse_than(&worse, &better, "POS: UI → Sale vs UI → Register → Sale");
+    assert!(has(&worse, "ui_bypasses_controller"));
+    assert!(!has(&better, "ui_bypasses_controller"));
 }
 
 #[test]
@@ -238,7 +226,8 @@ fn brewery_god_class_without_behaviour_fails_against_the_passing_design() {
             {"op":"add_relation","from":"BoilingStep","to":"Step","kind":"inheritance"},{"op":"add_relation","from":"Step","to":"Ingredient","kind":"aggregation"},
             {"op":"add_relation","from":"Recipe","to":"RecipeVisitor","kind":"dependency"}]"#,
     );
-    worse_than(&fail, &pass, "Brewery exam: fail vs pass");
+    let (_, resolved) = spide_core::impact::issue_diff(&compute(&fail, false), &compute(&pass, false));
+    assert!(!resolved.is_empty(), "the alternative should resolve concrete findings");
 }
 
 #[test]

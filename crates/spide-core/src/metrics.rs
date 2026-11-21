@@ -1,4 +1,4 @@
-//! Architecture health metrics, recomputed on every change.
+//! Architecture observations, recomputed on every change.
 
 use crate::model::*;
 use crate::rules::{self, Preset};
@@ -151,18 +151,6 @@ fn default_explanation(kind: &str) -> (&'static str, Option<&'static str>) {
     }
 }
 
-/// The course's basic principles (plus architecture rules and UML hygiene) and their weight in health.
-pub const PRINCIPLES: [(&str, f64); 5] = [("coupling", 0.25), ("cohesion", 0.2), ("responsibility", 0.3), ("architecture", 0.15), ("uml", 0.1)];
-/// How fast a principle's score drops with issue density.
-const BETA: f64 = 2.5;
-
-#[derive(Debug, Clone, Serialize, Default)]
-pub struct PrincipleScore {
-    pub score: u8,
-    pub issues: usize,
-    pub weight: f64,
-}
-
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct Metrics {
     pub classes: BTreeMap<String, ClassMetrics>,
@@ -186,16 +174,8 @@ pub struct Metrics {
     pub responsibility: crate::responsibility::Report,
     /// Duplicated behaviour, concepts owned elsewhere, scattered concepts, delegation.
     pub overlap: crate::overlap::Report,
-    /// Sub-score (0–100) per principle: coupling, cohesion, responsibility, architecture, uml.
-    pub principles: BTreeMap<String, PrincipleScore>,
-    /// 0..100: the health score (`health_report.score`; the legacy formula while unassessed).
-    pub health: u8,
-    /// 0..1 — drives the canvas jitter.
-    pub tension: f64,
-    /// Health v2: dimensions, coverage, signals, agent contribution (see `health`).
+    /// Findings, check status, and gaps; not a design grade.
     pub health_report: crate::health::HealthReport,
-    /// The previous single-formula score, labelled during the migration.
-    pub legacy_health: u8,
 }
 
 
@@ -222,17 +202,12 @@ pub fn compute(d: &Design, ghosts: bool) -> Metrics {
 
 /// `compute` with evidence (LSP/linter findings) and workspace languages for health.
 pub fn compute_with(d: &Design, ghosts: bool, ctx: crate::health::Context) -> Metrics {
-    let mut m = compute_legacy(d, ghosts);
-    m.legacy_health = m.health;
+    let mut m = observations(d, ghosts);
     m.health_report = crate::health::report(d, &m, ctx);
-    if let Some(s) = m.health_report.score {
-        m.health = s;
-        m.tension = ((100.0 - s as f64) / 100.0).clamp(0.0, 1.0);
-    }
     m
 }
 
-fn compute_legacy(d: &Design, ghosts: bool) -> Metrics {
+fn observations(d: &Design, ghosts: bool) -> Metrics {
     let th = d.rules.thresholds;
     let (god_members, god_responsibilities, high_fan_out) = (th.god_members, th.god_responsibilities, th.high_fan_out.max(1));
     let preset = d.rules.preset;
@@ -340,7 +315,6 @@ fn compute_legacy(d: &Design, ghosts: bool) -> Metrics {
     let mut issues: Vec<Issue> = vec![];
     let mut layer_violations: BTreeSet<String> = BTreeSet::new();
     let mut viol_count: HashMap<String, usize> = HashMap::new();
-    let mut rule_penalty = 0.0;
     let edge_label = |e: &Dep| e.rel.clone().unwrap_or_else(|| format!("{} → {} (implicit)", e.from, e.to));
     let mut seen_rule_edges: BTreeSet<(String, String, String)> = BTreeSet::new();
     for e in &deps {
@@ -383,7 +357,6 @@ fn compute_legacy(d: &Design, ghosts: bool) -> Metrics {
                 out.edge_rules.entry(r.clone()).or_insert_with(|| label.into());
             }
             *viol_count.entry(e.from.clone()).or_default() += 1;
-            rule_penalty += if e.rel.is_some() { 5.0 } else { 3.0 };
             let what = match kind {
                 "layer" => "layer violation",
                 "module_boundary" => "module boundary",
@@ -419,7 +392,6 @@ fn compute_legacy(d: &Design, ghosts: bool) -> Metrics {
                             .with_rule(tr.id(), explain, format!("wrap {tok} behind an interface owned by this layer, or move this code outward")),
                     );
                     *viol_count.entry(c.name.clone()).or_default() += 1;
-                    rule_penalty += 4.0;
                 }
             }
         }
@@ -599,7 +571,6 @@ fn compute_legacy(d: &Design, ghosts: bool) -> Metrics {
                 format!("scenario \"{}\" makes {} synchronous calls across containers", s.name, sc.sync_container_calls),
                 vec![format!("sequence:{}", s.name)],
             ));
-            rule_penalty += 3.0;
         }
         if has_aggregate_roots && sc.aggregates_touched.len() > 1 {
             issues.push(Issue::new(
@@ -608,7 +579,6 @@ fn compute_legacy(d: &Design, ghosts: bool) -> Metrics {
                 format!("scenario \"{}\" changes {} aggregates ({}) in one go", s.name, sc.aggregates_touched.len(), sc.aggregates_touched.join(", ")),
                 sc.aggregates_touched.clone(),
             ));
-            rule_penalty += 2.0;
         }
         if sc.hops > th.max_scenario_hops {
             issues.push(Issue::new(
@@ -617,7 +587,6 @@ fn compute_legacy(d: &Design, ghosts: bool) -> Metrics {
                 format!("scenario \"{}\" needs {} calls (> {})", s.name, sc.hops, th.max_scenario_hops),
                 vec![format!("sequence:{}", s.name)],
             ));
-            rule_penalty += 2.0;
         }
         out.scenarios.push(sc);
     }
@@ -640,7 +609,6 @@ fn compute_legacy(d: &Design, ghosts: bool) -> Metrics {
                 format!("container {} runs once but {users} containers depend on it (single point of failure)", k.name),
                 vec![k.name.clone()],
             ));
-            rule_penalty += 3.0;
         }
     }
 
@@ -690,7 +658,6 @@ fn compute_legacy(d: &Design, ghosts: bool) -> Metrics {
                 format!("change \"{}\" ripples through {:.0}% of the classes", cs.name, (1.0 - fp.locality) * 100.0),
                 fp.impacted.clone(),
             ));
-            rule_penalty += 2.0;
         }
         out.changes.push(fp);
     }
@@ -786,53 +753,12 @@ fn compute_legacy(d: &Design, ghosts: bool) -> Metrics {
 
     // ---- the agent's judgement: confirm, dispute or add (current assessments only)
     crate::assess::merge(d, &mut issues);
-    for i in issues.iter().filter(|i| i.basis != "structure") {
-        rule_penalty += 6.0 * i.severity * i.confidence;
-    }
-
-    // ---- health: one number, from the course's principles
-    // Each principle's load is the sum of its issues' severity × confidence (cycles weigh more the
-    // larger they are), divided by the size of the design (√ of the classes judged), so one bad class
-    // in five hurts more than one in fifty. Sub-score = 100·e^(−β·load); health = weighted geometric
-    // mean, so one badly broken principle can't be hidden by the others.
-    let _ = rule_penalty;
-    let judged = classes.iter().filter(|c| !external.contains(c.name.as_str())).count().max(3) as f64;
-    let mut load: BTreeMap<&'static str, (f64, usize)> = BTreeMap::new();
-    for i in &issues {
-        let mut w = i.severity * i.confidence;
-        if i.kind == "cycle" {
-            w *= 1.0 + 0.25 * i.targets.len() as f64;
-        }
-        let e = load.entry(i.principle).or_default();
-        e.0 += w;
-        e.1 += 1;
-        // a god class is low cohesion *and* badly distributed responsibilities
-        if i.kind == "god" {
-            load.entry("responsibility").or_default().0 += w;
-        }
-    }
-    for (n, m) in &out.classes {
-        if !external.contains(n.as_str()) && m.fan_out + 1 > high_fan_out {
-            load.entry("coupling").or_default().0 += 0.15 * (m.fan_out + 1 - high_fan_out) as f64;
-        }
-    }
-    let mut health_log = 0.0;
-    for (p, weight) in PRINCIPLES {
-        let (l, n) = load.get(p).copied().unwrap_or((0.0, 0));
-        let density = l / judged.sqrt();
-        let score = 100.0 * (-BETA * density).exp();
-        health_log += weight * (score.max(1.0)).ln();
-        out.principles.insert(p.to_string(), PrincipleScore { score: score.round() as u8, issues: n, weight });
-    }
-    let health = health_log.exp().clamp(0.0, 100.0);
     issues.sort_by(|a, b| b.severity.partial_cmp(&a.severity).unwrap());
     out.cycles = cycles;
     out.cycle_edges = cycle_edges.into_iter().collect();
     out.package_cycles = package_cycles;
     out.layer_violations = layer_violations.into_iter().collect();
     out.issues = issues;
-    out.health = health.round() as u8;
-    out.tension = ((100.0 - health) / 100.0).clamp(0.0, 1.0);
     out
 }
 

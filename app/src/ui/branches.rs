@@ -62,7 +62,7 @@ impl SpideApp {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(format!("{}{}", if br.active { "● " } else { "" }, br.name)).font(bold(13.0)).color(css::TEXT));
-                                ui.label(RichText::new(format!("{} classes · health {}", br.classes, br.health)).font(mono(10.5)).color(css::FAINT));
+                                ui.label(RichText::new(format!("{} classes", br.classes)).font(mono(10.5)).color(css::FAINT));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
                                     if br.active {
