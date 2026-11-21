@@ -32,6 +32,7 @@ egui_kittest = { version = "0.37", features = ["snapshot", "wgpu", "eframe"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = "0.21"
+winit = { version = "0.30.13", default-features = false }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSURL", "NSObject", "NSString"] }

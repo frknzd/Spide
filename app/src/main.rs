@@ -18,6 +18,7 @@ mod workspace;
 mod recovery;
 mod preferences;
 mod opening;
+#[cfg(target_os = "macos")]
 mod macos_open;
 mod backup;
 mod templates;
@@ -83,19 +84,31 @@ fn main() -> eframe::Result {
         persist_window: true,
         ..Default::default()
     };
-    let result = eframe::run_native(
-        "Spide",
-        options,
-        Box::new(move |cc| {
-            events.attach(&cc.egui_ctx);
-            menu::install(&events);
-            macos_open::install(&events);
-            Ok(Box::new(ui::app::SpideApp::new(cc, backend, rx)))
-        }),
-    );
+    let ui_events = events.clone();
+    let create: eframe::AppCreator<'_> = Box::new(move |cc| {
+        ui_events.attach(&cc.egui_ctx);
+        menu::install(&ui_events);
+        Ok(Box::new(ui::app::SpideApp::new(cc, backend, rx)))
+    });
+    #[cfg(target_os = "macos")]
+    let result = run_macos(options, create, &events);
+    #[cfg(not(target_os = "macos"))]
+    let result = eframe::run_native("Spide", options, create);
     pi.shutdown();
     editor::embedded().stop();
     service::retract(&backend_state);
     drop(rt);
     result
+}
+
+#[cfg(target_os = "macos")]
+fn run_macos(options: eframe::NativeOptions, create: eframe::AppCreator<'_>, events: &events::Events) -> eframe::Result {
+    use winit::event_loop::EventLoop;
+    use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
+
+    let mut event_loop = EventLoop::<eframe::UserEvent>::with_user_event().build()?;
+    macos_open::install(events);
+    let mut app = eframe::create_native("Spide", options, create, &event_loop);
+    event_loop.run_app_on_demand(&mut app)?;
+    Ok(())
 }
