@@ -260,9 +260,11 @@ impl ClassCanvas {
             let fresh = specs.iter().filter(|s| !self.layout.has(&s.id) && s.init.is_none()).count();
             let links: Vec<LinkSpec> = inp.relations.iter().map(|r| LinkSpec { from: r.from.clone(), to: r.to.clone(), kind: r.kind.as_str().into() }).collect();
             self.layout.update(&specs, &links);
-            // any structural or size change: lay everything out again (quality over stability);
-            // review keeps positions while alternatives are toggled
-            if !inp.keep_layout {
+            // Restore complete saved placements on first load; the new layout policy
+            // takes effect on explicit tidy or subsequent structural/detail changes.
+            let restoring = self.last_level.is_none() && !specs.is_empty() && specs.iter().all(|s| s.init.is_some());
+            // Review keeps positions while alternatives are toggled.
+            if !inp.keep_layout && !restoring {
                 self.pending_tidy = true;
                 // many new classes (first load, big plans): show the whole new drawing
                 self.fit_after_tidy |= fresh >= 3;

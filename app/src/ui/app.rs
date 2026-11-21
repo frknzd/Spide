@@ -1489,7 +1489,10 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                 let live_level = snap.view.settings.detail_for(view_key);
                 let level = level.unwrap_or(live_level).min(4);
                 let metrics = if class { Some(&snap.metrics) } else { None };
-                let inp = self.canvas_input(&data, &snap, metrics, level, None);
+                let mut inp = self.canvas_input(&data, &snap, metrics, level, None);
+                // Saved placements belong to the live detail's measured boxes. Other
+                // detail variants use the same automatic layout as a live detail change.
+                if level != live_level { inp.saved = None; }
                 let now = self.now();
                 let canvas = if level == live_level && *v == self.current_export_view() {
                     let slot = if class { &mut self.class_canvas } else { &mut self.domain_canvas };
@@ -1715,7 +1718,16 @@ The original file is not changed.", design.name, design.live_classes().count(), 
     /// Run one export; asks for a path unless given. Returns the written path (None: cancelled).
     fn run_export(&mut self, s: &ExportSettings, path: Option<String>) -> Result<Option<String>, String> {
         let snap = self.snap.clone().ok_or("no design")?;
-        let base = format!("{}-{}", slug(Some(&snap.view.name)), self.tab.key());
+        let view = self.current_export_view();
+        let level = view.has_detail().then(|| snap.view.settings.detail_for(self.tab.key()));
+        let stem = match s.format {
+            Format::Puml => format!("{}-plantuml", if matches!(view, ExportView::ClassPackage(_)) { view.stem(None) } else { view.plantuml().into() }),
+            Format::Json => "design".into(),
+            Format::Archunit => "architecture-test".into(),
+            Format::Adr => "decisions".into(),
+            _ => view.stem(level),
+        };
+        let base = format!("{}-{stem}", export_jobs::filename_part(&snap.view.name));
         let Some(target) = path.or_else(|| export::ask_path(s.format, &base, &snap.project_dir)) else { return Ok(None) };
         let st = self.backend.st.clone();
         match s.format {
@@ -3535,6 +3547,33 @@ fn rail(ui: &mut egui::Ui, r: Rect, label: &str) -> egui::Response {
 mod export_tests {
     use super::*;
     use crate::ui::tests::{harness, project, steps, shot};
+
+    #[test]
+    fn restored_layout_survives_open_and_export_until_tidy() {
+        let dir = project("library");
+        let path = dir.path().join("design.json");
+        let design = spide_core::Design::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let mut store = spide_core::Store::default();
+        store.load(design);
+        let saved: std::collections::BTreeMap<_, _> = store.view().classes.iter().enumerate().map(|(i, c)|
+            (c.name.clone(), spide_core::model::Pos { x: i as f64 * 700.0, y: 123.0, pinned: false })).collect();
+        store.design.layout.insert("class".into(), saved.clone());
+        std::fs::write(&path, serde_json::to_string(&store.design).unwrap()).unwrap();
+        let mut h = harness(dir.path(), (1440.0, 900.0));
+        steps(&mut h, 30);
+        assert_eq!(h.state().class_canvas.as_ref().unwrap().layout.positions(), saved);
+        let before = h.state().snap.as_ref().unwrap().view.layout.clone();
+        let options = ExportOptions::default();
+        let single = h.state_mut().export_svg_for(&ExportView::Class, None, &options).unwrap().0;
+        let detail = h.state().snap.as_ref().unwrap().view.settings.detail_for("class");
+        let batch = h.state_mut().export_svg_for(&ExportView::Class, Some(detail), &options).unwrap().0;
+        assert_eq!(single, batch);
+        assert_eq!(h.state().class_canvas.as_ref().unwrap().layout.positions(), saved);
+        assert_eq!(h.state().snap.as_ref().unwrap().view.layout, before);
+        h.state_mut().class_canvas.as_mut().unwrap().tidy();
+        steps(&mut h, 120);
+        assert_ne!(h.state().class_canvas.as_ref().unwrap().layout.positions(), saved);
+    }
 
     #[test]
     fn package_scope_keeps_full_layout_and_evidence() {

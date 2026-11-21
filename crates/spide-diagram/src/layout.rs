@@ -277,7 +277,13 @@ fn wrap_layers(p: Placed, sizes: &HashMap<String, (f64, f64)>, gap: f64, aspect:
         }
         out
     };
-    let score = |q: &Placed| shape_score(q.w, q.h, aspect);
+    let score = |q: &Placed| {
+        let at: HashMap<_, _> = q.at.iter().map(|(id, p)| (id.as_str(), [p[0] + sizes[id].0 / 2.0, p[1] + sizes[id].1 / 2.0])).collect();
+        let length: f64 = edges.iter().filter_map(|(a, b)| Some((at.get(a.as_str())?, at.get(b.as_str())?)))
+            .map(|(a, b)| (a[0] - b[0]).abs() + (a[1] - b[1]).abs()).sum();
+        // Area penalises whitespace; edge travel discourages overly aggressive folding.
+        shape_score(q.w, q.h, aspect) * (1.0 + 0.6 * ((q.w / q.h.max(1.0)) / aspect).ln().abs()) + length * gap * 0.15
+    };
     let mut best = p.clone();
     let mut best_score = score(&p);
     for k in 2..=rows.len() {
@@ -315,9 +321,12 @@ pub fn layered(nodes: &[LayoutNode], edges: &[LayoutEdge], direction: Direction)
     let flip = direction == Direction::Right;
     let ns: Vec<(String, f64, f64)> = nodes.iter().map(|n| if flip { (n.id.clone(), n.h, n.w) } else { (n.id.clone(), n.w, n.h) }).collect();
     let es: Vec<(String, String)> = edges.iter().filter(|e| ids.contains(e.from.as_str()) && ids.contains(e.to.as_str()) && e.from != e.to).map(|e| orient(e)).collect();
-    let (gap, layer_gap) = if flip { (70.0, 110.0) } else { (70.0, 110.0) };
-    let p = sugiyama(&ns, &es, gap, layer_gap, 120.0, 1.6);
+    let target = if flip { 1.0 / ASPECT } else { ASPECT };
     let sizes: HashMap<String, (f64, f64)> = ns.iter().map(|n| (n.0.clone(), (n.1, n.2))).collect();
+    let hier: HashSet<_> = edges.iter().filter(|e| e.kind == "inheritance" || e.kind == "realization").map(orient).collect();
+    let p = sugiyama(&ns, &es, 70.0, 110.0, 120.0, target);
+    // Small semantic chains already read clearly; folding is useful for larger views.
+    let p = if ns.len() > 4 { wrap_layers(p, &sizes, 80.0, target, &es, &hier) } else { p };
     let mut res = centred(&p, &sizes);
     if flip {
         for p in res.values_mut() {
@@ -337,12 +346,14 @@ fn orient(e: &LayoutEdge) -> (String, String) {
 }
 
 /// Target width/height ratio of a whole drawing (screens and landscape pages).
-pub const ASPECT: f64 = 1.4;
+pub const ASPECT: f64 = 16.0 / 9.0;
 
 /// Smaller is better: the bounding area, penalised the further its aspect is from `target`.
 fn shape_score(w: f64, h: f64, target: f64) -> f64 {
     let a = w.max(1.0) / h.max(1.0);
-    w.max(1.0) * h.max(1.0) * (1.0 + 0.8 * (a / target).ln().abs())
+    let deviation = (a / target).ln().abs();
+    // Prefer compactness near the target, but strongly discourage very long strips.
+    w.max(1.0) * h.max(1.0) * (1.0 + 0.4 * deviation + (deviation - 0.7).max(0.0).powi(2))
 }
 
 /// One group (package, or the classes outside any package) as a compact layered drawing:
@@ -434,7 +445,7 @@ pub fn compound(nodes: &[LayoutNode], edges: &[LayoutEdge], groups: &[GroupSpec]
         }
         // a few shapes of the same package (narrow … wide); the whole drawing picks among them
         let mut vs: Vec<(Vec<(String, [f64; 2])>, f64, f64)> = vec![];
-        for aspect in [1.6, 0.7, 3.2, 6.0] {
+        for aspect in [ASPECT, 1.6, 0.7, 3.2, 6.0] {
             let p = arrange_group(&items, inner.get(&key).map(|v| v.as_slice()).unwrap_or(&[]), aspect, &hier);
             let v = place_group(&p, &items, true, min_w);
             if !vs.iter().any(|x| (x.1 - v.1).abs() < 1.0 && (x.2 - v.2).abs() < 1.0) {
@@ -713,6 +724,27 @@ mod tests {
         for (a, b) in [("Circle", "Square"), ("Shape", "Canvas"), ("Circle", "Shape")] {
             assert!(!overlap(&p, a, b), "{a} overlaps {b}: {p:?}");
         }
+    }
+
+    #[test]
+    fn tall_dependency_chain_folds_toward_landscape_without_overlap() {
+        let ns: Vec<_> = (0..12).map(|i| node(&format!("p{i}"), None)).collect();
+        let es: Vec<_> = (0..11).map(|i| edge(&format!("p{i}"), &format!("p{}", i + 1), "dependency")).collect();
+        for direction in [Direction::Down, Direction::Right] {
+            let p = layered(&ns, &es, direction);
+            assert_eq!(p, layered(&ns, &es, direction));
+            let bounds = p.values().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, p| [b[0].min(p[0]-70.0), b[1].min(p[1]-40.0), b[2].max(p[0]+70.0), b[3].max(p[1]+40.0)]);
+            let aspect = (bounds[2]-bounds[0]) / (bounds[3]-bounds[1]);
+            println!("dependency chain aspect {aspect:.2}");
+            assert!((0.8..3.0).contains(&aspect));
+            for (i, a) in ns.iter().enumerate() {
+                for b in &ns[i+1..] { assert!(!overlap(&p, &a.id, &b.id)); }
+            }
+        }
+        // A hierarchy is never folded across a parent/child edge merely to fit a page.
+        let es: Vec<_> = es.iter().map(|e| edge(&e.from, &e.to, "inheritance")).collect();
+        let p = layered(&ns, &es, Direction::Down);
+        for e in &es { assert!(p[&e.from][1] > p[&e.to][1]); }
     }
 
     #[test]

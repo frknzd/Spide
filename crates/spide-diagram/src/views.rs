@@ -476,16 +476,26 @@ pub fn layout_use_cases(m: &dyn Measure, actors: &[&Actor], ucs: &[&UseCase]) ->
     let secondary = |u: &UseCase| (targets.contains(u.name.as_str()) || extenders.contains(u.name.as_str())) && u.actors.is_empty();
     let main: Vec<&UseCase> = sorted.iter().copied().filter(|u| !secondary(u)).collect();
     let second: Vec<&UseCase> = sorted.iter().copied().filter(|u| secondary(u)).collect();
-    let main_cols = if main.len() > 9 { 2 } else { 1 };
+    let uc_font = FontSpec::sans(13.0);
+    let width_of = |u: &UseCase| (m.width(&u.name, uc_font) + 56.0).max(150.0);
+    let col_w = sorted.iter().map(|u| width_of(u)).fold(200.0, f64::max) + 60.0;
+    // Choose compact landscape columns using measured labels, keeping secondary
+    // use cases separate and actor ordering intact. No artificial page padding.
+    let main_cols = (1..=main.len().clamp(1, 4)).min_by(|a, b| {
+        let score = |cols: usize| {
+            let rows = main.len().div_ceil(cols).max(second.len()).max(1);
+            let w = (cols + usize::from(!second.is_empty())) as f64 * col_w + 340.0;
+            let h = (rows as f64 * row_h + 50.0).max(160.0);
+            w * h * (1.0 + 0.8 * ((w / h) / layout::ASPECT).ln().abs())
+        };
+        score(*a).total_cmp(&score(*b))
+    }).unwrap_or(1);
     let per = main.len().div_ceil(main_cols).max(1);
     let mut columns: Vec<Vec<&UseCase>> = (0..main_cols).map(|c| main.iter().skip(c * per).take(per).copied().collect()).collect();
     if !second.is_empty() {
         columns.push(second);
     }
     let cols = columns.len();
-    let uc_font = FontSpec::sans(13.0);
-    let width_of = |u: &UseCase| (m.width(&u.name, uc_font) + 56.0).max(150.0);
-    let col_w = sorted.iter().map(|u| width_of(u)).fold(200.0, f64::max) + 60.0;
     let per_col = columns.iter().map(|c| c.len()).max().unwrap_or(1).max(1);
     let mut uc_map = HashMap::new();
     for (ci, col) in columns.iter().enumerate() {

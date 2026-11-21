@@ -149,6 +149,51 @@ fn examples_are_presentable_at_every_detail_level() {
     assert!(bad.is_empty(), "not compact: {bad:?}");
 }
 
+/// Opt-in visual review of a user's project without storing it in the repository.
+/// SPIDE_REVIEW_DESIGN=/path/to/design.json cargo test -p spide-diagram --test render review_project -- --ignored --nocapture
+#[test]
+#[ignore]
+fn review_project() {
+    let path = std::env::var("SPIDE_REVIEW_DESIGN").expect("set SPIDE_REVIEW_DESIGN");
+    let mut store = Store::default();
+    store.load(Design::from_json(&std::fs::read_to_string(path).unwrap()).unwrap());
+    let d = store.view();
+    let metrics = compute(&d, false);
+    let derived = spide_core::derive::derive(&d, &metrics);
+    let out = format!("{}/../../target/scene-out", env!("CARGO_MANIFEST_DIR"));
+    std::fs::create_dir_all(&out).unwrap();
+    let save = |name: &str, scene: &Scene| {
+        use spide_diagram::svg::{build_export_svg, ExportMeta, ExportOptions};
+        let meta = ExportMeta { title: d.name.clone(), view: name.into(), legend: vec![], date: String::new() };
+        let options = ExportOptions { title: false, date: false, legend: false, ..Default::default() };
+        let Some((svg, w, h)) = build_export_svg(scene, &ApproxMeasure, &meta, &options) else { return };
+        let bounds = spide_diagram::scene::bbox(&scene.root, &ApproxMeasure, spide_diagram::scene::tag::DIAG | spide_diagram::scene::tag::TRANSIENT | spide_diagram::scene::tag::PROPOSED).unwrap();
+        println!("review-{name}: occupied {:.0}×{:.0} aspect {:.2}; output {w}×{h}", bounds[2]-bounds[0], bounds[3]-bounds[1], (bounds[2]-bounds[0])/(bounds[3]-bounds[1]));
+        std::fs::write(format!("{out}/review-{name}.svg"), &svg).unwrap();
+        std::fs::write(format!("{out}/review-{name}.pdf"), spide_core::pdf::render(&svg).unwrap()).unwrap();
+        std::fs::write(format!("{out}/review-{name}.png"), spide_core::png::render(&svg, 0.3).unwrap()).unwrap();
+    };
+    for level in if std::env::var_os("SPIDE_REVIEW_VIEWS_ONLY").is_some() { vec![] } else { vec![1, 3, 4] } {
+        let r = render_design("review-class", &d, level);
+        save(&format!("class-{level}"), &r.scene);
+    }
+    if let Some(package) = d.packages.iter().find(|p| p.name == "model.call").or(d.packages.first()).filter(|_| std::env::var_os("SPIDE_REVIEW_VIEWS_ONLY").is_none()) {
+        let scope = spide_core::scope::PackageScope::new(&d, &metrics, &package.name, true).unwrap();
+        let scoped = scope.design(&d);
+        let r = render_design("review-boundary", &scoped, 3);
+        save("boundary", &r.scene);
+    }
+    use spide_diagram::views::*;
+    save("package", &package_scene(&ApproxMeasure, &derived, &metrics, &mut PackageState::default()).scene);
+    for (name, level) in [("context", C4Level::Context), ("containers", C4Level::Container)] {
+        save(name, &system_scene(&ApproxMeasure, &derived, &metrics, level, &mut SystemState::default()).scene);
+    }
+    save("usecase", &usecase_scene(&ApproxMeasure, &d, &mut UseCaseState::default()).scene);
+    if let Some(s) = d.sequences.first() {
+        save("sequence", &sequence_scene(&ApproxMeasure, s, &|n| d.use_cases.actors.iter().any(|a| a.name == n)).scene);
+    }
+}
+
 fn synthetic(ops: serde_json::Value) -> Design {
     let ops: Vec<spide_core::ops::Op> = serde_json::from_value(ops).unwrap();
     spide_core::ops::apply_all(&Design::default(), &ops, spide_core::ops::Mode::Commit(spide_core::model::Status::Accepted, None)).unwrap()

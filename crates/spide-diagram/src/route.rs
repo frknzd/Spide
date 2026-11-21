@@ -1,4 +1,4 @@
-//! Orthogonal ("PCB") edge router: north/south/east/west segments only, shared ports that fan out,
+//! Orthogonal ("PCB") edge router: north/south/east/west segments only, distinct neighbor-ordered ports,
 //! no segment through a box, parallel segments nudged into lanes, hops where lines cross.
 //! Pure and deterministic; positions are whatever the layout/physics currently says.
 
@@ -119,7 +119,7 @@ pub struct REdge {
     pub id: String,
     pub from: String,
     pub to: String,
-    /// decoration drawn at each end: ends with different decorations get different ports
+    /// Decoration drawn at each end; each relationship has its own attachment.
     pub from_deco: Deco,
     pub to_deco: Deco,
     /// prefer vertical sides (inheritance: child below its parent)
@@ -616,25 +616,12 @@ pub fn route_all(boxes: &[RBox], edges: &[REdge], zones: &[RZone], mut o: RouteO
         i
     };
 
-    // ------------------------------------------------------------- ports (shared per box/side/decoration)
-    let pair_of = |e: &REdge| if e.from <= e.to { format!("{}|{}", e.from, e.to) } else { format!("{}|{}", e.to, e.from) };
-    let mut pair_count: HashMap<String, usize> = HashMap::new();
-    let mut pair_index: HashMap<String, usize> = HashMap::new();
-    for e in &live {
-        if e.from == e.to {
-            continue;
-        }
-        let k = pair_of(e);
-        let c = pair_count.get(&k).copied().unwrap_or(0);
-        pair_index.insert(e.id.clone(), c);
-        pair_count.insert(k, c + 1);
-    }
+    // Each relationship has its own attachment, including opposite/parallel edges.
+    // Decoration equality does not imply a shared UML relationship.
     let group_key = |e: &REdge, end: usize, side: Side| -> String {
         let b = if end == 1 { &e.to } else { &e.from };
         let deco = if end == 1 { e.to_deco } else { e.from_deco };
-        // parallel edges between one pair get their own ports, so they run side by side
-        let par = if pair_count.get(&pair_of(e)).copied().unwrap_or(1) > 1 { format!("#{}", pair_index.get(&e.id).copied().unwrap_or(0)) } else { String::new() };
-        format!("{b}|{}|{}{par}", side.letter(), deco.name())
+        format!("{b}|{}|{}#{}:{end}", side.letter(), deco.name(), e.id)
     };
     // distance from a box side to the nearest *other* box straight ahead (Infinity: open)
     let clearance = |b: &RBox, side: Side, ignore: &str| -> f64 {
@@ -788,6 +775,7 @@ pub fn route_all(boxes: &[RBox], edges: &[REdge], zones: &[RZone], mut o: RouteO
         }
     }
     let mut ends: Vec<(String, Vec<(Side, String)>)> = vec![];
+    let mut destination: HashMap<String, f64> = HashMap::new();
     for e in &live {
         if e.from == e.to {
             continue;
@@ -796,6 +784,8 @@ pub fn route_all(boxes: &[RBox], edges: &[REdge], zones: &[RZone], mut o: RouteO
         for end in [0usize, 1] {
             let (bx, sd) = if end == 1 { (&e.to, s.1) } else { (&e.from, s.0) };
             let key = group_key(e, end, sd);
+            let other = by_id[if end == 1 { e.from.as_str() } else { e.to.as_str() }];
+            destination.insert(key.clone(), if sd.vertical() { other.x } else { other.y });
             let bs = format!("{bx}|{}", sd.letter());
             let slot = match ends.iter().position(|(k, _)| *k == bs) {
                 Some(i) => i,
@@ -814,12 +804,16 @@ pub fn route_all(boxes: &[RBox], edges: &[REdge], zones: &[RZone], mut o: RouteO
     for (bs, list) in &mut ends {
         let bx = by_id[&bs[..bs.rfind('|').unwrap()]];
         let deco_of = |k: &str| Deco::order(k.split('|').nth(2).unwrap_or("").split('#').next().unwrap_or(""));
-        list.sort_by(|a, b| deco_of(&a.1).cmp(&deco_of(&b.1)).then_with(|| a.1.cmp(&b.1)));
+        list.sort_by(|a, b| destination[&a.1].total_cmp(&destination[&b.1])
+            .then_with(|| deco_of(&a.1).cmp(&deco_of(&b.1))).then_with(|| a.1.cmp(&b.1)));
         let n = list.len() as f64;
         for (i, (side, key)) in list.iter().enumerate() {
             let along = if side.vertical() { bx.w } else { bx.h };
-            let span = (along / 2.0 - 12.0).max(0.0);
-            let off = ((i as f64 - (n - 1.0) / 2.0) * port_gap).clamp(-span, span);
+            let span = (along / 2.0 - 18.0).max(along * 0.2);
+            // Spread over the side, not a fixed cluster at its centre. For very dense
+            // sides compress all slots evenly instead of clamping many to one point.
+            let step = if n > 1.0 { (along / (n + 1.0)).max(port_gap).min(2.0 * span / (n - 1.0)) } else { 0.0 };
+            let off = (i as f64 - (n - 1.0) / 2.0) * step;
             let id = intern(key.clone());
             port_order.push(key.clone());
             ports.insert(key.clone(), port_at(bx, *side, off, id, stub_len, margin));
@@ -932,9 +926,30 @@ pub fn route_all(boxes: &[RBox], edges: &[REdge], zones: &[RZone], mut o: RouteO
     };
     let groups_of: HashMap<String, [String; 2]> = live.iter().filter(|e| out.contains_key(&e.id) && e.from != e.to).map(|e| (e.id.clone(), [group_of(e, 0, &out), group_of(e, 1, &out)])).collect();
     nudge(&mut out, &live, &groups_of, lane);
-    // lane nudging can leave small steps behind: straighten them where the result stays clear
-    for r in out.values_mut() {
-        r.points = unjog(&simplify(&r.points), &blocked, 14.0);
+    // Use full lane spacing where clear; reduce shifts only when obstacles require it.
+    // Endpoints remain fixed, and the raw validated route is always available.
+    for (id, r) in &mut out {
+        let edge = live.iter().find(|e| &e.id == id).unwrap();
+        let shifted = r.points.clone();
+        for factor in [1.0, 0.75, 0.5, 0.25, 0.0] {
+            let candidate: Vec<Pt> = r.raw.iter().zip(&shifted).map(|(a, b)| [a[0] + (b[0]-a[0])*factor, a[1] + (b[1]-a[1])*factor]).collect();
+            let clear = candidate.windows(2).enumerate().all(|(i, w)| {
+                let first = i == 0;
+                let last = i + 2 == candidate.len();
+                if !first && !last { return !blocked(w[0], w[1]); }
+                let side = if first { r.from_side } else { r.to_side }.dir();
+                let delta = if first { [w[1][0]-w[0][0], w[1][1]-w[0][1]] } else { [w[0][0]-w[1][0], w[0][1]-w[1][1]] };
+                if delta[0]*side[0] + delta[1]*side[1] < 0.0 { return false; }
+                boxes.iter().filter(|b| !(first && b.id == edge.from || last && b.id == edge.to)).all(|b| {
+                    !(w[0][0].max(w[1][0]) > b.x-b.w/2.0 && w[0][0].min(w[1][0]) < b.x+b.w/2.0
+                        && w[0][1].max(w[1][1]) > b.y-b.h/2.0-b.pad_top && w[0][1].min(w[1][1]) < b.y+b.h/2.0+b.pad_bottom)
+                })
+            });
+            if clear || factor == 0.0 {
+                r.points = unjog(&simplify(&candidate), &blocked, 4.0);
+                break;
+            }
+        }
     }
     add_hops(&mut out, &live);
     out
@@ -1104,13 +1119,13 @@ fn nudge(routes: &mut HashMap<String, Route>, edges: &[&REdge], groups_of: &Hash
                     .collect();
                 bundles.sort_by(|x, y| ord[x].total_cmp(&ord[y]).then_with(|| if x < y { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater }));
                 let n = bundles.len() as f64;
-                let step = lane.min(22.0 / (n - 1.0));
+                let step = lane;
                 let centre = cluster.iter().map(|s| s.c).sum::<f64>() / cluster.len() as f64;
                 for (k, b) in bundles.iter().enumerate() {
                     let target = centre + (k as f64 - (n - 1.0) / 2.0) * step;
                     for s in cluster.iter() {
                         if &s.bundle == b {
-                            shifts.push((s.edge.clone(), s.i, s.horiz, (target - s.c).clamp(-11.0, 11.0)));
+                            shifts.push((s.edge.clone(), s.i, s.horiz, target - s.c));
                         }
                     }
                 }
@@ -1399,15 +1414,48 @@ mod tests {
     }
 
     #[test]
-    fn same_deco_shares_port() {
+    fn same_deco_has_distinct_neighbor_ordered_ports() {
         let boxes = vec![bx("P", 0.0, 0.0), bx("C1", -200.0, 250.0), bx("C2", 0.0, 250.0), bx("C3", 200.0, 250.0)];
         let edges: Vec<REdge> = ["C1", "C2", "C3"].iter().map(|c| REdge::new(*c, *c, "P").deco(Deco::None, Deco::Triangle, true)).collect();
         let routes = route_all(&boxes, &edges, &[], RouteOptions::default());
         let ends: HashSet<String> = edges.iter().map(|e| format!("{:?}", routes[&e.id].points.last().unwrap())).collect();
-        assert_eq!(ends.len(), 1, "inheritance arrows merge into one triangle");
+        assert_eq!(ends.len(), 3, "unrelated inheritance arrows remain distinguishable");
+        let xs: Vec<f64> = edges.iter().map(|e| routes[&e.id].points.last().unwrap()[0]).collect();
+        assert!(xs.windows(2).all(|w| w[1] - w[0] >= 14.0));
         for e in &edges {
             check_route(&routes[&e.id], &boxes, e);
         }
+    }
+
+    #[test]
+    fn open_channels_keep_full_lane_spacing() {
+        let edges: Vec<_> = (0..5).map(|i| arrow(&format!("e{i}"), "A", "B")).collect();
+        let mut routes = HashMap::new();
+        for (i, e) in edges.iter().enumerate() {
+            let x = i as f64 * 30.0;
+            let points = vec![[x, 0.0], [x, 100.0], [300.0+x, 100.0], [300.0+x, 200.0]];
+            routes.insert(e.id.clone(), Route { raw: points.clone(), points, hops: vec![], from_side: Side::S, to_side: Side::N, fallback: false });
+        }
+        nudge(&mut routes, &edges.iter().collect::<Vec<_>>(), &HashMap::new(), 12.0);
+        let mut lanes: Vec<_> = routes.values().map(|r| r.points[1][1]).collect();
+        lanes.sort_by(f64::total_cmp);
+        assert!(lanes.windows(2).all(|w| w[1]-w[0] >= 12.0));
+        for r in routes.values() {
+            assert_eq!(r.points.first(), r.raw.first());
+            assert_eq!(r.points.last(), r.raw.last());
+        }
+    }
+
+    #[test]
+    fn crowded_ports_never_collapse_at_corners() {
+        let boxes = vec![bx("A", 0.0, 0.0), bx("B", 0.0, 300.0)];
+        let edges: Vec<_> = (0..16).map(|i| arrow(&format!("e{i:02}"), "A", "B")).collect();
+        let a = route_all(&boxes, &edges, &[], RouteOptions::default());
+        let b = route_all(&boxes, &edges, &[], RouteOptions::default());
+        assert_eq!(a, b);
+        let starts: HashSet<_> = a.values().map(|r| format!("{:?}", r.points[0])).collect();
+        assert_eq!(starts.len(), edges.len());
+        for e in &edges { check_route(&a[&e.id], &boxes, e); }
     }
 
     #[test]

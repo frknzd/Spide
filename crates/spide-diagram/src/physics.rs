@@ -181,7 +181,9 @@ impl LivingLayout {
         } else {
             0.0
         };
-        if kick > 0.0 {
+        // Loading a complete saved drawing is not a request to rearrange it.
+        let restoring = before.is_empty() && !specs.is_empty() && specs.iter().all(|s| s.init.is_some());
+        if kick > 0.0 && !restoring {
             self.alpha = self.alpha.max(kick);
             self.restart();
         }
@@ -452,11 +454,25 @@ mod tests {
     fn overlapping_nodes_separate_and_settle() {
         let mut l = LivingLayout::new();
         l.update(&[spec("A", 0.0, 0.0), spec("B", 10.0, 5.0)], &[]);
+        // A subsequent size change restarts collision resolution, unlike restoration.
+        let mut resized = spec("A", 0.0, 0.0);
+        resized.w = 130.0;
+        l.update(&[resized, spec("B", 10.0, 5.0)], &[]);
         assert!(l.active());
         l.settle();
         assert!(!l.active());
         let (a, b) = (l.get("A").unwrap(), l.get("B").unwrap());
         assert!((a.x - b.x).abs() >= 120.0 || (a.y - b.y).abs() >= 60.0, "{a:?} {b:?}");
+    }
+
+    #[test]
+    fn saved_positions_restore_without_a_simulation_tick() {
+        let mut l = LivingLayout::new();
+        l.update(&[spec("A", 17.0, 23.0), spec("B", 400.0, 60.0)], &[]);
+        assert!(!l.active());
+        for i in 0..120 { assert!(!l.step(i as f64 / 60.0).moved); }
+        assert_eq!((l.get("A").unwrap().x, l.get("A").unwrap().y), (17.0, 23.0));
+        assert_eq!((l.get("B").unwrap().x, l.get("B").unwrap().y), (400.0, 60.0));
     }
 
     #[test]

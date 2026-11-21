@@ -22,7 +22,7 @@ pub enum ExportView {
 }
 
 impl ExportView {
-    /// Stable identifier (settings, file names).
+    /// Stable identifier for persisted settings (not a display filename).
     pub fn key(&self) -> String {
         match self {
             ExportView::SystemContext => "system-context".into(),
@@ -35,6 +35,19 @@ impl ExportView {
             ExportView::Sequence(n) => format!("sequence-{}", slug(n)),
         }
     }
+    /// Human-readable file identity, deliberately separate from persisted selection keys.
+    pub fn stem(&self, level: Option<u8>) -> String {
+        let mut name = match self {
+            Self::ClassPackage(p) => format!("class-{}-boundary", filename_part(p)),
+            Self::Sequence(n) => format!("sequence-{}", filename_part(n)),
+            _ => self.key(),
+        };
+        if let Some(l) = level.filter(|l| self.has_detail() && *l <= 4) {
+            name.push_str(&format!("-{l}-{}", DETAIL_LABELS[l as usize]));
+        }
+        name
+    }
+
     pub fn title(&self) -> String {
         match self {
             ExportView::SystemContext => "System context (C4)".into(),
@@ -145,10 +158,22 @@ pub fn slug(s: &str) -> String {
     }
 }
 
+/// Portable bounded component; retain readable Unicode and dotted package paths.
+pub fn filename_part(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.to_lowercase().chars() {
+        let c = if c.is_alphanumeric() || c == '.' { c } else { '-' };
+        if out.len() + c.len_utf8() > 64 { break; }
+        if c != '-' || !out.ends_with('-') { out.push(c); }
+    }
+    let out = out.trim_matches(['.', '-']);
+    if out.is_empty() { "diagram".into() } else { out.into() }
+}
+
 fn unique(name: String, ext: &str, used: &mut HashSet<String>) -> String {
     let mut file = format!("{name}.{ext}");
     let mut n = 2;
-    while !used.insert(file.clone()) {
+    while !used.insert(file.to_lowercase()) {
         file = format!("{name}-{n}.{ext}");
         n += 1;
     }
@@ -166,17 +191,14 @@ pub fn jobs(views: &[ExportView], b: &BatchSettings, profiles: &[Profile]) -> Ve
     let chosen: Vec<&ExportView> = views.iter().filter(|v| !b.excluded.contains(&v.key()) && (b.package_views || !matches!(v, ExportView::ClassPackage(_)))).collect();
     let profile_names: Vec<String> = {
         let mut seen = HashSet::new();
-        profiles.iter().map(|p| unique(slug(&p.name), "", &mut seen).trim_end_matches('.').to_string()).collect()
+        profiles.iter().map(|p| unique(filename_part(&p.name), "", &mut seen).trim_end_matches('.').to_string()).collect()
     };
     for v in &chosen {
         let lv: Vec<Option<u8>> = if v.has_detail() { levels.iter().map(|l| Some(*l)).collect() } else { vec![None] };
         for level in lv {
             for (pi, pname) in profile_names.iter().enumerate() {
                 for f in &formats {
-                    let mut name = v.key();
-                    if let Some(l) = level {
-                        name = format!("{name}-{}-{}", l, DETAIL_LABELS[l as usize]);
-                    }
+                    let mut name = v.stem(level);
                     if profiles.len() > 1 {
                         name = format!("{name}-{pname}");
                     }
@@ -191,7 +213,8 @@ pub fn jobs(views: &[ExportView], b: &BatchSettings, profiles: &[Profile]) -> Ve
         for v in &chosen {
             let p = if matches!(v, ExportView::ClassPackage(_)) { v.key() } else { v.plantuml().to_string() };
             if done.insert(p.clone()) {
-                out.push(Job { view: (*v).clone(), level: None, profile: 0, format: Format::Puml, file: unique(format!("{p}-plantuml"), "puml", &mut used) });
+                let stem = if matches!(v, ExportView::ClassPackage(_)) { v.stem(None) } else { p };
+                out.push(Job { view: (*v).clone(), level: None, profile: 0, format: Format::Puml, file: unique(format!("{stem}-plantuml"), "puml", &mut used) });
             }
         }
     }
@@ -200,7 +223,7 @@ pub fn jobs(views: &[ExportView], b: &BatchSettings, profiles: &[Profile]) -> Ve
 
 /// A fresh output folder inside `parent` (never an existing one).
 pub fn output_dir(parent: &Path, design: &str, stamp: &str) -> std::io::Result<PathBuf> {
-    let base = format!("{}-diagrams-{stamp}", slug(design));
+    let base = format!("{}-diagrams-{stamp}", filename_part(design));
     let mut dir = parent.join(&base);
     let mut n = 2;
     while dir.exists() {
@@ -325,6 +348,32 @@ mod tests {
         // the two scenarios with the same slug don't overwrite each other
         assert!(js.iter().any(|j| j.file == "sequence-borrow-a-book-current.svg"));
         assert!(js.iter().any(|j| j.file == "sequence-borrow-a-book-current-2.svg"));
+    }
+
+    #[test]
+    fn readable_names_preserve_keys_and_handle_collisions() {
+        let v = ExportView::ClassPackage("model.call".into());
+        assert_eq!(v.stem(Some(3)), "class-model.call-boundary-3-design");
+        assert_eq!(v.key(), "class-package-6d6f64656c2e63616c6c");
+        assert_eq!(filename_part("../模型/Call:*"), "模型-call");
+        assert_eq!(filename_part("...///"), "diagram");
+        assert!(filename_part(&"界".repeat(100)).len() <= 64);
+        let views = vec![v.clone(), ExportView::ClassPackage("MODEL.CALL".into()), ExportView::ClassPackage("model/call".into())];
+        let b = BatchSettings { package_views: true, levels: vec![3], formats: vec![Format::Svg, Format::Pdf], plantuml: true, ..Default::default() };
+        let js = jobs(&views, &b, &[Profile::default()]);
+        assert_eq!(js.len(), 9);
+        assert_eq!(js.iter().map(|j| j.file.to_lowercase()).collect::<HashSet<_>>().len(), 9);
+        assert!(js.iter().any(|j| j.file == "class-model.call-boundary-plantuml.puml"));
+        let b = BatchSettings { excluded: vec![v.key()], ..b };
+        assert!(jobs(&views, &b, &[Profile::default()]).iter().all(|j| j.view != v));
+        let long = "界".repeat(200);
+        let views = vec![ExportView::ClassPackage(long.clone()), ExportView::ClassPackage(format!("{long}x")), ExportView::ClassPackage("///".into())];
+        let profiles = vec![Profile { name: long.clone(), ..Default::default() }, Profile { name: long, ..Default::default() }];
+        let b = BatchSettings { package_views: true, levels: vec![0, 4], formats: vec![Format::Png, Format::Svg, Format::Pdf, Format::Canvas], ..Default::default() };
+        let js = jobs(&views, &b, &profiles);
+        assert_eq!(js.len(), 48);
+        assert_eq!(js.iter().map(|j| &j.file).collect::<HashSet<_>>().len(), js.len());
+        assert!(js.iter().all(|j| j.file.len() < 240 && !j.file.contains('/')));
     }
 
     #[test]
