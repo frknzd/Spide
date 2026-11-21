@@ -24,8 +24,8 @@ approved ones only.
    (or its package) external so Spide stops comparing it.
 5. Never change the design through Spide's tools in this workflow. If the design looks wrong, say so; the user can
    raise a decision.
-6. Never commit, stash, reset, rebase or switch branches. Ask the user before deleting a file. Don't touch build
-   output or unrelated files.
+6. The implementation brief doesn't authorize Git changes. Follow explicit Git requests from the user, subject to
+   repository instructions. Ask the user before deleting a file. Don't touch build output or unrelated files.
 7. If the manifest has a test command, run it in its working directory and fix what you broke.
 8. Finish with a two-line summary: what you changed and anything you couldn't do.
 

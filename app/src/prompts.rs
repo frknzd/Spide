@@ -194,7 +194,7 @@ pub fn implement(brief: &str, m: &spide_core::project::Manifest) -> String {
         "[spide · implement the approved design in the code]\nThe user asked you to implement these approved design changes in the Java code \
          (follow the spide-implement skill). Per class: the file, the exact changes, the class's responsibilities and the decisions behind them.\n{brief}\n\
          Rules:\n- Implement only these changes and keep existing behaviour; follow the repository's instructions (AGENTS.md).\n\
-         - Don't create framework/library types (ZAP, Swing, JDK); ask the user to mark them external instead.\n- Don't change the design through Spide tools.\n- Never commit, stash, reset or switch branches.\n- Ask the user before deleting a file.{test}\n\
+         - Don't create framework/library types (ZAP, Swing, JDK); ask the user to mark them external instead.\n- Don't change the design through Spide tools.\n- Follow explicit Git requests from the user, subject to repository instructions.\n- Ask the user before deleting a file.{test}\n\
          - Finish with a two-line summary. Spide re-indexes the code afterwards and shows what is still out of sync."
     )
 }

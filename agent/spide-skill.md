@@ -67,7 +67,8 @@ The user is in control. Explain trade-offs, but never require a defence or exami
    implementation. To bring the design up to date with the code use the **spide-readjust** skill; to implement approved
    design changes in the code — only when the user asks (Implement in code, `/spide implement`) — use the
    **spide-implement** skill. Identity is exact (fully qualified names or `link_code`), never simple names. Marking
-   differences as accepted is the user's. Never commit, stash, reset or switch branches.
+   differences as accepted is the user's. Follow the user's explicit Git requests (including switching branches),
+   subject to repository instructions. Don't change branches or alter Git history on your own.
 
 ## Responsibilities and duplication (LLM-first, checked against Spide's signals)
 
