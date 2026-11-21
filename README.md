@@ -123,12 +123,12 @@ A design-only project folder contains:
 |---|---|
 | `design.json` | The design (active branch). Autosaved on every change and watched for external edits. |
 | `.pi/mcp.json` | Points pi to Spide's MCP server (`spide`, `http://127.0.0.1:47800/mcp`). |
-| `.spide/terminal-bridge.ts` | App-owned pi extension for structured prompts, context and `/spide` commands. The skill in `agent/spide-skill.md` is appended at launch. |
+| `.spide/terminal-bridge.ts` | App-owned pi extension for app-initiated prompts and `/spide` commands. |
 | `.spide/sessions/` | The agent's pi sessions. Spide continues the latest one on start. |
 | `.spide/history.jsonl` | One snapshot per model change, used by the timeline. |
 | `.spide/branches/` | Inactive branches (`<name>.json`). `.spide/branch` names the active one. |
 | `.spide/lucid/` | Lucid sync (local): `config.json` (enabled, frontier branch, folder, one document per diagram) and `base/` (what each document held at the last sync). |
-| `.spide/skills/` | App-owned pi skills (Lucid sync; in a Spide Project also readjust/implement), refreshed at every launch. |
+| `.spide/skills/` | On-demand pi skills for diagram design and Lucid sync (plus readjust/implement in a Spide Project), refreshed at every launch. |
 
 A [Spide Project](#spide-projects-design-and-code-together) stores the design next to its code under `spide/` instead.
 
@@ -138,7 +138,8 @@ Older `design.json` files (schema 1) open unchanged. Files from the removed sour
 
 ### Workspace and pi terminal
 
-- pi runs once in a real PTY in the project folder, with all available tools (`--tools '*'`), its configured extensions and MCP servers, and your permission settings. The agent may edit code and run shell commands. Diagram changes always go through Spide's MCP proposals and decisions. When you first open a project, you may need to approve pi's **Trust project folder?** prompt.
+- pi runs once in a real PTY in the project folder and uses its normal tool selection, configuration, and permission settings. Type coding, shell, or Git requests directly: Spide does not rewrite them or attach design rules to every turn. When you first open a project, you may need to approve pi's **Trust project folder?** prompt.
+- For canvas work, use `/spide ask <design request>` to include the current tab, design stage, and partner mode. The agent can also load the `spide-design` skill when you ask about diagrams directly. Diagram changes still go through Spide's MCP proposals and decisions.
 - The terminal editor is the only chat input. `Ctrl+P` / `Ctrl+Shift+P` cycle models and `Ctrl+L` opens the model picker. Shift+Tab, Escape, multiline input and transcript scrolling belong to pi. The mouse wheel and trackpad are forwarded to pi's fullscreen transcript, and PageUp/PageDown also scroll it. Canvas shortcuts are disabled while the terminal has focus.
 - Drag the separators to resize panes, and collapse or reopen panes without restarting pi. Layout preferences are stored locally, not in the design. On narrow windows the review rail becomes a drawer. **Restart** is always available in the terminal header.
 - **In this document, `/command` means `/spide command` in the terminal** (or the same entry under **Commands**). pi's built-in commands such as `/new`, `/model`, `/settings`, `/resume` and `/export` keep their usual meaning.

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import bridge from "../agent/spide-terminal.ts";
 
-test("one native session: authenticated handshake, context, follow-up, duplicates, shutdown", async () => {
+test("one native session: plain input, opt-in context, follow-up, duplicates, shutdown", async () => {
   const dir = await mkdtemp(join(tmpdir(), "spide-test-"));
   const path = join(dir, "pi.sock");
   process.env.SPIDE_CONTROL_SOCKET = path;
@@ -14,9 +14,10 @@ test("one native session: authenticated handshake, context, follow-up, duplicate
   process.env.SPIDE_CONTROL_GENERATION = "7";
   const hooks = new Map<string, Function>();
   const messages: unknown[] = [];
+  const commands = new Map<string, any>();
   let idle = false;
   let failContext = false;
-  const restored: string[] = [], notices: string[] = [];
+  const notices: string[] = [];
   let peer: any;
   const received: any[] = [];
   const server = createServer((s) => {
@@ -38,16 +39,16 @@ test("one native session: authenticated handshake, context, follow-up, duplicate
     });
   });
   await new Promise<void>((r) => server.listen(path, r));
-  const ctx = { isIdle: () => idle, ui: { notify: (s: string) => notices.push(s), setEditorText: (s: string) => restored.push(s) }, abort() {} };
-  bridge({ on: (name: string, f: Function) => hooks.set(name, f), registerCommand() {}, registerTool() {}, getActiveTools: () => ["read", "bash", "edit", "write"], sendUserMessage: (...args: unknown[]) => messages.push(args) } as any);
+  const ctx = { isIdle: () => idle, ui: { notify: (s: string) => notices.push(s) }, abort() {} };
+  bridge({ on: (name: string, f: Function) => hooks.set(name, f), registerCommand: (name: string, spec: any) => commands.set(name, spec), registerTool() {}, getActiveTools: () => ["read", "bash", "edit", "write"], sendUserMessage: (...args: unknown[]) => messages.push(args) } as any);
   const wait = async (f: () => boolean) => { for (let i = 0; i < 100 && !f(); i++) await new Promise((r) => setTimeout(r, 10)); assert.ok(f()); };
   try {
     await hooks.get("session_start")!({}, ctx);
     await wait(() => received.some((v) => v.type === "hello"));
     await new Promise((r) => setTimeout(r, 30));
-    const input = await hooks.get("input")!({ source: "interactive", text: "hello", images: ["image"] }, ctx);
-    assert.deepEqual(input, { action: "transform", text: "decorated:hello", images: ["image"] });
-    assert.deepEqual(await hooks.get("input")!({ source: "extension", text: "already" }, ctx), { action: "continue" });
+    assert.ok(!hooks.has("input"), "Spide must not intercept ordinary Pi prompts");
+    await commands.get("spide").handler("ask Design the checkout flow", ctx);
+    assert.deepEqual(messages.shift(), ["decorated:Design the checkout flow", { deliverAs: "followUp" }]);
     const request = JSON.stringify({ type: "request", id: "one", generation: 7, method: "prompt", payload: { message: "examine" } }) + "\n";
     peer.write(request + request);
     await wait(() => received.filter((v) => v.id === "one").length === 2);
@@ -69,8 +70,7 @@ test("one native session: authenticated handshake, context, follow-up, duplicate
     await wait(() => messages.length === 2);
     assert.deepEqual(messages[1], ["resume", undefined]);
     failContext = true;
-    assert.deepEqual(await hooks.get("input")!({ source: "interactive", text: "keep my draft" }, ctx), { action: "handled" });
-    assert.deepEqual(restored, ["keep my draft"]);
+    await commands.get("spide").handler("ask Revisit checkout", ctx);
     assert.ok(notices[0].includes("context unavailable"));
     assert.equal(messages.length, 2);
   } finally {

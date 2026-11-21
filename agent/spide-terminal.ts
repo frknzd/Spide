@@ -85,19 +85,6 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_start", (_e, c) => { ctx = c; event("busy"); });
   pi.on("agent_settled", (_e, c) => { ctx = c; event("settled"); });
   pi.on("model_select", (_e, c) => { ctx = c; event("model"); });
-  pi.on("input", async (e, c) => {
-    ctx = c;
-    if (e.source === "extension") return { action: "continue" };
-    try {
-      const result = await request("context", { text: e.text });
-      return { action: "transform", text: result.text, images: e.images };
-    } catch (err) {
-      c.ui.notify(String(err), "error");
-      // Preserve the prompt for retry; never send an undecorated turn silently.
-      c.ui.setEditorText(e.text);
-      return { action: "handled" };
-    }
-  });
   // ---------------------------------------------------------------- Lucid sync
   // pi talks to Lucid's hosted MCP server (OAuth via `/mcp login lucid`); Spide's MCP tools plan
   // and verify. spide_lucid pipes JSON tool → tool, so diagram scripts never pass through the model.
@@ -209,11 +196,22 @@ export default function (pi: ExtensionAPI) {
     },
   } as any);
   if (lucidEnabled()) registerLucid();
-  const commands = ["tidy", "fit", "find", "focus", "detail", "lens", "implicit", "external", "brief", "rules", "mode", "strict", "lenient", "accept", "reject", "undo", "redo", "add", "pruned", "timeline", "trace", "goto", "nvim", "branch", "switch", "compare", "merge", "project", "readjust", "implement", "verify", "synced", "reindex", "coderoot", "export", "open", "new", "save", "name", "folder", "agent restart", "lucid status", "lucid push", "lucid pull", "lucid enable", "lucid link"];
+  const commands = ["ask", "tidy", "fit", "find", "focus", "detail", "lens", "implicit", "external", "brief", "rules", "mode", "strict", "lenient", "accept", "reject", "undo", "redo", "add", "pruned", "timeline", "trace", "goto", "nvim", "branch", "switch", "compare", "merge", "project", "readjust", "implement", "verify", "synced", "reindex", "coderoot", "export", "open", "new", "save", "name", "folder", "agent restart", "lucid status", "lucid push", "lucid pull", "lucid enable", "lucid link"];
   pi.registerCommand("spide", {
-    description: "Spide canvas commands (e.g. /spide tidy, /spide find Order). Pi commands stay native.",
+    description: "Spide canvas commands (e.g. /spide ask <design request>, /spide tidy). Pi commands stay native.",
     getArgumentCompletions: (prefix) => commands.filter((c) => c.startsWith(prefix)).map((c) => ({ value: c, label: c })),
     handler: async (args, c) => {
+      const ask = args.trim().match(/^ask(?:\s+([\s\S]+))?$/);
+      if (ask) {
+        if (!ask[1]) { c.ui.notify("Usage: /spide ask <design request>", "warning"); return; }
+        try {
+          const result = await request("context", { text: ask[1] });
+          pi.sendUserMessage(result.text, c.isIdle() ? undefined : { deliverAs: "followUp" });
+        } catch (err) {
+          c.ui.notify(String(err), "error");
+        }
+        return;
+      }
       const lucid = args.trim().match(/^lucid\s*(status|push|pull|enable|link)?\s*(.*)$/);
       if (lucid) {
         // the agent runs spide_lucid (tool context: it can reach the Lucid and Spide MCP servers)

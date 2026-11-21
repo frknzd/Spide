@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory(prefix="spide-real-", dir="/tmp") as directory:
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 100, 0, 0))
     token = os.urandom(32).hex()
     env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor", SPIDE_CONTROL_SOCKET=control_path, SPIDE_CONTROL_TOKEN=token, SPIDE_CONTROL_GENERATION="99")
-    pi = subprocess.Popen([os.environ.get("SPIDE_PI", "pi"), "--tools", "*", "--session-dir", directory + "/sessions", "-e", str(root / "agent/spide-terminal.ts")], cwd=directory, env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+    pi = subprocess.Popen([os.environ.get("SPIDE_PI", "pi"), "--session-dir", directory + "/sessions", "--continue", "-e", str(root / "agent/spide-terminal.ts")], cwd=directory, env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
     os.close(slave)
     output = bytearray()
     peer = None
@@ -54,9 +54,8 @@ with tempfile.TemporaryDirectory(prefix="spide-real-", dir="/tmp") as directory:
                         if v.get("event") == "model": model_changes += 1
                         if v.get("type") == "hello":
                             assert v.get("token") == token and v.get("generation") == 99
-                            required = {"read", "bash", "edit", "write", "grep", "find", "ls"}
-                            assert required.issubset(v.get("tools", [])), "missing built-in tools"
-                            events.append("authenticated; all seven built-in tools active")
+                            assert isinstance(v.get("tools"), list)
+                            events.append("authenticated; active tools: " + ", ".join(v["tools"]))
                             peer.sendall(b'{"type":"ready","generation":99}\n')
             if events and key_start is None:
                 key_start = time.monotonic()
