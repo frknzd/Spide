@@ -39,6 +39,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("undo", "Undo", "Design", "Undo the last design change"),
     c("redo", "Redo", "Design", "Redo the last undone change"),
     c("brief", "Brief and rules", "Design", "Edit goals, quality attributes and constraints"),
+    k(c("health", "Design health inspector", "Design", "Inspect overall score, dimensions, findings, evidence gaps and exceptions"), "score evidence findings diagnostics"),
     t("mode", "Partner mode", "Design", "Show or set examiner, socratic, devils_advocate or sketch", "mode ", false),
     c("timeline", "Timeline", "History", "Browse previous revisions"),
     c("trace", "Trace", "History", "What agents changed: intent, symbols, findings, checks, outcome"),

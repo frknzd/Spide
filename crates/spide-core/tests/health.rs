@@ -63,3 +63,88 @@ fn exceptions_require_approval_and_expire_without_erasing_the_finding() {
     assert_eq!(approved.exceptions[0].reason, "legacy bridge");
     assert_eq!(report(&d, 10).signals, original);
 }
+
+#[test]
+fn overall_score_is_anti_padding_monotonic_and_unassessed_when_empty() {
+    let empty = compute(&Design::default(), false).health_report;
+    assert_eq!(empty.version, "health-2");
+    assert_eq!(empty.score, None);
+    assert_eq!(empty.evidence_level, "unassessed");
+    assert_eq!(empty.dimensions.len(), 6);
+
+    let mut cyclic = shop();
+    let r_cyclic = compute(&cyclic, false).health_report;
+    let s_cyclic = r_cyclic.score.expect("non-empty design is scored");
+    assert!(s_cyclic < 100, "cycle should reduce score, got {s_cyclic}");
+    assert!(r_cyclic.dimension_score("modularity").unwrap() < 100);
+    assert_eq!(r_cyclic.dimension_score("implementation_quality"), None, "no code/tool evidence => unknown");
+
+    // Anti-padding: adding 50 unrelated classes must not inflate the score.
+    let mut padded = cyclic.clone();
+    padded.classes.extend((0..50).map(|i| Class { name: format!("Pad{i}"), ..Default::default() }));
+    // Connect them in a chain so they don't add orphan penalties
+    for i in 0..50 {
+        let to = if i == 0 { "Order".into() } else { format!("Pad{}", i - 1) };
+        padded.relations.push(Relation { id: format!("r{i}"), from: format!("Pad{i}"), to, kind: RelationKind::Dependency, ..Default::default() });
+    }
+    let r_padded = compute(&padded, false).health_report;
+    assert_eq!(r_padded.dimension_score("modularity"), r_cyclic.dimension_score("modularity"));
+
+    // Breaking the cycle strictly improves the score.
+    cyclic.relations.retain(|r| !(r.from == "Line" && r.to == "Order"));
+    let r_clean = compute(&cyclic, false).health_report;
+    assert!(r_clean.score.unwrap() > s_cyclic, "breaking cycle must raise score: {} vs {}", r_clean.score.unwrap(), s_cyclic);
+}
+
+#[test]
+fn brief_forces_align_with_health_and_change_scenarios() {
+    let d = Design::from_json(r#"{
+        "classes":[{"name":"Order"},{"name":"Line"}],
+        "relations":[{"from":"Order","to":"Line","kind":"dependency"},{"from":"Line","to":"Order","kind":"dependency"}],
+        "forces":[
+            {"name":"Low coupling","kind":"quality","priority":1},
+            {"name":"Add new payment provider","kind":"change","priority":1}
+        ]
+    }"#).unwrap();
+    let r = compute(&d, false).health_report;
+    assert_eq!(r.forces.len(), 2);
+    let coupling = r.forces.iter().find(|f| f.force == "Low coupling").unwrap();
+    assert!(coupling.related_dimensions.contains(&"modularity".to_string()));
+    assert!(coupling.related_findings >= 1);
+    let change = r.forces.iter().find(|f| f.force == "Add new payment provider").unwrap();
+    assert_eq!(change.status, "unmeasured");
+}
+
+#[test]
+fn decomplexification_detectors_and_tackle_ordering_and_challenges() {
+    let d = Design::from_json(r#"{
+        "rules": {"preset": "hexagonal", "forbidden": [{"from": "GhostPkg*", "to": "Other*"}]},
+        "packages": [{"name":"p1"},{"name":"p2"},{"name":"p3"},{"name":"p4"}],
+        "classes": [
+            {"name":"ApiFacade","package":"p1","methods":[{"name":"run","calls":["AppService.run"]}]},
+            {"name":"AppService","package":"p2","methods":[{"name":"run","calls":["RepoPort.save"]}]},
+            {"name":"RepoPort","package":"p3","stereotype":"interface","methods":[{"name":"save","is_abstract":true}]},
+            {"name":"SqlRepo","package":"p4","methods":[{"name":"save","params":[{"name":"x","type":""}]}]}
+        ],
+        "relations": [
+            {"from":"ApiFacade","to":"AppService","kind":"dependency"},
+            {"from":"AppService","to":"RepoPort","kind":"dependency"},
+            {"from":"SqlRepo","to":"RepoPort","kind":"realization"}
+        ]
+    }"#).unwrap();
+    let r = compute(&d, false).health_report;
+    let unique = r.unique_signals();
+    // Detects pass-through chain and package fragmentation
+    assert!(unique.iter().any(|s| s.rule == "indirection_chain"), "expected indirection_chain: {unique:?}");
+    assert!(unique.iter().any(|s| s.rule == "over_fragmented_packages"), "expected over_fragmented_packages: {unique:?}");
+    // Tackle order: simplify comes before polish (missing_types)
+    let simplify_pos = unique.iter().position(|s| s.tier == "simplify").unwrap();
+    let polish_pos = unique.iter().position(|s| s.tier == "polish").unwrap();
+    assert!(simplify_pos < polish_pos, "simplify findings should appear before polish findings");
+    // Pattern hint attached
+    assert!(unique[simplify_pos].pattern_hint.is_some());
+    // Challenges: heavy preset on small design + unmatched custom rule + unjustified abstractions
+    assert!(r.challenges.iter().any(|c| c.kind == "preset"), "expected preset challenge: {:?}", r.challenges);
+    assert!(r.challenges.iter().any(|c| c.kind == "rule"), "expected unmatched rule challenge: {:?}", r.challenges);
+    assert!(r.challenges.iter().any(|c| c.kind == "abstraction"), "expected abstraction challenge: {:?}", r.challenges);
+}

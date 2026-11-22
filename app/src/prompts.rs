@@ -93,11 +93,52 @@ pub fn fix_issue(message: &str, rule: Option<&str>, fix_hint: Option<&str>, kind
         "Read get_design and get_metrics (get_responsibilities / get_overlap when it's about responsibilities or duplication).".into()
     };
     format!(
-        "[spide · fix issue]\nThe user wants this issue fixed:\n\"{message}\"{}{}\n{how}\n\
-         Then raise ONE propose_decision with 2–3 concrete ways to resolve it (each with ops and trade-offs against the brief). \
+        "[spide · fix issue]\nThe user wants to address this health finding:\n\"{message}\"{}{}\n{how}\n\
+         Then raise ONE propose_decision with 2–3 concrete ways to resolve it (each with ops and trade-offs against the brief):\n\
+         - Prefer SIMPLIFYING first (inlining a pass-through, deleting a speculative abstraction, or merging over-fragmented types) when that resolves the root cause.\n\
+         - When a programming pattern fits (Strategy, Polymorphism, Facade, Pure Fabrication, Dependency Inversion, Parameter Object), explain WHY it pays for its extra indirection here and when it would be overkill.\n\
+         - If the finding stems from an artificial constraint or rule that doesn't fit the system's scale, say so explicitly.\n\
          Don't pick for the user. Reply with one sentence.",
         rule.map(|r| format!("\nBroken rule: {r}")).unwrap_or_default(),
-        fix_hint.map(|f| format!("\nTypical fix: {f}")).unwrap_or_default(),
+        fix_hint.map(|f| format!("\nPattern / guidance: {f}")).unwrap_or_default(),
+    )
+}
+
+pub fn challenge_assumptions(d: &Design, r: &spide_core::health::HealthReport) -> String {
+    let challenges = if r.challenges.is_empty() {
+        "No automated challenge flags triggered; inspect the brief, architecture preset, and abstractions yourself.".to_string()
+    } else {
+        r.challenges
+            .iter()
+            .map(|c| format!("- [{}] {}: {} ({})", c.kind, c.title, c.question, c.evidence))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let top_findings: String = r
+        .unique_signals()
+        .into_iter()
+        .take(8)
+        .map(|s| format!("- [{} / {}] {} ({})", s.tier, s.rule, s.message, s.target))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "[spide · challenge assumptions & decomplexify]\n\
+         The user wants you to act as a sharp, pragmatic architect and CHALLENGE their current assumptions, artificial requirements/constraints, and unnecessary complexity.\n\
+         Current health: {}\n\
+         Architecture preset: {} ({} custom forbidden deps, {} forbidden types)\n\
+         Brief:\n{}\n\
+         Automated assumption challenges:\n{challenges}\n\
+         Top findings (leverage-ordered):\n{}\n\n\
+         Read get_design and get_health. Then:\n\
+         1. Question 2–3 specific assumptions, constraints, layers, or abstractions that may be adding complexity without earning their keep.\n\
+         2. If there is a concrete simplification (collapsing a pass-through layer, inlining speculative interfaces, merging fragmented packages, or splitting a root-cause hotspot), raise ONE focused propose_decision comparing the simplified design against keeping the current structure (with honest trade-offs and health impact).\n\
+         3. Keep your reply concise, direct, and grounded in the actual classes and brief.",
+        r.explain,
+        d.rules.preset.as_str(),
+        d.rules.forbidden.len(),
+        d.rules.forbidden_types.len(),
+        brief_digest(d),
+        if top_findings.is_empty() { "(none)".to_string() } else { top_findings },
     )
 }
 

@@ -12,6 +12,7 @@ pub mod decisions;
 pub mod draft_recovery;
 pub mod export;
 pub mod export_jobs;
+pub mod health;
 pub mod help;
 pub mod hover_card;
 pub mod integrations;

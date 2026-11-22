@@ -52,6 +52,12 @@ pub fn static_scene(m: &EguiMeasure, classes: &[Class], design: &Design, highlig
 
 pub fn impact_line(ui: &mut Ui, impact: &Impact, open: &mut bool, expandable: bool) {
     let mut bits: Vec<(String, Color32)> = vec![];
+    if let (Some(b), Some(a)) = (impact.health_before, impact.health_after) {
+        let d = a as i16 - b as i16;
+        if d != 0 {
+            bits.push((format!("health {b}→{a} ({}{d})", if d > 0 { "+" } else { "" }), if d > 0 { css::GOOD } else { css::BAD }));
+        }
+    }
     if !impact.added.is_empty() {
         bits.push((format!("+{}", impact.added.len()), css::PRO));
     }
@@ -121,6 +127,20 @@ pub fn impact_details(ui: &mut Ui, impact: &Impact) {
     list(ui, "added", &impact.added, css::PRO);
     list(ui, "changed", &impact.changed, css::WARN);
     list(ui, "removed", &impact.removed, css::CON);
+    if !impact.dimension_deltas.is_empty() {
+        ui.add_space(4.0);
+        widgets::section(ui, "health dimensions");
+        for dd in &impact.dimension_deltas {
+            let b = dd.before.map(|x| x.to_string()).unwrap_or_else(|| "—".into());
+            let a = dd.after.map(|x| x.to_string()).unwrap_or_else(|| "—".into());
+            let col = match (dd.before, dd.after) {
+                (Some(x), Some(y)) if y > x => css::GOOD,
+                (Some(x), Some(y)) if y < x => css::BAD,
+                _ => css::DIM,
+            };
+            ui.label(RichText::new(format!("{}: {b} → {a}", dd.label)).font(sans(11.5)).color(col));
+        }
+    }
     list(ui, "new issues", &impact.new_issues, css::BAD);
     list(ui, "resolved", &impact.resolved_issues, css::GOOD);
     list(ui, "rules broken", &impact.rule_breaks, css::BAD);

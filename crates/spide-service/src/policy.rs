@@ -110,7 +110,7 @@ pub fn classify(tool: &str) -> Option<Class> {
         "approve_decision" | "dismiss_decision" | "select_option" | "undo" | "redo" | "apply_patch" | "switch_branch" | "create_branch"
         | "mark_in_sync" | "cancel_job" | "revert_op" | "editor_handoff" | "reject_patch" | "apply_ops" | "prune" | "restore" | "set_mode" | "export" => Apply,
         "run_check" | "analyze" => Execute,
-        "set_permission" | "approve_exception" | "reject_exception" | "approve_command" | "trust_project" | "set_rules" => Owner,
+        "set_permission" | "create_exception" | "approve_exception" | "reject_exception" | "approve_command" | "trust_project" | "set_rules" => Owner,
         _ => return None,
     })
 }

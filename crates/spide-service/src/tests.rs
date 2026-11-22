@@ -233,12 +233,15 @@ fn score_free_evidence_and_exception_flow_respects_policy() {
     }
     let read = |name| serde_json::from_str::<Value>(&s.call_tool(name, &json!({}), "agent").unwrap()).unwrap();
     let before = read("get_health");
-    assert_eq!(before["version"], "evidence-1");
+    assert_eq!(before["version"], "health-2");
     assert!(!before["gaps"].as_array().unwrap().is_empty());
-    for key in ["score", "measured", "assisted", "dimensions", "coverage"] { assert!(before.get(key).is_none()); }
+    assert!(before["score"].as_u64().is_some());
+    assert_eq!(before["dimensions"].as_array().unwrap().len(), 6);
+    for key in ["measured", "assisted", "coverage"] { assert!(before.get(key).is_none()); }
     let metrics = read("get_metrics");
     for key in ["health", "legacy_health", "principles"] { assert!(metrics.get(key).is_none()); }
-    // exceptions: the agent proposes, only the owner approves
+    // exceptions: the agent proposes, only the owner approves or creates directly
+    assert!(s.call_tool("create_exception", &json!({"rule":"cycle","scope":"Order","reason":"direct agent attempt"}), "agent").unwrap_err().contains("owner-only"));
     let x: Value = serde_json::from_str(&s.call_tool("propose_exception", &json!({"rule":"cycle","scope":"Order","reason":"aggregate back-reference by design"}), "agent").unwrap()).unwrap();
     let xid = x["exception"].as_str().unwrap();
     assert!(s.call_tool("approve_exception", &json!({"id":xid}), "agent").unwrap_err().contains("owner-only"));

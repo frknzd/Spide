@@ -181,7 +181,8 @@ impl Family {
 
 fn family_of(kind: &str) -> Option<Family> {
     Some(match kind {
-        "long_method" | "long_params" | "type_switch" => Family::Complexity,
+        "long_method" | "long_params" | "type_switch" | "instanceof" | "complex_function" | "deep_nesting" | "long_function" | "many_params" | "evidence:complexity" => Family::Complexity,
+        "private_documentation" => Family::Documentation,
         "duplication" => Family::Duplication,
         "misplaced_responsibility" | "concept_elsewhere" | "feature_envy" | "creator" => Family::Responsibility,
         "ui_bypasses_controller" | "layer" | "module_boundary" | "forbidden_dep" | "forbidden_type" => Family::Architecture,
@@ -189,6 +190,7 @@ fn family_of(kind: &str) -> Option<Family> {
         "exposed_state" => Family::Encapsulation,
         "narrowed_visibility" | "inherited_repeated" => Family::Inheritance,
         "missing_types" => Family::Uml,
+        k if k.starts_with("evidence:") => Family::Complexity,
         _ => return None,
     })
 }
@@ -217,42 +219,96 @@ pub type Members = HashMap<String, HashMap<String, MemberDiagnosis>>;
 
 /// class → `attribute:name` / `method:name` → findings that explicitly target that member.
 /// Class-only findings are never spread to rows.
+/// Uses `health_report.signals` when computed (respecting language profiles and approved
+/// exceptions), falling back to raw `m.issues` for bare `Metrics` constructed in unit tests.
 pub fn member_diagnostics(m: Option<&Metrics>, classes: &[Class]) -> Members {
     let mut out: Members = HashMap::new();
     let Some(m) = m else { return out };
     let by_name: HashMap<&str, &Class> = classes.iter().map(|c| (c.name.as_str(), c)).collect();
+    let insert = |out: &mut Members, cls: &str, c: &Class, raw: &str, rule: &str, default_family: Family, issue: MemberIssue| {
+        let name = if c.methods.iter().any(|m| m.name == raw) || c.attributes.iter().any(|a| a.name == raw) {
+            raw
+        } else {
+            raw.strip_suffix("()").unwrap_or(raw)
+        };
+        let attr = c.attributes.iter().any(|a| a.name == name);
+        let meth = c.methods.iter().any(|x| x.name == name);
+        let kind = match (attr, meth) {
+            (true, false) => "attribute",
+            (false, true) => "method",
+            (true, true) => {
+                if matches!(rule, "exposed_state" | "inherited_repeated") {
+                    "attribute"
+                } else if family_of(rule).is_some() {
+                    "method"
+                } else {
+                    return;
+                }
+            }
+            _ => return,
+        };
+        let family = family_of(rule).unwrap_or(default_family);
+        let mut issue = issue;
+        issue.family = family;
+        let per = out.entry(cls.to_string()).or_default();
+        let d = per.entry(format!("{kind}:{name}")).or_insert(MemberDiagnosis { issues: vec![], severity: 0.0, family });
+        if d.issues.iter().any(|x| x.kind == issue.kind && x.message == issue.message) {
+            return;
+        }
+        d.issues.push(issue);
+        d.issues.sort_by(|a, b| (b.severity * b.confidence).total_cmp(&(a.severity * a.confidence)));
+        d.severity = d.issues[0].severity * d.issues[0].confidence;
+        d.family = d.issues[0].family;
+    };
+
+    if !m.health_report.version.is_empty() {
+        for signal in &m.health_report.signals {
+            let Some((cls, c)) = by_name
+                .iter()
+                .filter(|(name, _)| signal.target.starts_with(&format!("{name}.")))
+                .max_by_key(|(name, _)| name.len())
+            else {
+                continue;
+            };
+            let raw = &signal.target[cls.len() + 1..];
+            let default_family = match signal.dimension.as_str() {
+                "modularity" => Family::Coupling,
+                "architecture" => Family::Architecture,
+                "extensibility" => Family::Inheritance,
+                "simplicity" => Family::Complexity,
+                "implementation_quality" => Family::Documentation,
+                _ => Family::Responsibility,
+            };
+            let issue = MemberIssue {
+                kind: signal.rule.clone(),
+                family: default_family,
+                severity: signal.severity,
+                confidence: signal.confidence,
+                basis: if signal.provenance.is_empty() { "structure".into() } else { signal.provenance.clone() },
+                message: signal.message.clone(),
+                explain: if signal.explain.is_empty() { signal.message.clone() } else { signal.explain.clone() },
+                fix_hint: signal.fix_hint.clone(),
+                source: if signal.source.is_empty() { "Design health".into() } else { signal.source.clone() },
+            };
+            insert(&mut out, cls, c, raw, &signal.rule, default_family, issue);
+        }
+        return out;
+    }
+
     for i in &m.issues {
         let targets: BTreeSet<&String> = i.targets.iter().collect();
         for t in targets {
             let Some((cls, c)) = by_name.iter().filter(|(name, _)| t.starts_with(&format!("{name}."))).max_by_key(|(name, _)| name.len()) else { continue };
-            let cls = *cls;
             let raw = &t[cls.len() + 1..];
-            let name = if c.methods.iter().any(|m| m.name == raw) || c.attributes.iter().any(|a| a.name == raw) { raw } else { raw.strip_suffix("()").unwrap_or(raw) };
-            let attr = c.attributes.iter().any(|a| a.name == name);
-            let meth = c.methods.iter().any(|x| x.name == name);
-            let kind = match (attr, meth) {
-                (true, false) => "attribute",
-                (false, true) => "method",
-                (true, true) => {
-                    if matches!(i.kind, "exposed_state" | "inherited_repeated") {
-                        "attribute"
-                    } else if family_of(i.kind).is_some() {
-                        "method"
-                    } else {
-                        continue;
-                    }
-                }
-                _ => continue,
-            };
-            let family = family_of(i.kind).unwrap_or(match i.principle {
+            let default_family = match i.principle {
                 "coupling" => Family::Coupling,
                 "architecture" => Family::Architecture,
                 "uml" => Family::Uml,
                 _ => Family::Responsibility,
-            });
+            };
             let issue = MemberIssue {
                 kind: i.kind.to_string(),
-                family,
+                family: default_family,
                 severity: i.severity,
                 confidence: i.confidence,
                 basis: if i.basis.is_empty() { "structure".into() } else { i.basis.clone() },
@@ -261,32 +317,8 @@ pub fn member_diagnostics(m: Option<&Metrics>, classes: &[Class]) -> Members {
                 fix_hint: i.fix_hint.clone(),
                 source: i.source.to_string(),
             };
-            let per = out.entry(cls.to_string()).or_default();
-            let d = per.entry(format!("{kind}:{name}")).or_insert(MemberDiagnosis { issues: vec![], severity: 0.0, family });
-            if d.issues.iter().any(|x| x.kind == issue.kind && x.message == issue.message) {
-                continue;
-            }
-            d.severity = d.severity.max(issue.severity * issue.confidence);
-            d.issues.push(issue);
-            d.issues.sort_by(|a, b| (b.severity * b.confidence).total_cmp(&(a.severity * a.confidence)));
-            d.family = d.issues[0].family;
+            insert(&mut out, cls, c, raw, i.kind, default_family, issue);
         }
-    }
-    // These source checks are native health signals rather than legacy issues.
-    for signal in m.health_report.signals.iter().filter(|s| matches!(s.rule.as_str(), "instanceof" | "private_documentation")) {
-        let Some(c) = by_name.get(signal.entity.as_str()) else { continue };
-        let Some(name) = signal.target.strip_prefix(&format!("{}.", c.name)) else { continue };
-        if !c.methods.iter().any(|m| m.name == name) { continue; }
-        let family = if signal.rule == "instanceof" { Family::Complexity } else { Family::Documentation };
-        let d = out.entry(c.name.clone()).or_default().entry(format!("method:{name}")).or_insert(MemberDiagnosis { issues: vec![], severity: 0.0, family });
-        d.issues.push(MemberIssue {
-            kind: signal.rule.clone(), family, severity: signal.severity, confidence: signal.confidence,
-            basis: signal.provenance.clone(), message: signal.message.clone(), explain: signal.message.clone(),
-            fix_hint: signal.fix_hint.clone(), source: "Source health check".into(),
-        });
-        d.issues.sort_by(|a,b| (b.severity*b.confidence).total_cmp(&(a.severity*a.confidence)));
-        d.severity = d.issues[0].severity * d.issues[0].confidence;
-        d.family = d.issues[0].family;
     }
     out
 }

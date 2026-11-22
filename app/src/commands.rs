@@ -240,6 +240,14 @@ pub fn fix_issue(
     pi.prompt(generation, &st, msg, Some(format!("🔧 {message}")))
 }
 
+/// "challenge assumptions" from the Design Health Inspector.
+pub fn challenge_assumptions(st: &AppState, pi: &PiBridge) -> R {
+    let generation = pi.ticket();
+    let snap = st.snapshot();
+    let msg = prompts::challenge_assumptions(&snap.view, &snap.metrics.health_report);
+    pi.prompt(generation, &st, msg, Some("? challenge assumptions & simplify".into()))
+}
+
 pub fn set_partner(st: &AppState, mode: String) -> R {
     let m = PartnerMode::parse(&mode).ok_or_else(|| format!("unknown mode {mode} (examiner | socratic | devils_advocate | sketch)"))?;
     st.lock_writable()?.store.set_partner(m);

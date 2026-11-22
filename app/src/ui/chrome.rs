@@ -4,7 +4,7 @@
 use super::theme::{bold, css, hex, mono, sans};
 use super::widgets::{self, button, toggle_button};
 use egui::{Align2, Color32, CornerRadius, Margin, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
-use spide_core::metrics::{Issue, Metrics};
+use spide_core::metrics::Metrics;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Tab {
@@ -86,166 +86,46 @@ pub fn stale_label(t: Tab, stale: bool) -> String {
     }
 }
 
-fn issue_color(kind: &str) -> Color32 {
-    match kind {
-        "cycle" | "god" => css::BAD,
-        "layer" | "cohesion" | "coupling" | "forbidden_dep" | "module_boundary" | "forbidden_type" | "misplaced_responsibility" | "duplication" | "fat_controller" | "ui_bypasses_controller" | "concept_elsewhere" => css::WARN,
-        "orphan" => css::FAINT,
-        "disagreement" => css::ACCENT,
-        _ => css::DIM,
-    }
-}
-
-fn confidence_text(i: &Issue) -> Option<String> {
-    if i.basis == "structure" || i.basis.is_empty() {
-        return None;
-    }
-    Some(format!("{}% · {}", (i.confidence * 100.0).round(), i.basis))
-}
-
-pub enum HealthAction {
-    Fix(usize),
-    Focus(usize),
-    FocusTarget(String),
-    /// Owner decision on a proposed health exception.
-    Exception(String, bool),
-}
-
-#[derive(Default)]
-pub struct HealthState {
-    pub open: bool,
-    pub pinned: bool,
-    close_at: Option<f64>,
-}
-
-/// Neutral entry point for findings and unavailable evidence.
-pub fn evidence_button(ui: &mut Ui, st: &mut HealthState, m: &Metrics, actions: &mut Vec<HealthAction>) {
-    let now = ui.input(|i| i.time);
-    let trigger = ui.button(RichText::new("Evidence").font(bold(11.5)).color(css::TEXT));
-    if trigger.clicked() {
-        if st.pinned {
-            st.open = false;
-            st.pinned = false;
-        } else {
-            st.open = true;
-            st.pinned = true;
-        }
-    }
-    if trigger.hovered() {
-        st.open = true;
-        st.close_at = None;
-    }
-    if !st.open {
-        return;
-    }
-    let anchor = trigger.rect.left_bottom();
-    let max_w = (ui.clip_rect().right() - anchor.x - 10.0).clamp(280.0, 470.0);
-    let area = egui::Area::new(ui.scope_id().with("health-pop")).order(egui::Order::Foreground).fixed_pos(anchor + Vec2::new(0.0, 8.0)).show(ui.ctx(), |ui| {
-        widgets::panel_frame().inner_margin(Margin::symmetric(16, 14)).show(ui, |ui| {
-            ui.set_width(max_w - 32.0);
-            ui.set_max_height(ui.ctx().content_rect().height() * 0.7);
-            evidence_popover(ui, m, actions);
-        });
-    });
-    // close: click outside, Escape, or leaving (unless pinned)
-    let pop = area.response.rect;
-    let over = ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| pop.expand(4.0).contains(p) || trigger.rect.expand(4.0).contains(p) || Rect::from_min_max(trigger.rect.left_bottom(), pop.right_top()).contains(p));
-    let clicked_outside = ui.input(|i| i.pointer.any_pressed()) && !over;
-    if clicked_outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-        st.open = false;
-        st.pinned = false;
-    } else if !over && !st.pinned {
-        let at = *st.close_at.get_or_insert(now + 0.28);
-        if now >= at {
-            st.open = false;
-            st.close_at = None;
-        } else {
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
-        }
-    } else {
-        st.close_at = None;
-    }
-}
-
-fn evidence_popover(ui: &mut Ui, m: &Metrics, actions: &mut Vec<HealthAction>) {
+/// Toolbar trigger pill for the dedicated Design Health Inspector.
+/// Displays the overall score (0–100 or "—"), status color dot, and active finding count.
+pub fn health_button(ui: &mut Ui, open: bool, m: &Metrics) -> bool {
     let r = &m.health_report;
-    widgets::section(ui, "Design evidence");
-    egui::ScrollArea::vertical().max_height(ui.ctx().content_rect().height() * 0.55).auto_shrink([false, true]).show(ui, |ui| {
-        if !r.gaps.is_empty() {
-            widgets::section(ui, "Evidence gaps");
-            for gap in &r.gaps { ui.label(gap); }
-        }
-        if !r.runs.is_empty() {
-            widgets::section(ui, "Analysis runs");
-            for run in &r.runs {
-                ui.label(format!("{} ({}) · {}", run.tool, run.language, run.status))
-                    .on_hover_text(run.detail.as_deref().unwrap_or(""));
-            }
-        }
-        widgets::section(ui, "Findings");
-        if r.signals.is_empty() { widgets::faint(ui, "No findings from available checks. This does not establish design quality."); }
-        for signal in &r.signals {
-            if let Some((idx, issue)) = m.issues.iter().enumerate().find(|(_, i)| i.kind == signal.rule && i.message == signal.message && i.targets.contains(&signal.target)) {
-                if issue.targets.first() == Some(&signal.target) { issue_row(ui, idx, issue, actions); }
-            } else {
-                ui.horizontal_wrapped(|ui| {
-                    widgets::faint(ui, &signal.provenance);
-                    if widgets::link_sized(ui, &signal.message, 12.0).on_hover_text(signal.fix_hint.as_deref().unwrap_or(&signal.target)).clicked() {
-                        actions.push(HealthAction::FocusTarget(signal.target.clone()));
-                    }
-                });
-            }
-        }
-        if !r.exceptions.is_empty() { widgets::section(ui, "Exceptions"); }
-        for x in &r.exceptions {
-            ui.horizontal_wrapped(|ui| {
-                let status = if x.active(spide_core::store::now_ms()) { "Approved" } else if x.approved { "Expired" } else { "Proposed" };
-                ui.label(format!("{status}: {} on {} — {}", x.rule, x.scope, x.reason));
-                if !x.approved {
-                    if widgets::link_sized(ui, "approve", 11.0).clicked() { actions.push(HealthAction::Exception(x.id.clone(), true)); }
-                    if widgets::link_sized(ui, "reject", 11.0).clicked() { actions.push(HealthAction::Exception(x.id.clone(), false)); }
+    let sc_col = super::health::score_color(r.score);
+    let active = r.unique_signals().len();
+    let score_text = r.score.map(|s| s.to_string()).unwrap_or_else(|| "—".into());
+    let fill = if open { css::ACCENT_SOFT } else { css::SURFACE };
+    let border = if open {
+        Color32::from_rgba_unmultiplied(138, 169, 255, 160)
+    } else {
+        css::LINE
+    };
+    let frame = egui::Frame::new()
+        .fill(fill)
+        .stroke(Stroke::new(1.0, border))
+        .corner_radius(15)
+        .inner_margin(Margin::symmetric(10, 0))
+        .show(ui, |ui| {
+            ui.set_height(30.0);
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let (dot, _) = ui.allocate_exact_size(Vec2::splat(7.0), Sense::hover());
+                ui.painter().circle_filled(dot.center(), 3.5, sc_col);
+                ui.label(RichText::new("Health").font(sans(11.5)).color(if open { css::TEXT } else { css::DIM }));
+                ui.label(RichText::new(&score_text).font(bold(12.0)).color(sc_col));
+                if active > 0 {
+                    ui.label(RichText::new(format!("· {active}")).font(sans(11.0)).color(css::FAINT));
                 }
             });
-        }
-        if !r.suppressed.is_empty() { widgets::section(ui, "Suppressed findings"); }
-        for signal in &r.suppressed {
-            widgets::faint(ui, format!("{} · {}", signal.message, signal.suppressed_by.as_deref().unwrap_or("")));
-        }
-    });
-}
-
-fn issue_row(ui: &mut Ui, idx: usize, i: &Issue, actions: &mut Vec<HealthAction>) {
-    let tip = [Some(i.explain.clone()), i.fix_hint.as_ref().map(|f| format!("fix: {f}"))].into_iter().flatten().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n");
-    ui.add_space(5.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        let kc = issue_color(i.kind);
-        egui::Frame::new().stroke(Stroke::new(1.0, kc)).corner_radius(4).inner_margin(Margin::symmetric(5, 0)).show(ui, |ui| {
-            ui.label(RichText::new(i.kind.replace('_', " ").to_uppercase()).font(sans(10.0)).color(kc));
         });
-        let r = ui.add(egui::Label::new(RichText::new(&i.message).font(sans(12.5)).color(css::TEXT)).sense(Sense::click()).wrap());
-        if r.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        let r = if tip.is_empty() { r } else { r.on_hover_text(tip) };
-        if r.clicked() {
-            actions.push(HealthAction::Focus(idx));
-        }
-    });
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 10.0;
-        if !i.source.is_empty() {
-            ui.label(RichText::new(i.source).font(sans(10.5)).color(css::FAINT));
-        }
-        if let Some(c) = confidence_text(i) {
-            ui.label(RichText::new(c).font(sans(10.5)).color(css::FAINT)).on_hover_text("how sure Spide is (agent agreement raises it)");
-        }
-        if widgets::link_sized(ui, "fix with agent", 11.0).clicked() {
-            actions.push(HealthAction::Fix(idx));
-        }
-    });
-    ui.add_space(3.0);
-    widgets::hline(ui);
+    let resp = frame.response.interact(Sense::click()).on_hover_text(format!(
+        "Design Health Inspector · {}\nClick to {}",
+        r.explain,
+        if open { "close" } else { "inspect findings, dimensions, evidence, and exceptions" }
+    ));
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.clicked()
 }
 
 /// Detail slider pill (`/detail 0–4`); returns the new level.

@@ -3,10 +3,11 @@
 
 use super::brief::{self, BriefOut, BriefUi};
 use super::canvas::{CanvasInput, CanvasOut, ClassCanvas};
-use super::chrome::{self, HealthAction, HealthState, Tab, Toast};
+use super::chrome::{self, Tab, Toast};
 use super::decisions::{self, CompareCol, CompareUi, DecisionUi};
 use super::export::{self, DialogOut, ExportDialog, ExportSettings, ExportState, Format};
 use super::export_jobs::{self, BatchPhase, BatchRun, BatchSettings, ExportView, JobResult};
+use super::health::{self, HealthInspectorAction, HealthUi};
 use super::hover_card::{self, CardAction, CardCtx};
 use super::overlays::{self, InlineAction, InlineEdit, InlineKind, Palette, PaletteAction, PruneAction, PruneState};
 use super::paint::EguiMeasure;
@@ -84,7 +85,7 @@ pub struct SpideApp {
     toast_seq: u64,
     pub hover: HoverStore,
     card_selected: Option<String>,
-    health: HealthState,
+    pub health: HealthUi,
     pub workspace: WorkspaceSettings,
     drawer: bool,
     dragging_sep: Option<(bool, f32, f32)>,
@@ -356,7 +357,7 @@ impl SpideApp {
             toast_seq: 0,
             hover: HoverStore::default(),
             card_selected: None,
-            health: HealthState::default(),
+            health: HealthUi::default(),
             workspace: WorkspaceSettings::default(),
             drawer: false,
             dragging_sep: None,
@@ -1273,30 +1274,40 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         self.run(move |s, _| crate::commands::apply_user_ops(s, vec![op]));
     }
 
-    fn focus_issue(&mut self, idx: usize) {
+    fn focus_signal(&mut self, s: &spide_core::health::Signal) {
         let Some(snap) = self.snap.clone() else { return };
-        let Some(i) = snap.metrics.issues.get(idx) else { return };
-        let Some(t) = i.targets.first().cloned() else { return };
         let view = &snap.view;
-        let cls = view.classes.iter().find(|c| c.name == t).map(|c| c.name.clone()).or_else(|| t.contains("->").then(|| t.split("->").next().unwrap().to_string()));
+        let t = s.targets.first().cloned().unwrap_or_else(|| s.target.clone());
+        let is_seq = t.starts_with("sequence:");
+        let entity = s.entity.clone();
+        let cls = view
+            .classes
+            .iter()
+            .find(|c| c.name == entity || c.name == t)
+            .map(|c| c.name.clone())
+            .or_else(|| t.split('.').next().filter(|n| view.classes.iter().any(|c| c.name == *n)).map(str::to_string))
+            .or_else(|| t.contains("->").then(|| t.split("->").next().unwrap().to_string()));
         let go = move |app: &mut SpideApp| {
             let snap = app.snap.clone().unwrap();
             let view = &snap.view;
             if let Some(c) = cls.as_ref().filter(|c| view.classes.iter().any(|x| &x.name == *c)) {
                 app.focus_canvas(Some(c));
-            } else if view.packages.iter().any(|p| p.name == t) {
+            } else if view.packages.iter().any(|p| p.name == t || p.name == entity) {
+                let pkg = if view.packages.iter().any(|p| p.name == t) { t.clone() } else { entity.clone() };
                 let now = app.now();
                 if let Some(cv) = app.class_canvas.as_mut() {
-                    cv.focus_package(&view.classes, Some(&snap.metrics), &t, now);
+                    cv.focus_package(&view.classes, Some(&snap.metrics), &pkg, now);
                 }
-            } else if let Some(s) = t.strip_prefix("sequence:") {
-                app.scenario = Some(s.to_string());
+            } else if let Some(seq) = t.strip_prefix("sequence:") {
+                app.scenario = Some(seq.to_string());
                 app.tab = Tab::Sequence;
-            } else if view.containers.iter().any(|k| k.name == t) {
+            } else if view.containers.iter().any(|k| k.name == t || k.name == entity) {
                 app.tab = Tab::System;
+            } else {
+                app.reveal(&t);
             }
         };
-        if self.tab != Tab::Class && !i.targets[0].starts_with("sequence:") {
+        if self.tab != Tab::Class && !is_seq {
             self.tab = Tab::Class;
             self.later(0.3, go);
         } else {
@@ -1304,11 +1315,10 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         }
     }
 
-    fn fix_issue(&mut self, idx: usize) {
-        let Some(snap) = self.snap.clone() else { return };
-        let Some(i) = snap.metrics.issues.get(idx) else { return };
-        let (message, rule, fix, kind, targets) = (i.message.clone(), i.rule.clone(), i.fix_hint.clone(), i.kind.to_string(), i.targets.clone());
-        self.run(move |s, pi| crate::commands::fix_issue(s, pi, message, rule, fix, Some(kind), Some(targets)));
+    fn fix_signal(&mut self, s: &spide_core::health::Signal) {
+        let targets = if s.targets.is_empty() { vec![s.target.clone()] } else { s.targets.clone() };
+        let (message, rule, fix, kind) = (s.message.clone(), s.rule_label.clone(), s.fix_hint.clone(), s.rule.clone());
+        self.run(move |st, pi| crate::commands::fix_issue(st, pi, message, rule, fix, Some(kind), Some(targets)));
     }
 
     // ------------------------------------------------------------------ export
@@ -1980,7 +1990,18 @@ The original file is not changed.", design.name, design.live_classes().count(), 
             "/strict" => self.run_ok(|s, _| crate::commands::set_examiner(s, true), |app| app.toast("info", "examiner: strict — no overruling")),
             "/lenient" => self.run_ok(|s, _| crate::commands::set_examiner(s, false), |app| app.toast("info", "examiner: lenient — you may overrule")),
             "/history" => self.toast("info", "Scroll pi's native transcript in the terminal pane."),
-            "/brief" => self.brief = !self.brief,
+            "/brief" => {
+                self.brief = !self.brief;
+                if self.brief {
+                    self.health.open = false;
+                }
+            }
+            "/health" => {
+                self.health.open = !self.health.open;
+                if self.health.open {
+                    self.brief = false;
+                }
+            }
             "/timeline" => {
                 self.tab = Tab::Class;
                 self.timeline = !self.timeline;
@@ -2286,6 +2307,8 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         } else if self.stress.is_some() || self.shown_decision.is_some() {
             self.stress = None;
             self.shown_decision = None;
+        } else if self.health.open {
+            self.health.open = false;
         } else if self.brief {
             self.brief = false;
         } else {
@@ -3126,7 +3149,12 @@ The original file is not changed.", design.name, design.live_classes().count(), 
             ui.ctx().request_repaint();
         }
         match action {
-            Some(chrome::Action::Brief) => self.brief = !self.brief,
+            Some(chrome::Action::Brief) => {
+                self.brief = !self.brief;
+                if self.brief {
+                    self.health.open = false;
+                }
+            }
             Some(chrome::Action::Timeline) => {
                 self.tab = Tab::Class;
                 self.timeline = !self.timeline;
@@ -3140,11 +3168,15 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         }
         // toolbar
         let tb = Rect::from_min_size(Pos2::new(r.left() + 10.0, r.top() + 82.0), Vec2::new(r.width() - 20.0, 36.0));
-        let mut health_actions = vec![];
         ui.scope_builder(egui::UiBuilder::new().max_rect(tb), |ui| {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                chrome::evidence_button(ui, &mut self.health, metrics, &mut health_actions);
+                if chrome::health_button(ui, self.health.open, metrics) {
+                    self.health.open = !self.health.open;
+                    if self.health.open {
+                        self.brief = false;
+                    }
+                }
                 if matches!(self.tab, Tab::Class | Tab::Domain) {
                     let level = view.settings.detail_for(self.tab.key());
                     if let Some(l) = chrome::detail_slider(ui, level, self.preview.is_some()) {
@@ -3189,20 +3221,6 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                 }
             });
         });
-        for a in health_actions {
-            match a {
-                HealthAction::Fix(i) => self.fix_issue(i),
-                HealthAction::Focus(i) => self.focus_issue(i),
-                HealthAction::FocusTarget(target) => self.reveal(&target),
-                HealthAction::Exception(id, approve) => {
-                    let tool = if approve { "approve_exception" } else { "reject_exception" };
-                    self.backend.call(
-                        move |st, _| crate::service::get(st).ok_or("service not ready".to_string())?.call_tool(tool, &json!({"id": id}), "user"),
-                        |app, r| if let Err(e) = r { app.toast("error", e) },
-                    );
-                }
-            }
-        }
         // concerns lens legend
         if self.lens == Lens::Concerns {
             egui::Area::new(egui::Id::unique("lens-legend")).order(egui::Order::Middle).pivot(egui::Align2::LEFT_BOTTOM).fixed_pos(Pos2::new(r.left() + 16.0, r.bottom() - 16.0)).show(&ctx, |ui| {
@@ -3236,6 +3254,59 @@ The original file is not changed.", design.name, design.live_classes().count(), 
             }
         }
         // side panels
+        if self.health.open {
+            let mut health_actions = vec![];
+            health::panel(&ctx, r, &mut self.health, view, metrics, &mut health_actions);
+            for a in health_actions {
+                match a {
+                    HealthInspectorAction::Close => self.health.open = false,
+                    HealthInspectorAction::FocusSignal(s) => self.focus_signal(&s),
+                    HealthInspectorAction::FocusTarget(t) => self.reveal(&t),
+                    HealthInspectorAction::FixSignal(s) => self.fix_signal(&s),
+                    HealthInspectorAction::ChallengeAssumptions => {
+                        self.run(|st, pi| crate::commands::challenge_assumptions(st, pi));
+                    }
+                    HealthInspectorAction::CreateException { rule, scope, reason, review_when } => {
+                        self.backend.call(
+                            move |st, _| {
+                                crate::service::get(st)
+                                    .ok_or("service not ready".to_string())?
+                                    .call_tool("create_exception", &json!({"rule": rule, "scope": scope, "reason": reason, "review_when": review_when}), "user")
+                            },
+                            |app, r| match r {
+                                Ok(_) => app.toast("info", "Health exception saved"),
+                                Err(e) => app.toast("error", e),
+                            },
+                        );
+                    }
+                    HealthInspectorAction::DecideException(id, approve) => {
+                        let tool = if approve { "approve_exception" } else { "reject_exception" };
+                        self.backend.call(
+                            move |st, _| crate::service::get(st).ok_or("service not ready".to_string())?.call_tool(tool, &json!({"id": id}), "user"),
+                            |app, r| if let Err(e) = r { app.toast("error", e) },
+                        );
+                    }
+                    HealthInspectorAction::RunAnalysis => {
+                        self.backend.call(
+                            |st, _| crate::service::get(st).ok_or("service not ready".to_string())?.call_tool("analyze", &json!({}), "user"),
+                            |app, r| match r {
+                                Ok(_) => app.toast("info", "Analysis started"),
+                                Err(e) => app.toast("error", e),
+                            },
+                        );
+                    }
+                    HealthInspectorAction::OpenBrief => {
+                        self.health.open = false;
+                        self.brief = true;
+                    }
+                    HealthInspectorAction::TogglePrivateDocs(on) => {
+                        let mut rules = view.rules.clone();
+                        rules.private_documentation = on;
+                        self.run_ok(move |s, _| crate::commands::set_rules(s, rules), |app| app.toast("info", "Project health check updated"));
+                    }
+                }
+            }
+        }
         if self.brief {
             match brief::panel(&ctx, r, &mut self.brief_ui, view, metrics, self.stress.as_deref(), &self.backend) {
                 Some(BriefOut::Close) => self.brief = false,

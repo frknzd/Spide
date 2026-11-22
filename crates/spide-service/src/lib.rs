@@ -316,7 +316,7 @@ impl Service {
             json!({"name":"propose_exception","description":"Propose that a health rule doesn't apply somewhere (rule = signal rule id, scope = entity or prefix*), with reason, evidence, optional expires_at (ms) / review_when. Only the owner can approve; suppressed findings stay visible.",
                 "inputSchema":{"type":"object","properties":{"rule":{"type":"string"},"scope":{"type":"string"},"reason":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}},"expires_at":{"type":"integer"},"review_when":{"type":"string"}},"required":["rule","scope","reason"]}}),
             json!({"name":"list_exceptions","description":"Health exceptions (proposed and approved).","inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true}}),
-            json!({"name":"get_health","description":"Versioned design/code evidence: findings and provenance, tool status, gaps, and exceptions. No design grade. scope=design|code (default: design, or code when the design is empty).",
+            json!({"name":"get_health","description":"Versioned design/code health report (health-2): overall score (0–100) with evidence confidence, six-dimension breakdown, brief-force alignment, unified findings and provenance, tool status, gaps, and exceptions. scope=design|code (default: design, or code when the design is empty).",
                 "inputSchema":{"type":"object","properties":{"scope":{"type":"string","enum":["design","code"]}}},"annotations":{"readOnlyHint":true}}),
             json!({"name":"doctor","description":"Per language: parser support and limits, the language server and linters Spide would use (available/missing, with install hints), build configs that matter (compile_commands.json, tsconfig.json…), and whether the workspace is trusted to run them.",
                 "inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true}}),
@@ -668,6 +668,18 @@ impl Service {
                 let id = self.with_store(|st| spide_core::health::propose_exception(&mut st.design, x, "agent"))?;
                 self.commit("agent")?;
                 Ok(ToolResult::text(json!({"exception": id, "state": "awaiting the owner's approval"}).to_string()))
+            }
+            "create_exception" => {
+                let x = spide_core::health::HealthException {
+                    rule: s("rule"), scope: s("scope"), reason: s("reason"),
+                    evidence: args.get("evidence").and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+                    expires_at: args.get("expires_at").and_then(Value::as_u64),
+                    review_when: args.get("review_when").and_then(Value::as_str).map(str::to_string),
+                    ..Default::default()
+                };
+                let id = self.with_store(|st| spide_core::health::add_exception(&mut st.design, x, spide_core::store::now_ms()))?;
+                self.commit("user")?;
+                Ok(ToolResult::text(json!({"exception": id, "state": "approved"}).to_string()))
             }
             "approve_exception" | "reject_exception" => {
                 let approve = name == "approve_exception";

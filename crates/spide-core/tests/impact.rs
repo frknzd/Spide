@@ -25,10 +25,13 @@ fn cycle_introduced_and_rule_broken() {
     assert_eq!(i.added, vec!["Line —association→ Order".to_string()]);
     assert!(i.new_issues.iter().any(|m| m.contains("cycle")), "{:?}", i.new_issues);
     assert!(i.rule_breaks.is_empty());
+    assert!(i.health_after.unwrap() < i.health_before.unwrap(), "cycle should lower health score");
+    assert!(i.summary().contains("health "));
 
     let i = impact_of_ops(&b, &ops(r#"[{"op":"add_relation","from":"Order","to":"OrderView","kind":"dependency"}]"#)).unwrap();
     assert_eq!(i.rule_breaks.len(), 1, "domain → ui breaks the clean preset");
     assert!(i.summary().contains("new rule break"));
+    assert!(i.health_after.unwrap() < i.health_before.unwrap());
 }
 
 #[test]

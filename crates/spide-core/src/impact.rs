@@ -1,5 +1,6 @@
-//! Consequences of a change: what is added/changed/removed, which findings change,
-//! which dependencies flip direction, which rules break, which scenarios are affected.
+//! Consequences of a change: what is added/changed/removed, health score and dimension deltas,
+//! which findings change (respecting exceptions), which dependencies flip direction, which rules
+//! break, and which scenarios are affected.
 
 use crate::diff::diff;
 use crate::metrics::{compute, Metrics};
@@ -20,10 +21,25 @@ pub struct ClassDelta {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default)]
+pub struct DimensionDelta {
+    pub dimension: String,
+    pub label: String,
+    pub before: Option<u8>,
+    pub after: Option<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
 pub struct Impact {
     pub added: Vec<String>,
     pub changed: Vec<String>,
     pub removed: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health_before: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health_after: Option<u8>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dimension_deltas: Vec<DimensionDelta>,
     pub new_issues: Vec<String>,
     pub resolved_issues: Vec<String>,
     /// Class dependencies whose direction reversed (`from` now depends on `to`, used to be the other way).
@@ -39,6 +55,12 @@ impl Impact {
     /// One-line summary for prompts and option cards.
     pub fn summary(&self) -> String {
         let mut parts = vec![];
+        if let (Some(b), Some(a)) = (self.health_before, self.health_after) {
+            let d = a as i16 - b as i16;
+            if d != 0 {
+                parts.push(format!("health {b} → {a} ({}{d})", if d > 0 { "+" } else { "" }));
+            }
+        }
         let n = |v: &Vec<String>, what: &str| (!v.is_empty()).then(|| format!("{} {what}", v.len()));
         parts.extend(n(&self.added, "added"));
         parts.extend(n(&self.changed, "changed"));
@@ -56,16 +78,23 @@ impl Impact {
     }
 }
 
-/// New and resolved issue messages between two metric sets.
+/// New and resolved finding messages between two metric sets, using unified `health_report`
+/// signals (deduplicated by root cause and respecting approved exceptions).
 pub fn issue_diff(before: &Metrics, after: &Metrics) -> (Vec<String>, Vec<String>) {
-    let old: BTreeSet<&str> = before.issues.iter().map(|i| i.message.as_str()).collect();
-    let new: BTreeSet<&str> = after.issues.iter().map(|i| i.message.as_str()).collect();
-    let describe = |i: &crate::metrics::Issue| {
-        if i.basis.contains("heuristic") { format!("[heuristic] {}", i.message) } else { i.message.clone() }
+    let old_sigs = before.health_report.unique_signals();
+    let new_sigs = after.health_report.unique_signals();
+    let old: BTreeSet<&str> = old_sigs.iter().map(|s| s.message.as_str()).collect();
+    let new: BTreeSet<&str> = new_sigs.iter().map(|s| s.message.as_str()).collect();
+    let describe = |s: &&crate::health::Signal| {
+        if s.provenance.contains("heuristic") {
+            format!("[heuristic] {}", s.message)
+        } else {
+            s.message.clone()
+        }
     };
     (
-        after.issues.iter().filter(|i| !old.contains(i.message.as_str())).map(describe).collect(),
-        before.issues.iter().filter(|i| !new.contains(i.message.as_str())).map(describe).collect(),
+        new_sigs.iter().filter(|s| !old.contains(s.message.as_str())).map(describe).collect(),
+        old_sigs.iter().filter(|s| !new.contains(s.message.as_str())).map(describe).collect(),
     )
 }
 
@@ -73,8 +102,18 @@ pub fn issue_diff(before: &Metrics, after: &Metrics) -> (Vec<String>, Vec<String
 pub fn finding_delta(before: &Metrics, after: &Metrics) -> String {
     let (new, resolved) = issue_diff(before, after);
     let mut parts = Vec::new();
-    if !new.is_empty() { parts.push(format!("New findings: {}.", new.join("; "))); }
-    if !resolved.is_empty() { parts.push(format!("Resolved findings: {}.", resolved.join("; "))); }
+    if let (Some(b), Some(a)) = (before.health_report.score, after.health_report.score) {
+        let d = a as i16 - b as i16;
+        if d != 0 {
+            parts.push(format!("Health: {b} → {a} ({}{d}).", if d > 0 { "+" } else { "" }));
+        }
+    }
+    if !new.is_empty() {
+        parts.push(format!("New findings: {}.", new.join("; ")));
+    }
+    if !resolved.is_empty() {
+        parts.push(format!("Resolved findings: {}.", resolved.join("; ")));
+    }
     if parts.is_empty() { "No finding changes detected by preview.".into() } else { parts.join(" ") }
 }
 
@@ -159,13 +198,33 @@ pub fn impact(before: &Design, after: &Design) -> Impact {
         }
         touched.extend(op.touched_classes());
     }
+    out.health_before = mb.health_report.score;
+    out.health_after = ma.health_report.score;
+    for da in &ma.health_report.dimensions {
+        let b = mb.health_report.dimension_score(&da.id);
+        let a = da.score;
+        if b != a {
+            out.dimension_deltas.push(DimensionDelta {
+                dimension: da.id.clone(),
+                label: da.label.clone(),
+                before: b,
+                after: a,
+            });
+        }
+    }
     let (new, resolved) = issue_diff(&mb, &ma);
-    let old_rules: BTreeSet<_> = mb.issues.iter().filter_map(|i| i.rule.as_deref().map(|r| (r, i.message.as_str()))).collect();
+    let old_rules: BTreeSet<_> = mb
+        .health_report
+        .unique_signals()
+        .into_iter()
+        .filter_map(|s| s.rule_label.as_deref().map(|r| (r, s.message.as_str())))
+        .collect();
     out.rule_breaks = ma
-        .issues
-        .iter()
-        .filter(|i| i.rule.as_deref().is_some_and(|r| !old_rules.contains(&(r, i.message.as_str()))))
-        .map(|i| i.message.clone())
+        .health_report
+        .unique_signals()
+        .into_iter()
+        .filter(|s| s.rule_label.as_deref().is_some_and(|r| !old_rules.contains(&(r, s.message.as_str()))))
+        .map(|s| s.message.clone())
         .collect();
     out.new_issues = new;
     out.resolved_issues = resolved;

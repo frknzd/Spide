@@ -451,7 +451,20 @@ fn element_body(ui: &mut Ui, key: &str, cx: &CardCtx, pinned: bool, selected: &O
                     let (r, _) = ui.allocate_exact_size(egui::vec2(26.0, 6.0), egui::Sense::hover());
                     ui.painter().rect_filled(r, 3.0, c32(heat_color(m.heat)));
                 });
-                if !m.issues.is_empty() {
+                let class_signals: Vec<&spide_core::health::Signal> = metrics
+                    .health_report
+                    .unique_signals()
+                    .into_iter()
+                    .filter(|s| s.entity == c.name && !s.target.contains('.'))
+                    .collect();
+                if !class_signals.is_empty() {
+                    ui.add_space(6.0);
+                    for s in class_signals {
+                        let col = if s.rule_label.is_some() || s.severity >= 0.65 { css::BAD } else { css::WARN };
+                        let dim = spide_core::health::dimension_label(&s.dimension).split(" & ").next().unwrap_or(&s.dimension);
+                        widgets::rich(ui, &[("• ", sans(11.5), col), (&format!("[{dim}] "), sans(11.0), css::FAINT), (&s.message, sans(11.5), col)]);
+                    }
+                } else if !m.issues.is_empty() {
                     ui.add_space(6.0);
                     for i in &m.issues {
                         wrap(ui, format!("• {i}"), 11.5, css::WARN);
