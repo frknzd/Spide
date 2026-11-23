@@ -42,3 +42,38 @@ fn package_scope_is_bidirectional_one_hop_and_preserves_health() {
     assert_ne!(scope::package_key("a.b"), scope::package_key("a-b"));
     assert_ne!(scope::package_key("a"), scope::package_key("ä"));
 }
+
+#[test]
+fn package_scope_includes_code_creates_and_flags_implicit_layer_violations() {
+    let d = Design::from_json(&serde_json::json!({
+        "packages": [
+            {"name": "ui", "layer": "ui"},
+            {"name": "domain", "layer": "domain"},
+            {"name": "other", "layer": "application"}
+        ],
+        "classes": [
+            {"name": "OrderView", "package": "ui", "methods": [
+                {"name": "submit", "calls": ["Order.checkout"], "code": {"file": "OrderView.java", "start_line": 1, "end_line": 10, "creates": ["Invoice"]}}
+            ]},
+            {"name": "Order", "package": "domain", "methods": [{"name": "checkout"}]},
+            {"name": "Invoice", "package": "domain"},
+            {"name": "Unrelated", "package": "other"}
+        ]
+    }).to_string()).unwrap();
+
+    let m = compute(&d, false);
+    // Both call-based and code.creates-based implicit edges are captured with rule_violation
+    let ui_to_order = m.implicit_edges.iter().find(|e| e.from == "OrderView" && e.to == "Order").expect("UI->Order implicit edge");
+    assert_eq!(ui_to_order.rule_violation.as_deref(), Some("layer ↑"));
+    let ui_to_invoice = m.implicit_edges.iter().find(|e| e.from == "OrderView" && e.to == "Invoice").expect("UI->Invoice creates edge");
+    assert_eq!(ui_to_invoice.rule_violation.as_deref(), Some("layer ↑"));
+
+    // PackageScope for `ui` includes exact minimal boundary: OrderView + Order + Invoice (never Unrelated)
+    let scope = PackageScope::new(&d, &m, "ui", false).unwrap();
+    assert_eq!(scope.classes.iter().map(String::as_str).collect::<Vec<_>>(), vec!["Invoice", "Order", "OrderView"]);
+    assert!(!scope.classes.contains("Unrelated"));
+    // Unrelated is truly disconnected -> root_cause orphan
+    let orphan_sig = m.health_report.unique_signals().into_iter().find(|s| s.rule == "orphan" && s.entity == "Unrelated").expect("Unrelated should be flagged as orphan");
+    assert_eq!(orphan_sig.tier, "root_cause");
+    assert!(orphan_sig.severity >= 0.6);
+}

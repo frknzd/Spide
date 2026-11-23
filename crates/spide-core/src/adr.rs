@@ -127,12 +127,34 @@ pub fn adr(d: &Design, x: &Decision, n: usize) -> String {
 
     let _ = writeln!(o, "\n## Pros and Cons of the Options");
     for opt in &x.options {
-        let _ = writeln!(o, "\n### {} — {}\n", opt.id, opt.label);
+        match &opt.pattern {
+            Some(pat) if !pat.trim().is_empty() => {
+                let _ = writeln!(o, "\n### {} — {} ({})\n", opt.id, opt.label, pat.trim());
+            }
+            _ => {
+                let _ = writeln!(o, "\n### {} — {}\n", opt.id, opt.label);
+            }
+        }
         if let Some(s) = &opt.summary {
             let _ = writeln!(o, "{s}\n");
         }
+        if let Some(d) = &opt.design_notes {
+            if !d.trim().is_empty() {
+                let _ = writeln!(o, "**Design & class organization:** {}\n", d.trim());
+            }
+        }
+        if let Some(pd) = &opt.pros_detail {
+            if !pd.trim().is_empty() {
+                let _ = writeln!(o, "**Pros:** {}\n", pd.trim());
+            }
+        }
         for p in &opt.pros {
             let _ = writeln!(o, "* Good, because {p}");
+        }
+        if let Some(cd) = &opt.cons_detail {
+            if !cd.trim().is_empty() {
+                let _ = writeln!(o, "\n**Cons:** {}\n", cd.trim());
+            }
         }
         for c in &opt.cons {
             let _ = writeln!(o, "* Bad, because {c}");

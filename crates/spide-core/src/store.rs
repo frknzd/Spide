@@ -324,8 +324,8 @@ impl Store {
         if options.is_empty() {
             return Err(OpError("a decision needs at least one option".into()));
         }
-        if options.len() > 4 {
-            return Err(OpError("keep it to 2–4 options".into()));
+        if options.len() > 6 {
+            return Err(OpError("keep it to 4–6 options".into()));
         }
         for (i, o) in options.iter_mut().enumerate() {
             if o.id.is_empty() {

@@ -54,6 +54,9 @@ pub struct ImplicitEdge {
     pub to: String,
     pub via: String,
     pub in_cycle: bool,
+    /// Architecture rule broken by this implicit dependency (e.g. `layer ↑`, `module`, `forbidden`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_violation: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -139,7 +142,7 @@ fn default_explanation(kind: &str) -> (&'static str, Option<&'static str>) {
         "cycle" => ("Classes in a cycle can only be understood, tested and changed together.", Some("break the cycle: invert one dependency via an interface, or move the shared part into its own class")),
         "god" => ("A class with too many members, responsibilities or dependencies changes for many reasons.", Some("split it along its responsibilities (look at the method groups)")),
         "cohesion" => ("Its methods form unrelated groups (LCOM4 > 1): it really is several classes.", Some("extract each method group with the attributes it uses into its own class")),
-        "orphan" => ("An unconnected class contributes nothing to any collaboration.", Some("connect it to the classes that use it, or prune it")),
+        "orphan" => ("A truly disconnected class has no relations, calls, or type references anywhere in the design or code — it is either dead code, missing wiring, or an unintegrated design fragment.", Some("connect it to the classes that use it, verify missing code/relation links, or prune it if unused")),
         "consistency" => ("The views disagree: something on one level has no counterpart on another.", Some("connect it on the other level, or prune it")),
         "sync_chain" => ("Synchronous calls across containers multiply latency and failure: if one is down, the whole scenario fails.", Some("make some of the calls asynchronous (queue/event), or move the data to where it is needed")),
         "multi_aggregate_write" => ("Each aggregate is a consistency boundary; changing several in one transaction couples them and causes contention.", Some("change one aggregate per transaction and propagate to the others with domain events (eventual consistency)")),
@@ -263,6 +266,13 @@ fn observations(d: &Design, ghosts: bool) -> Metrics {
                     }
                 }
             }
+            if let Some(code) = &m.code {
+                for created in &code.creates {
+                    if names.contains(created.as_str()) {
+                        add(created, format!("{}() creates {created}", m.name));
+                    }
+                }
+            }
         }
     }
     for ((from, to), via) in &implicit {
@@ -317,6 +327,7 @@ fn observations(d: &Design, ghosts: bool) -> Metrics {
     let mut viol_count: HashMap<String, usize> = HashMap::new();
     let edge_label = |e: &Dep| e.rel.clone().unwrap_or_else(|| format!("{} → {} (implicit)", e.from, e.to));
     let mut seen_rule_edges: BTreeSet<(String, String, String)> = BTreeSet::new();
+    let mut implicit_rules: BTreeMap<(String, String), String> = BTreeMap::new();
     for e in &deps {
         let (pa, pb) = (pkg_of(&e.from), pkg_of(&e.to));
         let mut broken: Vec<(&'static str, rules::Violation)> = vec![];
@@ -347,14 +358,16 @@ fn observations(d: &Design, ghosts: bool) -> Metrics {
             if !seen_rule_edges.insert((e.from.clone(), e.to.clone(), v.rule.clone())) {
                 continue;
             }
+            let label = match kind {
+                "layer" => "layer ↑",
+                "module_boundary" => "module",
+                _ => "forbidden",
+            };
             if let Some(r) = &e.rel {
                 layer_violations.insert(r.clone());
-                let label = match kind {
-                    "layer" => "layer ↑",
-                    "module_boundary" => "module",
-                    _ => "forbidden",
-                };
                 out.edge_rules.entry(r.clone()).or_insert_with(|| label.into());
+            } else {
+                implicit_rules.entry((e.from.clone(), e.to.clone())).or_insert_with(|| label.into());
             }
             *viol_count.entry(e.from.clone()).or_default() += 1;
             let what = match kind {
@@ -452,6 +465,7 @@ fn observations(d: &Design, ghosts: bool) -> Metrics {
         let heat = (0.45 * coupling
             + if cyc { 0.35 } else { 0.0 }
             + if god { 0.4 } else { 0.0 }
+            + if orphan { 0.35 } else { 0.0 }
             + 0.15 * (lv as f64).min(2.0)
             + if lcom.unwrap_or(1) >= 2 { 0.15 } else { 0.0 })
         .min(1.0);
@@ -462,7 +476,7 @@ fn observations(d: &Design, ghosts: bool) -> Metrics {
             issues.push(Issue::new("cohesion", 0.4, format!("{n} has low cohesion (LCOM4 = {l}); consider splitting it"), vec![n.into()]));
         }
         if orphan {
-            issues.push(Issue::new("orphan", 0.3, format!("{n} is not connected to anything"), vec![n.into()]));
+            issues.push(Issue::new("orphan", 0.65, format!("{n} is completely disconnected (no relations, calls, or type references)"), vec![n.into()]));
         }
         if fan_out >= high_fan_out && !god {
             issues.push(Issue::new("coupling", 0.4, format!("{n} depends on {fan_out} classes"), vec![n.into()]));
@@ -557,7 +571,8 @@ fn observations(d: &Design, ghosts: bool) -> Metrics {
     // ---- implicit edges for drawing
     for ((from, to), via) in implicit {
         let cyc = in_cycle(&from, &to);
-        out.implicit_edges.push(ImplicitEdge { from, to, via, in_cycle: cyc });
+        let rule_violation = implicit_rules.get(&(from.clone(), to.clone())).cloned();
+        out.implicit_edges.push(ImplicitEdge { from, to, via, in_cycle: cyc, rule_violation });
     }
 
     // ---- scenarios (sequences)

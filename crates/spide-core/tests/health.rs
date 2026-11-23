@@ -148,3 +148,74 @@ fn decomplexification_detectors_and_tackle_ordering_and_challenges() {
     assert!(r.challenges.iter().any(|c| c.kind == "rule"), "expected unmatched rule challenge: {:?}", r.challenges);
     assert!(r.challenges.iter().any(|c| c.kind == "abstraction"), "expected abstraction challenge: {:?}", r.challenges);
 }
+
+#[test]
+fn catches_oo_and_architectural_design_flaws() {
+    let d = Design::from_json(r#"{
+        "packages": [
+            {"name":"domain","layer":"domain"},
+            {"name":"app","layer":"application"},
+            {"name":"infra","layer":"infrastructure"},
+            {"name":"volatile","layer":"infrastructure"},
+            {"name":"leaf1","layer":"infrastructure"},
+            {"name":"leaf2","layer":"infrastructure"}
+        ],
+        "classes": [
+            {"name":"BaseAccount","package":"domain","attributes":[{"name":"balance","type":"Money"}],"methods":[{"name":"deposit","params":[{"name":"amt","type":"Money"}]}]},
+            {"name":"SavingsAccount","package":"domain","methods":[{"name":"applyInterest"}]},
+            {"name":"MegaPort","package":"domain","stereotype":"interface","methods":[
+                {"name":"a","is_abstract":true},{"name":"b","is_abstract":true},{"name":"c","is_abstract":true},
+                {"name":"d","is_abstract":true},{"name":"e","is_abstract":true},{"name":"f","is_abstract":true}
+            ]},
+            {"name":"Order","package":"domain","stereotype":"entity","aggregate_root":true,
+             "attributes":[{"name":"id","type":"String"},{"name":"items","type":"List<Line>"}],
+             "methods":[{"name":"getItems","returns":"List<Line>","visibility":"public"}]},
+            {"name":"Customer","package":"domain","stereotype":"entity",
+             "attributes":[{"name":"id","type":"String"},{"name":"tier","type":"String"}]},
+            {"name":"OrderService","package":"app","stereotype":"service","methods":[
+                {"name":"create"},{"name":"cancel"},{"name":"calculateTotal"},{"name":"applyDiscount"}
+            ]},
+            {"name":"SqlOrderRepo","package":"infra","stereotype":"repository","methods":[{"name":"save"}]},
+            {"name":"Shape","package":"domain","stereotype":"interface","methods":[{"name":"area","is_abstract":true}]},
+            {"name":"Circle","package":"domain"},{"name":"Rect","package":"domain"},
+            {"name":"Triangle","package":"domain"},{"name":"Hexagon","package":"domain"},
+            {"name":"Pentagon","package":"domain"},{"name":"Oval","package":"domain"},
+            {"name":"CollisionEngine","package":"domain","methods":[
+                {"name":"collide","params":[{"name":"a","type":"Shape"},{"name":"b","type":"Shape"}]},
+                {"name":"exportCircle","params":[{"name":"c","type":"Circle"}]},
+                {"name":"exportRect","params":[{"name":"r","type":"Rect"}]}
+            ]},
+            {"name":"VolatileWorker","package":"volatile","methods":[{"name":"run"}]},
+            {"name":"LeafOne","package":"leaf1"},{"name":"LeafTwo","package":"leaf2"}
+        ],
+        "relations": [
+            {"from":"SavingsAccount","to":"BaseAccount","kind":"inheritance"},
+            {"from":"OrderService","to":"Order","kind":"dependency"},
+            {"from":"OrderService","to":"Customer","kind":"dependency"},
+            {"from":"OrderService","to":"SqlOrderRepo","kind":"dependency"},
+            {"from":"Circle","to":"Shape","kind":"realization"},
+            {"from":"Rect","to":"Shape","kind":"realization"},
+            {"from":"Triangle","to":"Shape","kind":"realization"},
+            {"from":"Hexagon","to":"Shape","kind":"realization"},
+            {"from":"Pentagon","to":"Shape","kind":"realization"},
+            {"from":"Oval","to":"Shape","kind":"realization"},
+            {"from":"VolatileWorker","to":"LeafOne","kind":"dependency"},
+            {"from":"VolatileWorker","to":"LeafTwo","kind":"dependency"},
+            {"from":"Order","to":"VolatileWorker","kind":"dependency"},
+            {"from":"SqlOrderRepo","to":"Order","kind":"dependency"}
+        ]
+    }"#).unwrap();
+
+    let r = compute(&d, false).health_report;
+    let rules: Vec<&str> = r.unique_signals().into_iter().map(|s| s.rule.as_str()).collect();
+
+    assert!(rules.contains(&"inheritance_coupling"), "expected inheritance_coupling in {rules:?}");
+    assert!(rules.contains(&"fat_interface"), "expected fat_interface in {rules:?}");
+    assert!(rules.contains(&"concrete_dependency"), "expected concrete_dependency in {rules:?}");
+    assert!(rules.contains(&"anemic_domain"), "expected anemic_domain in {rules:?}");
+    assert!(rules.contains(&"missing_double_dispatch"), "expected missing_double_dispatch in {rules:?}");
+    assert!(rules.contains(&"subclass_explosion"), "expected subclass_explosion in {rules:?}");
+    assert!(rules.contains(&"mutable_collection_leak"), "expected mutable_collection_leak in {rules:?}");
+    assert!(rules.contains(&"package_sdp"), "expected package_sdp in {rules:?}");
+    assert!(r.challenges.iter().any(|c| c.id == "CH-anemic-domain"), "expected CH-anemic-domain challenge: {:?}", r.challenges);
+}

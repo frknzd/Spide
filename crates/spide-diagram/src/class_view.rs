@@ -1029,13 +1029,30 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
             })
             .collect()
     };
+    // Classes that have at least one visible explicit relation in this view.
+    let mut explicitly_connected: HashSet<&str> = HashSet::new();
+    for r in d.relations {
+        if r.status != Status::Pruned && rects.contains_key(r.from.as_str()) && rects.contains_key(r.to.as_str()) {
+            explicitly_connected.insert(r.from.as_str());
+            explicitly_connected.insert(r.to.as_str());
+        }
+    }
+    let show_implicit_edge = |e: &ImplicitEdge, touches: bool| -> bool {
+        o.show_implicit
+            || touches
+            || e.in_cycle
+            || e.rule_violation.is_some()
+            || !explicitly_connected.contains(e.from.as_str())
+            || !explicitly_connected.contains(e.to.as_str())
+    };
     let rel_routes = routes.rel.update(&r_boxes, &rel_edges, &zones, o.route_epoch).clone();
     // transient edges (hover-implicit, lenses) are routed separately so hovering never re-routes the diagram
     let mut extra_edges: Vec<REdge> = vec![];
     if !overview {
         for e in d.implicit {
-            if (o.show_implicit || focus.is_some_and(|f| e.from == f || e.to == f)) && rects.contains_key(e.from.as_str()) && rects.contains_key(e.to.as_str()) && e.from != e.to {
-                extra_edges.push(REdge::new(format!("imp{}>{}", e.from, e.to), &e.from, &e.to).deco(Deco::None, if e.in_cycle { Deco::Arrow } else { Deco::None }, false));
+            let touches = focus.is_some_and(|f| e.from == f || e.to == f);
+            if show_implicit_edge(e, touches) && rects.contains_key(e.from.as_str()) && rects.contains_key(e.to.as_str()) && e.from != e.to {
+                extra_edges.push(REdge::new(format!("imp{}>{}", e.from, e.to), &e.from, &e.to).deco(Deco::None, Deco::Arrow, false));
             }
         }
         if o.lens == Lens::Overlap {
@@ -1174,40 +1191,42 @@ pub fn build(ms: &dyn Measure, d: &Data, o: &Opts, routes: &mut Routes) -> Scene
     }
     if !overview {
         for e in d.implicit {
-            // implicit dependencies are clutter unless asked for (/implicit) or the class is in focus
             let touches = focus.is_some_and(|f| e.from == f || e.to == f);
-            if !o.show_implicit && !touches {
+            if !show_implicit_edge(e, touches) {
                 continue;
             }
             let (Some(a), Some(b)) = (rects.get(e.from.as_str()), rects.get(e.to.as_str())) else { continue };
             let dim = focus.is_some() && !touches;
             let id = format!("imp{}>{}", e.from, e.to);
+            let rule_viol = if o.plain { None } else { e.rule_violation.clone() };
+            let (color, width, opacity, warn) = if e.in_cycle && !o.plain {
+                let w = Some(match &rule_viol {
+                    Some(rv) => format!("cycle · {rv}"),
+                    None => "cycle".into(),
+                });
+                (c::CYCLE, 2.0, if dim { 0.12 } else { 0.9 }, w)
+            } else if let Some(rv) = rule_viol {
+                (c::WARN, 2.0, if dim { 0.15 } else { 0.95 }, Some(rv))
+            } else {
+                (Rgb::hex(0x9aa9c0), 1.2, if dim { 0.08 } else { 0.62 }, None)
+            };
             let spec = EdgeSpec {
                 from: *a,
                 to: *b,
                 kind: EdgeKind::Implicit,
-                directed: false,
+                directed: true,
                 label: None,
                 from_mult: None,
                 to_mult: None,
                 bend: 0.35,
                 style: EdgeStyle {
-                    strained: e.in_cycle,
-                    ..EdgeStyle::new(
-                        if e.in_cycle { c::CYCLE } else { Rgb::hex(0xc8cede) },
-                        if e.in_cycle { 1.4 } else { 1.0 },
-                        if dim {
-                            0.05
-                        } else if e.in_cycle {
-                            0.7
-                        } else {
-                            0.22
-                        },
-                    )
+                    dashed: true,
+                    strained: e.in_cycle && !o.plain,
+                    ..EdgeStyle::new(color, width, opacity)
                 },
                 target: None,
                 hover: Some(format!("implicit:{}>{}", e.from, e.to)),
-                warn: None,
+                warn,
                 route: extra_routes.get(&id),
                 status: None,
                 key: id.clone(),

@@ -400,7 +400,15 @@ pub struct Proposal {
 pub struct DecisionOption {
     pub id: String,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
     pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub design_notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pros_detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cons_detail: Option<String>,
     pub ops: Vec<crate::ops::Op>,
     pub pros: Vec<String>,
     pub cons: Vec<String>,

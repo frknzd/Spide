@@ -392,18 +392,19 @@ pub fn design_checks(d: &Design, ghosts: bool, resp: &crate::responsibility::Rep
             .map(|c| c.name.as_str())
             .collect();
         let has_code = classes.iter().any(|c| c.methods.iter().any(|m| m.code.is_some()));
-        if users.len() >= 3 && !has_code {
+        let enum_has_behaviour = e.methods.iter().any(|m| live(m.status) && !crate::detail::is_accessor(&e.name, m));
+        if (users.len() >= 3 || (users.len() >= 2 && !enum_has_behaviour)) && !has_code {
             let mut t: Vec<String> = users.iter().map(|u| u.to_string()).collect();
             t.push(e.name.clone());
             out.push(issue(
                 "type_switch",
-                0.2,
-                0.45,
+                0.22,
+                if users.len() >= 3 { 0.55 } else { 0.45 },
                 "heuristic",
-                format!("{} is passed to methods of {} classes ({}): each probably switches on it", e.name, users.len(), users.iter().cloned().collect::<Vec<_>>().join(", ")),
+                format!("{} is a data-only enum passed to methods of {} classes ({}): each likely switches on it", e.name, users.len(), users.iter().cloned().collect::<Vec<_>>().join(", ")),
                 t,
-                "A type code that several classes decide on means a switch in each of them; a new value then needs changes everywhere.",
-                "move the varying behaviour onto the type itself (Polymorphism: an enum with behaviour or a class hierarchy)",
+                "A type code that several classes branch on scatters variant-specific behaviour; adding a new variant forces edits in every caller. Contrast an enum (good when variants are closed and operations grow) with polymorphism/Strategy (good when new variants are added frequently).",
+                "move the varying behaviour onto the type itself (polymorphic hierarchy / Strategy, or enum constants with methods) if new variants will be added",
             ));
         }
     }

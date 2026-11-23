@@ -492,7 +492,7 @@ pub fn badges(m: Option<&ClassMetrics>) -> Vec<Badge> {
         out.push(b("rule ✗", c::WARN, "Breaks an architecture rule (layering, module boundary, forbidden dependency or type)".into()));
     }
     if m.orphan {
-        out.push(b("orphan", c::FAINT, "Not connected".into()));
+        out.push(b("orphan", c::CYCLE, "Disconnected: no relations, calls, or type references".into()));
     }
     out
 }

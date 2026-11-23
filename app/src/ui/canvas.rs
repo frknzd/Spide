@@ -69,6 +69,8 @@ pub struct CanvasInput<'a> {
     pub highlight: Option<&'a HashSet<String>>,
     /// keep node positions: no automatic re-layout when a batch of classes appears (review toggles)
     pub keep_layout: bool,
+    /// Active package scope: classes outside this package are rendered as compact boundary neighbors.
+    pub package_scope: Option<&'a str>,
 }
 
 struct Insights {
@@ -227,11 +229,18 @@ impl ClassCanvas {
         // an export never re-lays out the canvas, it draws what you see
         let mut reveal: Vec<&String> = self.revealed.iter().collect();
         reveal.sort();
-        let bkey = hash_of((inp.data_key, level, inp.show_methods, &reveal));
+        let bkey = hash_of((inp.data_key, level, inp.show_methods, &reveal, inp.package_scope));
         if bkey != self.boxes_key {
             self.boxes_key = bkey;
-            let ext = external_classes(inp.classes, inp.packages);
-            self.boxes = class_view::boxes_for(m, inp.classes, inp.show_methods, level, inp.relations, None, &ext, Some(&ins.marks), Some(&ins.members), &self.revealed);
+            let mut compact = external_classes(inp.classes, inp.packages);
+            if let Some(pkg) = inp.package_scope {
+                for c in inp.classes {
+                    if c.package.as_deref() != Some(pkg) {
+                        compact.insert(c.name.clone());
+                    }
+                }
+            }
+            self.boxes = class_view::boxes_for(m, inp.classes, inp.show_methods, level, inp.relations, None, &compact, Some(&ins.marks), Some(&ins.members), &self.revealed);
         }
         // sync the simulation with the model
         let skey = bkey;
@@ -258,7 +267,10 @@ impl ClassCanvas {
                 })
                 .collect();
             let fresh = specs.iter().filter(|s| !self.layout.has(&s.id) && s.init.is_none()).count();
-            let links: Vec<LinkSpec> = inp.relations.iter().map(|r| LinkSpec { from: r.from.clone(), to: r.to.clone(), kind: r.kind.as_str().into() }).collect();
+            let mut links: Vec<LinkSpec> = inp.relations.iter().map(|r| LinkSpec { from: r.from.clone(), to: r.to.clone(), kind: r.kind.as_str().into() }).collect();
+            for e in inp.implicit {
+                links.push(LinkSpec { from: e.from.clone(), to: e.to.clone(), kind: "dependency".into() });
+            }
             self.layout.update(&specs, &links);
             // Restore complete saved placements on first load; the new layout policy
             // takes effect on explicit tidy or subsequent structural/detail changes.
@@ -279,7 +291,17 @@ impl ClassCanvas {
         if self.pending_tidy {
             self.pending_tidy = false;
             let extents: HashMap<String, (f64, f64)> = self.layout.nodes.iter().map(|n| (n.id.clone(), (n.w, n.h))).collect();
-            let pos = class_view::layout_classes(m, inp.classes, &extents, inp.relations, inp.packages);
+            let mut layout_rels: Vec<spide_core::model::Relation> = inp.relations.to_vec();
+            for (i, e) in inp.implicit.iter().enumerate() {
+                layout_rels.push(spide_core::model::Relation {
+                    id: format!("__imp_{i}"),
+                    from: e.from.clone(),
+                    to: e.to.clone(),
+                    kind: spide_core::model::RelationKind::Dependency,
+                    ..Default::default()
+                });
+            }
+            let pos = class_view::layout_classes(m, inp.classes, &extents, &layout_rels, inp.packages);
             self.layout.tidy(&pos);
             if std::mem::take(&mut self.fit_after_tidy) {
                 self.vp.request_fit(now + 1.5, true);

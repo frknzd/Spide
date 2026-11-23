@@ -102,4 +102,23 @@ fn mcp_exposes_brief_stage_and_guards_socratic() {
         "tradeoffs":[{"force":"Nope","effect":"+"}]}]});
     let out = tools::call(&mut s, "propose_decision", &dec).unwrap();
     assert!(out.text.contains("not in the brief"));
+    assert!(out.text.contains("at least 4"), "should nudge when < 4 options: {}", out.text);
+    assert!(out.text.contains("design_notes"), "should nudge when missing depth paragraphs: {}", out.text);
+
+    // 4 rich alternatives with pattern, design_notes, pros_detail, cons_detail produce no depth/count warnings
+    let rich = json!({
+        "question": "How should shape rendering dispatch?",
+        "options": [
+            {"label": "Polymorphic method", "pattern": "Polymorphism", "design_notes": "Each Shape subclass implements render().", "pros_detail": "Adding new shapes requires zero edits to existing code.", "cons_detail": "Adding new operations touches every Shape subclass.", "ops": [{"op":"add_class","name":"ShapeA"}]},
+            {"label": "Double dispatch Visitor", "pattern": "Double Dispatch (Visitor)", "design_notes": "Shape exposes accept(ShapeVisitor) and visitors implement visitX().", "pros_detail": "Adding new operations is a single new visitor class.", "cons_detail": "Adding a new Shape breaks every visitor interface implementation.", "ops": [{"op":"add_class","name":"ShapeB"}]},
+            {"label": "Tagged enum + switch", "pattern": "Tagged Enum", "design_notes": "Closed ShapeKind enum switched in Renderer.", "pros_detail": "Exhaustive pattern matching keeps all rendering logic co-located.", "cons_detail": "Every new shape variant forces edits across all switch sites.", "ops": [{"op":"add_class","name":"ShapeC"}]},
+            {"label": "Strategy registry", "pattern": "Strategy + Registry", "design_notes": "Map shape type keys to pluggable RenderStrategy instances.", "pros_detail": "Decouples both shapes and renderers at runtime without inheritance.", "cons_detail": "Loses static exhaustiveness checking and adds registration indirection.", "ops": [{"op":"add_class","name":"ShapeD"}]}
+        ]
+    });
+    let rich_out = tools::call(&mut s, "propose_decision", &rich).unwrap();
+    assert!(!rich_out.text.contains("at least 4"), "unexpected count warning: {}", rich_out.text);
+    assert!(!rich_out.text.contains("design_notes"), "unexpected depth warning: {}", rich_out.text);
+    let stored = s.design.decisions.last().unwrap();
+    assert_eq!(stored.options.len(), 4);
+    assert_eq!(stored.options[1].pattern.as_deref(), Some("Double Dispatch (Visitor)"));
 }

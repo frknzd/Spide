@@ -158,6 +158,82 @@ pub fn impact_details(ui: &mut Ui, impact: &Impact) {
     }
 }
 
+pub fn pattern_badge(ui: &mut Ui, pattern: Option<&str>) {
+    let Some(pat) = pattern.map(str::trim).filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let c = css::ACCENT;
+    egui::Frame::new()
+        .fill(Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 20))
+        .stroke(Stroke::new(1.0, Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 120)))
+        .corner_radius(6)
+        .inner_margin(Margin::symmetric(6, 1))
+        .show(ui, |ui| {
+            ui.label(RichText::new(pat).font(sans(10.5)).color(c));
+        });
+}
+
+/// Rich architectural breakdown for an option: Design & Class Organization paragraph,
+/// Pros paragraph (+ bullets), and Cons paragraph (+ bullets).
+pub fn option_analysis(ui: &mut Ui, o: &spide_core::model::DecisionOption) {
+    let has_design = o.design_notes.as_deref().is_some_and(|s| !s.trim().is_empty());
+    let has_pros = o.pros_detail.as_deref().is_some_and(|s| !s.trim().is_empty()) || !o.pros.is_empty();
+    let has_cons = o.cons_detail.as_deref().is_some_and(|s| !s.trim().is_empty()) || !o.cons.is_empty();
+    if !has_design && !has_pros && !has_cons {
+        return;
+    }
+    ui.add_space(4.0);
+    if let Some(notes) = o.design_notes.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        egui::Frame::new()
+            .fill(css::RAISED)
+            .stroke(Stroke::new(1.0, css::LINE))
+            .corner_radius(6)
+            .inner_margin(Margin::symmetric(9, 7))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 3.0;
+                ui.label(RichText::new("DESIGN & ORGANIZATION").font(bold(10.0)).color(css::ACCENT));
+                widgets::para(ui, notes, 11.8, css::TEXT);
+            });
+    }
+    if has_pros {
+        egui::Frame::new()
+            .fill(Color32::from_rgba_unmultiplied(74, 222, 128, 12))
+            .stroke(Stroke::new(1.0, Color32::from_rgba_unmultiplied(74, 222, 128, 68)))
+            .corner_radius(6)
+            .inner_margin(Margin::symmetric(9, 7))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 3.0;
+                ui.label(RichText::new("PROS").font(bold(10.0)).color(css::PRO));
+                if let Some(pd) = o.pros_detail.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                    widgets::para(ui, pd, 11.8, css::TEXT);
+                }
+                for x in &o.pros {
+                    widgets::para(ui, format!("+ {x}"), 11.5, css::PRO);
+                }
+            });
+    }
+    if has_cons {
+        egui::Frame::new()
+            .fill(Color32::from_rgba_unmultiplied(255, 92, 108, 12))
+            .stroke(Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 92, 108, 68)))
+            .corner_radius(6)
+            .inner_margin(Margin::symmetric(9, 7))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 3.0;
+                ui.label(RichText::new("CONS").font(bold(10.0)).color(css::CON));
+                if let Some(cd) = o.cons_detail.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                    widgets::para(ui, cd, 11.8, css::TEXT);
+                }
+                for x in &o.cons {
+                    widgets::para(ui, format!("− {x}"), 11.5, css::CON);
+                }
+            });
+    }
+}
+
 pub fn tradeoff_chips(ui: &mut Ui, o: &spide_core::model::DecisionOption, symbol_only: bool) {
     if o.tradeoffs.is_empty() {
         return;
@@ -269,6 +345,7 @@ pub fn panel(ui: &mut Ui, st: &mut DecisionUi, pending: &[&Decision], snap: &Sna
                                 draft.own_mode = false;
                             }
                         });
+                        pattern_badge(ui, o.pattern.as_deref());
                         if let Some(s) = &o.summary {
                             widgets::para(ui, s, 12.0, css::DIM);
                         }
@@ -313,12 +390,7 @@ pub fn panel(ui: &mut Ui, st: &mut DecisionUi, pending: &[&Decision], snap: &Sna
                                 }
                             }
                             tradeoff_chips(ui, o, false);
-                            for x in &o.pros {
-                                widgets::para(ui, format!("+ {x}"), 11.5, css::PRO);
-                            }
-                            for x in &o.cons {
-                                widgets::para(ui, format!("− {x}"), 11.5, css::CON);
-                            }
+                            option_analysis(ui, o);
                         }
                     });
                 });
@@ -499,10 +571,12 @@ pub fn history(ui: &mut Ui, design: &Design, id: &str) -> bool {
                             ui.label(RichText::new("chosen").font(sans(11.0)).color(css::FAINT));
                         }
                     });
+                    pattern_badge(ui, o.pattern.as_deref());
                     if let Some(s) = &o.summary {
                         widgets::para(ui, s, 12.0, css::DIM);
                     }
                     tradeoff_chips(ui, o, true);
+                    option_analysis(ui, o);
                 });
             }
             if let Some(cu) = &d.custom {
@@ -559,6 +633,7 @@ pub struct CompareCol {
     pub focus: Vec<String>,
     pub error: Option<String>,
     pub summary: Option<String>,
+    pub option: Option<spide_core::model::DecisionOption>,
 }
 
 /// Columns for a decision's options.
@@ -575,6 +650,7 @@ pub fn decision_cols(d: &Decision, snap: &Snapshot) -> Vec<CompareCol> {
                 focus: pv.map(|p| p.focus.clone()).unwrap_or_default(),
                 error: pv.and_then(|p| p.error.clone()),
                 summary: o.summary.clone(),
+                option: Some(o.clone()),
             }
         })
         .collect()
@@ -657,7 +733,10 @@ pub fn compare(ctx: &egui::Context, area: Rect, st: &mut CompareUi, kicker: &str
                                         ui.label(RichText::new(&col.id).font(bold(13.0)).color(css::DIM));
                                         ui.add(egui::Label::new(RichText::new(&col.label).font(bold(13.5)).color(css::TEXT)).wrap());
                                     });
-                                    let h = ui.ctx().content_rect().height() * 0.52;
+                                    if let Some(opt) = &col.option {
+                                        pattern_badge(ui, opt.pattern.as_deref());
+                                    }
+                                    let h = ui.ctx().content_rect().height() * 0.44;
                                     if let Some(e) = &col.error {
                                         widgets::para(ui, format!("✗ {e}"), 11.5, hex(0xffb3ba));
                                     } else if let Some(Some(scene)) = st.scenes.get(i) {
@@ -666,6 +745,10 @@ pub fn compare(ctx: &egui::Context, area: Rect, st: &mut CompareUi, kicker: &str
                                     }
                                     if let Some(s) = &col.summary {
                                         widgets::para(ui, s, 12.0, css::DIM);
+                                    }
+                                    if let Some(opt) = &col.option {
+                                        tradeoff_chips(ui, opt, false);
+                                        option_analysis(ui, opt);
                                     }
                                     if let Some(imp) = &col.impact {
                                         impact_details(ui, imp);

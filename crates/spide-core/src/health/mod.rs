@@ -166,8 +166,8 @@ pub fn tier_label(tier: &str) -> &'static str {
 
 pub fn tier_of(rule: &str) -> &'static str {
     match rule {
-        "cycle" | "layer" | "module_boundary" | "forbidden_dep" | "forbidden_type" | "god" | "cohesion" | "mixed_concerns" | "volatile_hub" | "scattered_concept" | "change_ripple" | "spof" | "multi_aggregate_write" | "evidence:correctness" | "evidence:safety" => "root_cause",
-        "indirection_chain" | "over_fragmented_packages" | "ceremony_overhead" | "middle_man" | "speculative_abstraction" | "deep_inheritance" | "degenerate_visitor" | "orphan" => "simplify",
+        "cycle" | "layer" | "module_boundary" | "forbidden_dep" | "forbidden_type" | "god" | "cohesion" | "mixed_concerns" | "volatile_hub" | "scattered_concept" | "change_ripple" | "spof" | "multi_aggregate_write" | "concrete_dependency" | "anemic_domain" | "package_sdp" | "orphan" | "evidence:correctness" | "evidence:safety" => "root_cause",
+        "indirection_chain" | "over_fragmented_packages" | "ceremony_overhead" | "middle_man" | "speculative_abstraction" | "deep_inheritance" | "degenerate_visitor" => "simplify",
         "missing_types" | "inherited_repeated" | "private_documentation" | "consistency" | "evidence:style" | "evidence:unknown" => "polish",
         _ => "refactor",
     }
@@ -178,13 +178,21 @@ pub fn pattern_hint_for(rule: &str) -> Option<&'static str> {
         "cycle" => "Pattern: Dependency Inversion (extract a minimal interface) or Merge tightly-coupled peers — avoid adding an interface if the two classes belong together.",
         "god" | "cohesion" | "mixed_concerns" => "Pattern: Extract Class along LCOM4 method groups / single responsibility — split only along real cohesion seams.",
         "volatile_hub" => "Pattern: Stable Abstractions / Facade — isolate unstable dependencies behind a small contract.",
+        "package_sdp" => "Pattern: Dependency Inversion (Ports & Adapters) — invert the edge so the stable package defines an interface implemented by the volatile package.",
         "layer" | "module_boundary" | "forbidden_dep" | "forbidden_type" => "Pattern: Port & Adapter / Dependency Inversion — or question whether this boundary rule fits the project's size.",
+        "concrete_dependency" => "Pattern: Dependency Inversion (Port/Interface) — depend on a minimal interface owned by the caller's layer rather than a concrete implementation or adapter.",
+        "anemic_domain" => "Pattern: Rich Domain Model (GRASP Information Expert) — move invariant checks and state transitions from procedural services onto the entities that own the data.",
+        "fat_interface" => "Pattern: Interface Segregation Principle (ISP) — split into small role-specific interfaces so each client depends only on the operations it invokes.",
+        "inheritance_coupling" => "Pattern: Composition over Inheritance (Strategy / Decorator) — avoid inheriting concrete implementation; extract an interface or abstract contract if subtyping is genuinely needed.",
+        "missing_double_dispatch" => "Pattern: Double Dispatch (Visitor) vs. Polymorphism / Dispatch Table — use Visitor when operations grow over a stable element hierarchy, or single-dispatch polymorphism when new types grow.",
+        "subclass_explosion" => "Pattern: Bridge / Strategy / Decorator — separate orthogonal variation axes via composition instead of multiplying subclasses.",
+        "mutable_collection_leak" => "Pattern: Encapsulate Collection — return an unmodifiable view/iterator and expose intention-revealing add/remove methods on the aggregate to protect invariants.",
         "indirection_chain" | "middle_man" => "Decomplexify: Inline Class / Remove Middle Man — delete forwarding hops unless they form a real API, async, or trust boundary.",
         "speculative_abstraction" => "Decomplexify: Collapse Hierarchy / Inline Interface — wait for a second real implementation or an explicit change scenario.",
         "over_fragmented_packages" | "ceremony_overhead" => "Decomplexify: Co-locate by feature — merge single-class packages and delete empty wrappers before adding new structure.",
         "deep_inheritance" => "Pattern: Replace Inheritance with Composition — flatten hierarchies deeper than 2–3 levels.",
         "degenerate_visitor" => "Decomplexify: Replace Visitor with Strategy (or a plain method) when only one element type exists.",
-        "type_switch" | "instanceof" => "Pattern: Polymorphism / Registry Map — skip if there are only 2–3 closed variants that rarely change.",
+        "type_switch" | "instanceof" => "Pattern: Polymorphism / Registry Map vs. Enum — use Polymorphism when adding new variants often; keep an Enum when variants are closed and operations grow.",
         "feature_envy" | "misplaced_responsibility" | "concept_elsewhere" | "data_class" => "Pattern: Move Method (GRASP Information Expert) — put behaviour with the data it uses.",
         "duplication" => "Pattern: Extract shared method into Information Expert or Pure Fabrication — avoid premature abstraction for coincidental 2-line overlap.",
         "demeter" => "Pattern: Tell, Don't Ask — expose an intention-revealing method on the direct collaborator instead of chaining getters.",
@@ -193,6 +201,7 @@ pub fn pattern_hint_for(rule: &str) -> Option<&'static str> {
         "creator" => "Pattern: GRASP Creator / Factory Method — let the aggregate or container construct its own parts.",
         "ui_bypasses_controller" => "Pattern: GRASP Controller / Application Facade — mediate commands/lifecycle, not trivial read-only display values.",
         "change_ripple" | "scattered_concept" => "Pattern: Protected Variations — encapsulate the single thing that varies behind one module or interface.",
+        "orphan" => "Boundary check: verify whether this disconnected class is dead code (prune it), an unlinked entry point, or missing explicit/code dependencies to its collaborators.",
         _ => return None,
     })
 }
@@ -367,10 +376,10 @@ pub struct Context<'a> {
 
 pub fn dimension_of(kind: &str) -> &'static str {
     match kind {
-        "cycle" | "coupling" | "demeter" | "sync_chain" | "spof" | "volatile_hub" | "multi_aggregate_write" | "orphan" => "modularity",
-        "god" | "cohesion" | "mixed_concerns" | "vague_role" | "misplaced_responsibility" | "concept_elsewhere" | "feature_envy" | "fat_controller" | "creator" | "data_class" | "duplication" | "role_inconsistency" | "disagreement" | "exposed_state" => "cohesion",
-        "layer" | "module_boundary" | "forbidden_dep" | "forbidden_type" | "ui_bypasses_controller" | "consistency" => "architecture",
-        "instanceof" | "type_switch" | "change_ripple" | "scattered_concept" | "narrowed_visibility" | "inheritance_coupling" | "composite_incomplete" | "degenerate_visitor" | "deep_inheritance" => "extensibility",
+        "cycle" | "coupling" | "demeter" | "sync_chain" | "spof" | "volatile_hub" | "multi_aggregate_write" | "orphan" | "package_sdp" => "modularity",
+        "god" | "cohesion" | "mixed_concerns" | "vague_role" | "misplaced_responsibility" | "concept_elsewhere" | "feature_envy" | "fat_controller" | "creator" | "data_class" | "duplication" | "role_inconsistency" | "disagreement" | "exposed_state" | "fat_interface" | "anemic_domain" | "mutable_collection_leak" => "cohesion",
+        "layer" | "module_boundary" | "forbidden_dep" | "forbidden_type" | "ui_bypasses_controller" | "consistency" | "concrete_dependency" => "architecture",
+        "instanceof" | "type_switch" | "change_ripple" | "scattered_concept" | "narrowed_visibility" | "inheritance_coupling" | "composite_incomplete" | "degenerate_visitor" | "deep_inheritance" | "missing_double_dispatch" | "subclass_explosion" => "extensibility",
         "large_class" | "long_method" | "middle_man" | "long_params" | "chatty_scenario" | "missing_types" | "inherited_repeated" | "complex_function" | "deep_nesting" | "long_function" | "many_params" | "speculative_abstraction" | "indirection_chain" | "over_fragmented_packages" | "ceremony_overhead" => "simplicity",
         "private_documentation" => "implementation_quality",
         k if k.starts_with("evidence:") => "implementation_quality",
@@ -910,6 +919,465 @@ fn force_health(d: &Design, m: &Metrics, dims: &[DimensionReport]) -> Vec<ForceH
     out
 }
 
+/// Deep OO & architectural design flaw detectors:
+/// concrete-class inheritance, fat interfaces (ISP), dependency inversion violations (DIP),
+/// anemic domain / procedural services, missing double dispatch / subtype overload smells,
+/// combinatorial subclass explosion, unencapsulated mutable collections, and package SDP violations.
+fn design_flaw_signals(d: &Design, m: &Metrics, live: &[&Class]) -> Vec<Signal> {
+    let mut out = vec![];
+    if live.is_empty() {
+        return out;
+    }
+
+    let live_map: BTreeMap<&str, &Class> = live.iter().map(|c| (c.name.as_str(), *c)).collect();
+    let layer_of = |c: &Class| -> Option<Layer> {
+        c.package
+            .as_deref()
+            .and_then(|p| d.packages.iter().find(|x| x.name == p && x.status.is_live()))
+            .and_then(|p| p.layer)
+    };
+    let role_of = |name: &str| -> String {
+        m.responsibility
+            .classes
+            .get(name)
+            .and_then(|r| r.role.as_ref())
+            .map(|r| r.role.clone())
+            .unwrap_or_default()
+    };
+
+    // Build inheritance/realization maps: parent -> concrete children, child -> interfaces/parents
+    let mut children_of: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut interfaces_of: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut parents_of: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for r in d.relations.iter().filter(|r| r.status.is_live()) {
+        if !live_map.contains_key(r.from.as_str()) || !live_map.contains_key(r.to.as_str()) {
+            continue;
+        }
+        match r.kind {
+            RelationKind::Inheritance => {
+                children_of.entry(r.to.as_str()).or_default().push(r.from.as_str());
+                parents_of.entry(r.from.as_str()).or_default().push(r.to.as_str());
+            }
+            RelationKind::Realization => {
+                children_of.entry(r.to.as_str()).or_default().push(r.from.as_str());
+                interfaces_of.entry(r.from.as_str()).or_default().push(r.to.as_str());
+            }
+            _ => {}
+        }
+    }
+
+    // Helper: is this class a polymorphic base (interface, abstract, or has >= 2 subtypes)?
+    let is_poly_base = |name: &str| -> bool {
+        live_map.get(name).is_some_and(|c| {
+            c.is_interface()
+                || c.is_abstract
+                || children_of.get(name).map_or(0, Vec::len) >= 2
+        })
+    };
+
+    // 1. Concrete-class inheritance (Fragile Base Class / inheritance_coupling)
+    for r in d.relations.iter().filter(|r| r.status.is_live() && r.kind == RelationKind::Inheritance) {
+        let (Some(&child), Some(&parent)) = (live_map.get(r.from.as_str()), live_map.get(r.to.as_str())) else {
+            continue;
+        };
+        if parent.is_abstract || parent.is_interface() || parent.is_enum() || parent.is_module() {
+            continue;
+        }
+        if matches!(parent.stereotype.as_deref(), Some("exception" | "error" | "abstract" | "interface")) {
+            continue;
+        }
+        let has_state_or_impl = parent.attributes.iter().any(|a| a.status.is_live())
+            || parent.methods.iter().any(|x| x.status.is_live() && !x.is_abstract);
+        if has_state_or_impl {
+            let p = profiles::of_class(child).language;
+            let mut s = sig(
+                "inheritance_coupling",
+                &child.name,
+                &child.name,
+                p,
+                0.35,
+                0.85,
+                "structure",
+                format!("{} inherits from concrete class {} (Fragile Base Class risk)", child.name, parent.name),
+                "Inheriting from a concrete class couples subclasses tightly to the parent's internal representation and method overrides; changes to the base class easily break subclasses.",
+                "prefer composition (delegate to an instance of the helper/strategy) or extract an interface / abstract base class for the shared contract",
+                "OO design analysis",
+            );
+            s.targets = vec![child.name.clone(), parent.name.clone()];
+            s.root_cause = format!("inheritance_coupling:{},{}", child.name, parent.name);
+            out.push(s);
+        }
+    }
+
+    // 2. Fat Interface (Interface Segregation Principle violation)
+    for c in live.iter().filter(|c| c.is_interface()) {
+        let live_methods = c.methods.iter().filter(|x| x.status.is_live()).count();
+        if live_methods >= 6 {
+            let p = profiles::of_class(c).language;
+            let sev = (0.30 + 0.04 * (live_methods - 6).min(6) as f64).min(0.65);
+            out.push(sig(
+                "fat_interface",
+                &c.name,
+                &c.name,
+                p,
+                sev,
+                0.85,
+                "structure",
+                format!("Interface {} declares {} methods (Interface Segregation Principle risk)", c.name, live_methods),
+                "Wide interfaces force implementers to stub unused methods and couple every caller to unrelated operations.",
+                "split into smaller role-specific interfaces so clients depend only on the operations they actually call",
+                "SOLID · ISP",
+            ));
+        }
+    }
+
+    // 3. Dependency Inversion Principle violation (concrete_dependency)
+    let is_factory_like = |c: &Class| -> bool {
+        let lower = c.name.to_lowercase();
+        matches!(c.stereotype.as_deref(), Some("factory" | "builder" | "config" | "module"))
+            || lower.ends_with("factory")
+            || lower.ends_with("builder")
+            || lower.ends_with("config")
+            || lower.ends_with("bootstrap")
+            || lower.ends_with("module")
+            || lower == "main"
+            || lower == "app"
+            || c.methods.iter().any(|m| m.status.is_live() && m.is_static && m.name == "main")
+    };
+    let mut dep_edges: BTreeSet<(&str, &str)> = BTreeSet::new();
+    for r in d.relations.iter().filter(|r| r.status.is_live()) {
+        if r.from != r.to && !matches!(r.kind, RelationKind::Inheritance | RelationKind::Realization) {
+            dep_edges.insert((r.from.as_str(), r.to.as_str()));
+        }
+    }
+    for e in &m.implicit_edges {
+        if e.from != e.to {
+            dep_edges.insert((e.from.as_str(), e.to.as_str()));
+        }
+    }
+    for (from_name, to_name) in &dep_edges {
+        let (Some(&from), Some(&to)) = (live_map.get(from_name), live_map.get(to_name)) else {
+            continue;
+        };
+        if is_factory_like(from) || to.is_interface() || to.is_abstract || to.is_enum() || to.is_module() {
+            continue;
+        }
+        // Case A: high-level class (domain/application) depends directly on a concrete repository/adapter/infrastructure class
+        let from_inner = matches!(layer_of(from), Some(Layer::Domain | Layer::Application))
+            || matches!(role_of(&from.name).as_str(), "domain" | "service" | "controller");
+        let to_infra_role = matches!(layer_of(to), Some(Layer::Infrastructure))
+            || matches!(to.stereotype.as_deref(), Some("repository" | "adapter"))
+            || matches!(role_of(&to.name).as_str(), "persistence" | "adapter");
+        let to_ifaces = interfaces_of.get(to.name.as_str()).cloned().unwrap_or_default();
+        if from_inner && to_infra_role {
+            let iface_hint = if !to_ifaces.is_empty() {
+                format!("; depend on {} instead", to_ifaces.join(" / "))
+            } else {
+                String::new()
+            };
+            let p = profiles::of_class(from).language;
+            let mut s = sig(
+                "concrete_dependency",
+                &from.name,
+                &from.name,
+                p,
+                0.42,
+                0.85,
+                "structure",
+                format!("{} depends directly on concrete infrastructure/adapter class {}{}", from.name, to.name, iface_hint),
+                "Dependency Inversion Principle: high-level domain/application logic should depend on abstractions (ports/interfaces), not concrete persistence or I/O implementations.",
+                "introduce or depend on an interface/port owned by the domain or application layer, and inject the concrete implementation from the composition root",
+                "SOLID · DIP",
+            );
+            s.targets = vec![from.name.clone(), to.name.clone()];
+            s.root_cause = format!("concrete_dependency:{},{}", from.name, to.name);
+            out.push(s);
+        } else if !to_ifaces.is_empty() && !from.is_interface() && !to_ifaces.iter().any(|i| *i == from.name) {
+            // Case B: bypassing an existing interface to depend directly on one concrete implementation
+            let p = profiles::of_class(from).language;
+            let mut s = sig(
+                "concrete_dependency",
+                &from.name,
+                &from.name,
+                p,
+                0.28,
+                0.72,
+                "heuristic",
+                format!("{} depends on concrete implementation {} instead of its interface {}", from.name, to.name, to_ifaces.join(" / ")),
+                "Depending on a concrete implementation when an interface already exists defeats polymorphism and locks the caller to one variant.",
+                "program to the interface instead of the concrete implementation (unless this class is a composition root/factory)",
+                "SOLID · DIP",
+            );
+            s.targets = vec![from.name.clone(), to.name.clone()];
+            s.root_cause = format!("concrete_dependency:{},{}", from.name, to.name);
+            out.push(s);
+        }
+    }
+
+    // 4. Anemic Domain Model (data-only entities + procedural service manipulating them)
+    let oo_entities: Vec<&Class> = live
+        .iter()
+        .copied()
+        .filter(|c| {
+            let prof = profiles::of_class(c);
+            if !prof.data_class || c.is_module() || c.is_interface() || c.is_enum() {
+                return false;
+            }
+            if matches!(c.stereotype.as_deref(), Some("value" | "record" | "dto" | "exception")) || role_of(&c.name) == "value" {
+                return false;
+            }
+            let is_domain_like = matches!(layer_of(c), Some(Layer::Domain))
+                || matches!(c.stereotype.as_deref(), Some("entity"))
+                || role_of(&c.name) == "domain";
+            let attrs = c.attributes.iter().filter(|a| a.status.is_live()).count();
+            let behaviour = c.methods.iter().filter(|x| x.status.is_live() && !crate::detail::is_accessor(&c.name, x)).count();
+            is_domain_like && attrs >= 2 && behaviour == 0
+        })
+        .collect();
+    if oo_entities.len() >= 2 {
+        let entity_names: BTreeSet<&str> = oo_entities.iter().map(|c| c.name.as_str()).collect();
+        let procedural_services: Vec<&Class> = live
+            .iter()
+            .copied()
+            .filter(|c| {
+                let is_svc = matches!(c.stereotype.as_deref(), Some("service" | "controller"))
+                    || matches!(role_of(&c.name).as_str(), "service" | "controller");
+                let meths = c.methods.iter().filter(|x| x.status.is_live() && !crate::detail::is_accessor(&c.name, x)).count();
+                let touches_entities = entity_names.iter().filter(|e| dep_edges.contains(&(c.name.as_str(), **e))).count();
+                is_svc && meths >= 4 && touches_entities >= 2
+            })
+            .collect();
+        if !procedural_services.is_empty() {
+            let svcs: Vec<String> = procedural_services.iter().map(|c| c.name.clone()).collect();
+            let ents: Vec<String> = oo_entities.iter().map(|c| c.name.clone()).collect();
+            let mut targets = svcs.clone();
+            targets.extend(ents.iter().cloned());
+            let mut s = sig(
+                "anemic_domain",
+                &svcs[0],
+                &svcs[0],
+                "design",
+                0.45,
+                0.8,
+                "heuristic",
+                format!(
+                    "Anemic domain model: {} hold data without behaviour while {} concentrate domain logic",
+                    ents.join(", "),
+                    svcs.join(", ")
+                ),
+                "Separating state (entities) from behaviour (procedural services) breaks encapsulation, duplicates invariant checks, and turns OO into transaction scripts.",
+                "move domain calculations and invariant-protecting state transitions onto the entities that own the data (GRASP Information Expert)",
+                "OO design analysis",
+            );
+            s.targets = targets;
+            s.root_cause = "anemic_domain:design".into();
+            out.push(s);
+        }
+    }
+
+    // 5. Missing Double Dispatch / Subtype Overload Smell
+    for c in live {
+        if c.name.ends_with("Visitor") || c.is_interface() || c.is_enum() {
+            continue;
+        }
+        let live_methods: Vec<&Method> = c.methods.iter().filter(|x| x.status.is_live() && !crate::detail::is_constructor(&c.name, x)).collect();
+        let p = profiles::of_class(c).language;
+
+        // Case A: a method takes >= 2 parameters of polymorphic base types (e.g. collide(Shape, Shape))
+        for meth in &live_methods {
+            let poly_params: Vec<&str> = meth
+                .params
+                .iter()
+                .filter_map(|param| crate::detail::type_names(&param.ty).find(|t| is_poly_base(t)))
+                .collect();
+            if poly_params.len() >= 2 && !meth.name.starts_with("visit") && !meth.name.starts_with("accept") {
+                // Only flag if at least one of those polymorphic bases has >= 2 concrete subtypes (real dispatch matrix)
+                let has_variants = poly_params.iter().any(|t| children_of.get(*t).map_or(0, Vec::len) >= 2);
+                if has_variants {
+                    let target = format!("{}.{}", c.name, meth.name);
+                    let mut s = sig(
+                        "missing_double_dispatch",
+                        &c.name,
+                        &target,
+                        p,
+                        0.30,
+                        0.72,
+                        "heuristic",
+                        format!("{target}({}) takes multiple polymorphic types — single dispatch cannot resolve both runtime types without type checks", poly_params.join(", ")),
+                        "When behaviour depends on the runtime types of two polymorphic objects, single dispatch forces instanceof chains or brittle type switches.",
+                        "consider Double Dispatch (accept/visit) if the type set is stable, or a dispatch table / Strategy registry if new combinations are added frequently",
+                        "OO design analysis",
+                    );
+                    s.targets = vec![c.name.clone(), target.clone()];
+                    s.root_cause = format!("missing_double_dispatch:{target}");
+                    out.push(s);
+                }
+            }
+        }
+
+        // Case B: sibling-subtype method proliferation on a non-Visitor class (e.g. export(PdfDoc), export(HtmlDoc) or handlePdf(PdfDoc), handleHtml(HtmlDoc))
+        let mut by_parent: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new(); // parent -> [(method_name, child_type)]
+        for meth in &live_methods {
+            if meth.name.starts_with("visit") {
+                continue;
+            }
+            for param in &meth.params {
+                for ty in crate::detail::type_names(&param.ty) {
+                    for parent in parents_of.get(ty).into_iter().flatten().chain(interfaces_of.get(ty).into_iter().flatten()) {
+                        by_parent.entry(*parent).or_default().push((meth.name.as_str(), ty));
+                    }
+                }
+            }
+        }
+        for (parent, pairs) in by_parent {
+            let distinct_children: BTreeSet<&str> = pairs.iter().map(|(_, ch)| *ch).collect();
+            if distinct_children.len() >= 2 {
+                // Check if parent has an accept() method (if so, this may be an intentional Visitor without "Visitor" suffix)
+                let parent_has_accept = live_map
+                    .get(parent)
+                    .is_some_and(|pc| pc.methods.iter().any(|pm| pm.status.is_live() && pm.name.starts_with("accept")));
+                if !parent_has_accept {
+                    let child_list: Vec<&str> = distinct_children.into_iter().collect();
+                    let mut s = sig(
+                        "missing_double_dispatch",
+                        &c.name,
+                        &c.name,
+                        p,
+                        0.32,
+                        0.75,
+                        "heuristic",
+                        format!("{} has separate methods for concrete subtypes of {} ({}) instead of polymorphic or double dispatch", c.name, parent, child_list.join(", ")),
+                        "Overloading or naming separate methods per concrete subtype couples the caller to every subtype; static overload resolution in OO languages does not dispatch on runtime types.",
+                        "move the operation onto the hierarchy (Polymorphism) or introduce Double Dispatch (Visitor with accept() on the base type)",
+                        "OO design analysis",
+                    );
+                    s.targets = vec![c.name.clone(), parent.to_string()];
+                    s.root_cause = format!("missing_double_dispatch:{},{}", c.name, parent);
+                    out.push(s);
+                }
+            }
+        }
+    }
+
+    // 6. Combinatorial Subclass Explosion (wide hierarchy >= 6 direct concrete subtypes)
+    for (parent, kids) in &children_of {
+        let concrete_kids: Vec<&str> = kids
+            .iter()
+            .copied()
+            .filter(|k| live_map.get(*k).is_some_and(|c| !c.is_interface() && !c.is_abstract && !c.is_enum()))
+            .collect();
+        if concrete_kids.len() >= 6 {
+            let p = live_map.get(*parent).map(|c| profiles::of_class(c).language).unwrap_or("design");
+            let mut s = sig(
+                "subclass_explosion",
+                parent,
+                parent,
+                p,
+                0.32,
+                0.75,
+                "structure",
+                format!("{parent} has {} direct concrete subtypes ({}…): check for orthogonal variation axes", concrete_kids.len(), concrete_kids.iter().take(4).copied().collect::<Vec<_>>().join(", ")),
+                "Wide inheritance hierarchies often arise when two independent dimensions of variation are combined via subclassing instead of composition.",
+                "separate independent variation axes using Bridge, Strategy, or Decorator composition",
+                "OO design analysis",
+            );
+            s.targets = std::iter::once((*parent).to_string()).chain(concrete_kids.iter().take(6).map(|k| (*k).to_string())).collect();
+            s.root_cause = format!("subclass_explosion:{parent}");
+            out.push(s);
+        }
+    }
+
+    // 7. Unencapsulated Mutable Collection Leak on entities / aggregate roots
+    let is_mutable_collection = |ty: &str| -> bool {
+        let t = ty.trim();
+        let lower = t.to_lowercase();
+        if lower.contains("unmodifiable") || lower.contains("immutable") || lower.contains("readonly") || lower.contains("iterable") || t.starts_with("&[") {
+            return false;
+        }
+        ["List<", "ArrayList<", "LinkedList<", "Set<", "HashSet<", "TreeSet<", "Map<", "HashMap<", "Collection<", "MutableList<", "MutableSet<", "MutableMap<"]
+            .iter()
+            .any(|prefix| t.starts_with(prefix) || t.contains(&format!(".{prefix}")))
+    };
+    for c in live {
+        let prof = profiles::of_class(c);
+        if !prof.data_class || c.is_module() || c.is_interface() || c.is_enum() {
+            continue;
+        }
+        if matches!(c.stereotype.as_deref(), Some("value" | "record" | "dto" | "exception")) || role_of(&c.name) == "value" {
+            continue;
+        }
+        let is_entity_or_agg = c.aggregate_root
+            || matches!(c.stereotype.as_deref(), Some("entity"))
+            || matches!(layer_of(c), Some(Layer::Domain));
+        if !is_entity_or_agg {
+            continue;
+        }
+        for meth in c.methods.iter().filter(|x| x.status.is_live() && x.visibility == Visibility::Public) {
+            if let Some(ret) = &meth.returns {
+                let w = crate::responsibility::words(&meth.name);
+                if matches!(w.first().map(String::as_str), Some("get")) && is_mutable_collection(ret) {
+                    let target = format!("{}.{}", c.name, meth.name);
+                    let mut s = sig(
+                        "mutable_collection_leak",
+                        &c.name,
+                        &target,
+                        prof.language,
+                        0.24,
+                        0.72,
+                        "heuristic",
+                        format!("{target}() returns mutable collection `{ret}`, allowing callers to bypass {}'s invariants", c.name),
+                        "Returning a raw mutable collection lets external code add/remove items without triggering domain rules or aggregate invariants.",
+                        "return an unmodifiable view / copy / Iterable and expose intention-revealing add/remove methods on the aggregate",
+                        "Encapsulation",
+                    );
+                    s.targets = vec![c.name.clone(), target.clone()];
+                    s.root_cause = format!("mutable_collection_leak:{target}");
+                    out.push(s);
+                }
+            }
+        }
+    }
+
+    // 8. Package-level Stable Dependencies Principle (SDP) violation
+    let pkg_metrics: BTreeMap<&str, &crate::metrics::PackageMetrics> = m.packages.iter().map(|p| (p.name.as_str(), p)).collect();
+    for dep in &m.package_deps {
+        if dep.from == "(none)" || dep.to == "(none)" {
+            continue;
+        }
+        let (Some(&from_p), Some(&to_p)) = (pkg_metrics.get(dep.from.as_str()), pkg_metrics.get(dep.to.as_str())) else {
+            continue;
+        };
+        let from_ext = d.packages.iter().any(|p| p.name == dep.from && p.external);
+        let to_ext = d.packages.iter().any(|p| p.name == dep.to && p.external);
+        if from_ext || to_ext {
+            continue;
+        }
+        if from_p.fan_in >= 2 && from_p.instability <= 0.35 && to_p.instability >= 0.65 && (to_p.instability - from_p.instability) >= 0.30 {
+            let mut s = sig(
+                "package_sdp",
+                &dep.from,
+                &dep.from,
+                "design",
+                0.42,
+                0.85,
+                "structure",
+                format!(
+                    "Stable package {} (I={:.2}, {} dependents) depends on volatile package {} (I={:.2})",
+                    dep.from, from_p.instability, from_p.fan_in, dep.to, to_p.instability
+                ),
+                "Stable Dependencies Principle: packages that many others depend on should not depend on unstable packages, or changes ripple across the whole system.",
+                "invert the dependency using an interface in the stable package (Dependency Inversion / Ports & Adapters)",
+                "Stable Dependencies Principle",
+            );
+            s.targets = vec![dep.from.clone(), dep.to.clone()];
+            s.root_cause = format!("package_sdp:{},{}", dep.from, dep.to);
+            out.push(s);
+        }
+    }
+
+    out
+}
+
 /// Decomplexification detectors: pass-through indirection chains, package fragmentation,
 /// and high ceremony-to-behaviour ratios.
 fn decomplexify_signals(d: &Design, m: &Metrics, live: &[&Class], existing: &[Signal]) -> Vec<Signal> {
@@ -1150,6 +1618,33 @@ fn assumption_challenges(d: &Design, live: &[&Class], unique: &[&Signal]) -> Vec
         });
     }
 
+    // 6. Systemic OO design flaw challenges (anemic domain & disconnected classes)
+    if let Some(anemic) = unique.iter().find(|s| s.rule == "anemic_domain") {
+        out.push(AssumptionChallenge {
+            id: "CH-anemic-domain".into(),
+            kind: "abstraction".into(),
+            title: "Procedural services over data-only entities".into(),
+            question: "Are your domain entities intentionally plain data records (functional/transaction-script style), or should behaviour live on the entities that own the data?".into(),
+            evidence: anemic.message.clone(),
+            targets: anemic.targets.clone(),
+        });
+    }
+    let orphans: Vec<String> = unique.iter().filter(|s| s.rule == "orphan").map(|s| s.entity.clone()).collect();
+    if !orphans.is_empty() {
+        out.push(AssumptionChallenge {
+            id: "CH-disconnected".into(),
+            kind: "hotspot".into(),
+            title: format!("{} completely disconnected class{}", orphans.len(), if orphans.len() == 1 { "" } else { "es" }),
+            question: format!(
+                "{} {} no relations, calls, or type references — are they dead code, missing wiring, or unintegrated concepts?",
+                orphans.iter().take(4).cloned().collect::<Vec<_>>().join(", "),
+                if orphans.len() == 1 { "has" } else { "have" }
+            ),
+            evidence: format!("{} class(es) have zero incoming or outgoing dependencies in the model and code graph.", orphans.len()),
+            targets: orphans,
+        });
+    }
+
     out
 }
 
@@ -1168,6 +1663,7 @@ pub fn report(d: &Design, m: &Metrics, ctx: Context) -> HealthReport {
         signals.extend(from_issue(i, d, dimension_of(i.kind)));
     }
     signals.extend(profile_signals(d, m, &live, &mut idioms));
+    signals.extend(design_flaw_signals(d, m, &live));
     let decomp = decomplexify_signals(d, m, &live, &signals);
     signals.extend(decomp);
     if let Some(ev) = ctx.evidence {

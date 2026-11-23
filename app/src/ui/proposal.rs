@@ -283,6 +283,8 @@ pub struct ProposalUi {
     pub notes: std::collections::HashMap<String, String>,
     pub notice: String,
     pub footer_h: f32,
+    /// Option IDs explicitly collapsed by the user (all alternatives default to expanded).
+    pub collapsed_options: std::collections::HashSet<String>,
 }
 
 pub enum ProposalOut {
@@ -469,33 +471,50 @@ fn alternatives(ui: &mut Ui, st: &mut ProposalUi, dec: &spide_core::model::Decis
     for o in &dec.options {
         let on = chosen == Some(o.id.as_str());
         let pv = snap.previews.iter().find(|v| v.decision == dec.id && v.option == o.id);
+        let has_analysis = o.design_notes.as_deref().is_some_and(|s| !s.trim().is_empty())
+            || o.pros_detail.as_deref().is_some_and(|s| !s.trim().is_empty())
+            || o.cons_detail.as_deref().is_some_and(|s| !s.trim().is_empty())
+            || !o.pros.is_empty()
+            || !o.cons.is_empty();
+        let expanded = !st.collapsed_options.contains(&o.id);
+        let mut toggle_clicked = false;
         let (fill, border) = if on { (Color32::from_rgba_unmultiplied(94, 234, 212, 16), Color32::from_rgba_unmultiplied(94, 234, 212, 160)) } else { (css::SURFACE, css::LINE_STRONG) };
         let r = egui::Frame::new().fill(fill).stroke(Stroke::new(1.0, border)).corner_radius(8).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.spacing_mut().item_spacing.y = 5.0;
             ui.horizontal(|ui| {
                 ui.label(RichText::new(if on { "◉" } else { "○" }).font(sans(13.0)).color(if on { css::GHOST } else { css::FAINT }));
+                ui.label(RichText::new(&o.id).font(bold(12.0)).color(css::DIM));
                 let w = ui.available_width();
                 ui.allocate_ui_with_layout(Vec2::new(w.max(40.0), 18.0), egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true), |ui| {
                     ui.set_width(w.max(40.0));
                     ui.add(egui::Label::new(RichText::new(&o.label).font(bold(13.0)).color(css::TEXT)).wrap());
                 });
             });
+            super::decisions::pattern_badge(ui, o.pattern.as_deref());
             if let Some(s) = &o.summary {
                 widgets::para(ui, s, 12.0, css::DIM);
             }
             super::decisions::tradeoff_chips(ui, o, true);
-            for x in o.pros.iter().take(3) {
-                widgets::para(ui, format!("+ {x}"), 11.5, css::PRO);
+            if expanded {
+                super::decisions::option_analysis(ui, o);
             }
-            for x in o.cons.iter().take(3) {
-                widgets::para(ui, format!("− {x}"), 11.5, css::CON);
+            if has_analysis {
+                let lbl = if expanded { "▾ Hide analysis" } else { "▸ Show design & pros/cons" };
+                if widgets::link_sized(ui, lbl, 10.5).clicked() {
+                    toggle_clicked = true;
+                    if expanded {
+                        st.collapsed_options.insert(o.id.clone());
+                    } else {
+                        st.collapsed_options.remove(&o.id);
+                    }
+                }
             }
             if let Some(e) = pv.and_then(|p| p.error.as_ref()) {
                 widgets::para(ui, format!("Can't apply: {e}"), 11.5, css::BAD);
             }
         });
-        if on {
+        if on || toggle_clicked {
             continue;
         }
         let hint = if locked { "Save or discard your manual edits before switching alternatives" } else { "Show this alternative on the diagram" };
@@ -644,6 +663,7 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
         st.review = None;
         st.baseline = false;
         st.all_changes = false;
+        st.collapsed_options.clear();
         st.advanced = st.session.as_ref().is_some_and(|s| !same_plan(&s.plan, &s.original));
     }
     // a newer saved plan replaces a clean session
@@ -732,16 +752,12 @@ pub fn show(ui: &mut Ui, st: &mut ProposalUi, snap: &Snapshot, selected: Option<
                 Some(dec) if dec.options.len() > 1 => alternatives(ui, st, dec, p.option.as_deref(), snap, backend, out),
                 Some(dec) => {
                     if let Some(o) = dec.options.first() {
+                        super::decisions::pattern_badge(ui, o.pattern.as_deref());
                         if let Some(s) = &o.summary {
                             widgets::para(ui, s, 12.5, css::DIM);
                         }
                         super::decisions::tradeoff_chips(ui, o, false);
-                        for x in &o.pros {
-                            widgets::para(ui, format!("+ {x}"), 11.5, css::PRO);
-                        }
-                        for x in &o.cons {
-                            widgets::para(ui, format!("− {x}"), 11.5, css::CON);
-                        }
+                        super::decisions::option_analysis(ui, o);
                     }
                 }
                 None => {

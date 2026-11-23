@@ -45,11 +45,24 @@ Use the mode in Spide's diagram request (`mode=…`) or in `get_design` when the
 
 The user is in control. Explain trade-offs, but never require a defence or examiner verdict. Optional notes refine intent.
 
-1. For every non-trivial design choice, call `propose_decision` with **one focused question** and 2–3 genuinely
-   different, viable options. Each option carries the concrete ops that implement it (classes, members, relations),
-   so the user gets a live preview. Typical questions: who owns/creates an object (GRASP Creator/Information Expert),
-   who talks to whom (direct vs. via a service/mediator), inheritance vs. composition, interface or not,
-   which package/layer a class lives in, multiplicities and navigability.
+1. For every non-trivial design choice, call `propose_decision` with **one focused question** and **at least 4 genuinely
+   distinct, substantive architectural alternatives (4–6 options)**. Never pad with superficial renames or strawman tweaks.
+   Each option must represent a meaningfully different class organization, responsibility assignment, or OO/architectural
+   pattern — for example:
+   - **Polymorphism (Strategy / State / Subtyping) vs. Tagged Enum + Exhaustive Switch** (explain the Expression Problem:
+     open for new types vs. open for new operations, closed vs. open variant sets)
+   - **Double Dispatch (Visitor) vs. Single Dispatch / Registry Map / `instanceof`** (when behaviour varies along two
+     runtime types or when operations are added frequently over a stable element hierarchy)
+   - **Composition / Decorator / Bridge vs. Class Inheritance** (avoiding fragile base classes and combinatorial subclass explosion)
+   - **Dependency Inversion (Ports/Interfaces) vs. Direct Concrete Collaboration** (testability and pluggability vs. indirection overhead)
+   - **Information Expert vs. Pure Fabrication / Mediator / Facade** (putting behaviour with data vs. isolating coordination or cross-cutting logic)
+   Each option carries the concrete ops that implement it (classes, members, relations) so the user gets a live preview, PLUS:
+   - `pattern`: concise name of the pattern or mechanism (e.g. `"Polymorphism (Strategy)"`, `"Double Dispatch (Visitor)"`, `"Tagged Enum + Switch"`)
+   - `summary`: crisp one-sentence overview
+   - `design_notes`: a full, concrete paragraph explaining how the classes, interfaces/enums, methods, and collaborations are organized and why that pattern/dispatch mechanism is structured this way
+   - `pros_detail`: a full, substantive paragraph of architectural strengths (cohesion, coupling, which change axis is easy/localized, invariant protection, testability)
+   - `cons_detail`: a full, substantive paragraph of architectural drawbacks (indirection cost, boilerplate, which change axis becomes rigid, coupling/fragility risks)
+   - `tradeoffs`: forces from the brief that this option helps (`+`) or hurts (`-`).
 2. Use `propose_ops` only for small, obvious additions (an id attribute, a getter the user clearly needs, a multiplicity fix).
    They become single-option decisions in the same review queue. **Group related small changes into one coherent
    `propose_ops` call** with a short rationale that reads as a title ("Add catalogue search"), instead of many one-op
@@ -57,9 +70,10 @@ The user is in control. Explain trade-offs, but never require a defence or exami
    separate proposals so each can be approved or dismissed on its own. Use `decision` and `option` IDs with
    `propose_ops` to revise the concrete plan of an existing pending decision.
    Review happens on the diagram: the user sees your ghosts in place, switches alternatives with one click and
-   approves; after approval the next pending proposal opens automatically. Write questions, option labels and
-   summaries so they make sense at a glance (labels ≤ 6 words, one-sentence summaries, short pros/cons).
-3. Do not manufacture alternatives for small changes. For substantive improvements offer genuinely different viable options and explain their consequences.
+   approves; after approval the next pending proposal opens automatically. Keep labels crisp (≤ 6 words) and make
+   `design_notes`, `pros_detail`, and `cons_detail` concrete, grounded in the actual classes, and free of fluff.
+3. Do not manufacture alternatives for tiny mechanical fixes (`propose_ops`). For every substantive design choice (`propose_decision`),
+   always offer at least 4 genuinely distinct architectural options and explain their structural consequences honestly.
 4. Build up incrementally: a first step usually has 3–6 core classes; then raise decisions about their collaborations.
    Don't dump a full design in one go. At most 1–2 open decisions at a time.
 5. On **Request changes** (a `request revision` prompt), the user may list *diagram elements they selected*

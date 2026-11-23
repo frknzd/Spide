@@ -69,6 +69,7 @@ pub struct ClassData {
     pub packages: Vec<Package>,
     pub implicit: Vec<spide_core::metrics::ImplicitEdge>,
     pub scoped_metrics: Option<spide_core::metrics::Metrics>,
+    pub package_scope: Option<String>,
     pub saved: Option<std::collections::BTreeMap<String, spide_core::model::Pos>>,
 }
 
@@ -1058,7 +1059,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         }
         let view = &snap.view;
         let d: &Design = if self.review_active { self.proposal_canvas.as_ref().unwrap_or(view) } else { self.preview.as_deref().unwrap_or(view) };
-        let mut cd = ClassData { key, classes: d.classes.clone(), relations: d.relations.clone(), packages: d.packages.clone(), implicit: vec![], scoped_metrics: None, saved: self.preview.as_deref().unwrap_or(view).layout.get("class").cloned() };
+        let mut cd = ClassData { key, classes: d.classes.clone(), relations: d.relations.clone(), packages: d.packages.clone(), implicit: vec![], scoped_metrics: None, package_scope: None, saved: self.preview.as_deref().unwrap_or(view).layout.get("class").cloned() };
         // sync lens: code-only classes join the canvas as "only in code" ghosts
         if let (Lens::Sync, None, false, Some(p)) = (self.lens, &self.preview, self.review_active, snap.project.as_ref()) {
             cd.classes.extend(p.phantoms.iter().cloned());
@@ -1072,13 +1073,19 @@ The original file is not changed.", design.name, design.live_classes().count(), 
             let mut model = d.clone();
             model.classes = cd.classes.clone();
             model.relations = cd.relations.clone();
-            let scope = spide_core::scope::PackageScope::new(&model, &snap.metrics, package, true).ok()?;
+            let base_metrics = if self.preview.is_some() || self.review_active {
+                std::borrow::Cow::Owned(spide_core::metrics::compute(&model, true))
+            } else {
+                std::borrow::Cow::Borrowed(&snap.metrics)
+            };
+            let scope = spide_core::scope::PackageScope::new(&model, &base_metrics, package, true).ok()?;
             let projected = scope.design(&model);
             cd.classes = projected.classes;
             cd.relations = projected.relations;
             cd.packages = projected.packages;
-            cd.implicit.retain(|e| scope.includes_edge(&e.from, &e.to));
-            cd.scoped_metrics = Some(scope.metrics(&snap.metrics, &model));
+            cd.implicit = base_metrics.implicit_edges.iter().filter(|e| scope.includes_edge(&e.from, &e.to)).cloned().collect();
+            cd.scoped_metrics = Some(scope.metrics(&base_metrics, &model));
+            cd.package_scope = Some(package.clone());
             cd.saved = None;
         }
         let a = Arc::new(cd);
@@ -1095,7 +1102,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         // the agent-built conceptual model (no link to the design's classes)
         let (classes, relations) = snap.view.domain.as_class_model();
         let saved = snap.view.layout.get("domain").cloned();
-        let a = Arc::new(ClassData { key, classes, relations, packages: vec![], implicit: vec![], scoped_metrics: None, saved });
+        let a = Arc::new(ClassData { key, classes, relations, packages: vec![], implicit: vec![], scoped_metrics: None, package_scope: None, saved });
         self.domain_data = Some(a.clone());
         Some(a)
     }
@@ -1469,7 +1476,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                 key: hash_of((result.key, ghosts)), classes: projected.classes, relations: projected.relations,
                 packages: projected.packages,
                 implicit: result.implicit.iter().filter(|e| scope.includes_edge(&e.from, &e.to)).cloned().collect(),
-                scoped_metrics: Some(scope.metrics(&snap.metrics, &model)), saved: None,
+                scoped_metrics: Some(scope.metrics(&snap.metrics, &model)), package_scope: Some(package.clone()), saved: None,
             }));
         }
         result
@@ -2078,8 +2085,8 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                             app.branch_cmp = Some(BranchCmp {
                                 name: arg.clone(),
                                 cols: vec![
-                                    CompareCol { id: "●".into(), label: format!("{} (current)", snap.branch), design: Some(snap.view.clone()), impact: None, focus: focus.clone(), error: None, summary: None },
-                                    CompareCol { id: "⎇".into(), label: arg.clone(), design: Some(c.design), impact: Some(c.impact), focus, error: None, summary: None },
+                                    CompareCol { id: "●".into(), label: format!("{} (current)", snap.branch), design: Some(snap.view.clone()), impact: None, focus: focus.clone(), error: None, summary: None, option: None },
+                                    CompareCol { id: "⎇".into(), label: arg.clone(), design: Some(c.design), impact: Some(c.impact), focus, error: None, summary: None, option: None },
                                 ],
                             });
                         },
@@ -2350,7 +2357,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
             saved: data.saved.as_ref(),
             show_methods: class,
             level,
-            show_implicit: class && self.show_implicit,
+            show_implicit: class && (self.show_implicit || data.package_scope.is_some()),
             lens: if class && self.preview.is_none() { self.lens } else { Lens::None },
             read_only: snap.workspace_status != crate::state::WorkspaceStatus::Ready || (class && (self.preview.is_some() || self.review_active)),
             review_focus: None,
@@ -2363,6 +2370,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
             pickable: class && self.review_active && self.preview.is_none(),
             highlight: None,
             keep_layout: false,
+            package_scope: if class { data.package_scope.as_deref() } else { None },
         }
     }
 

@@ -7,10 +7,10 @@ use spide_core::Target;
 /// What the current partner mode means for this turn.
 pub fn mode_rules(mode: PartnerMode) -> &'static str {
     match mode {
-        PartnerMode::Examiner => "Mode EXAMINER: explain focused design choices and alternatives with propose_decision; propose_ops creates a single-option decision for small fixes. The user approves; notes are optional and no defence or verdict is required.",
+        PartnerMode::Examiner => "Mode EXAMINER: for every non-trivial design choice, call propose_decision with AT LEAST 4 genuinely distinct architectural alternatives (4–6 options) exploring real class organizations and patterns (e.g. polymorphism vs. enum/switch, double dispatch/Visitor, Strategy/State, Composition vs. Inheritance, Dependency Inversion, Pure Fabrication/Mediator). Fill `pattern`, `design_notes`, `pros_detail`, and `cons_detail` with substantive paragraphs — never superficial filler. Use propose_ops only for small mechanical fixes. The user approves; notes are optional and no defence or verdict is required.",
         PartnerMode::Socratic => "Mode SOCRATIC: do NOT propose design changes. Ask one probing question at a time that leads the user to the answer (forces, responsibilities, coupling, change scenarios). You may record the user's own answers as forces with propose_ops.",
-        PartnerMode::DevilsAdvocate => "Mode DEVIL'S ADVOCATE: raise decisions as usual, but challenge whatever the user leans towards with the strongest counter-argument.",
-        PartnerMode::Sketch => "Mode SKETCH: move fast. Propose coherent structures directly with propose_ops; use propose_decision only for big forks that are hard to reverse.",
+        PartnerMode::DevilsAdvocate => "Mode DEVIL'S ADVOCATE: raise decisions with at least 4 distinct architectural alternatives (with pattern, design_notes, pros_detail, cons_detail), and challenge whatever the user leans towards with the strongest counter-argument.",
+        PartnerMode::Sketch => "Mode SKETCH: move fast. Propose coherent structures directly with propose_ops; use propose_decision (with at least 4 distinct alternatives and design/pros/cons paragraphs) for big forks that are hard to reverse.",
     }
 }
 
@@ -94,10 +94,10 @@ pub fn fix_issue(message: &str, rule: Option<&str>, fix_hint: Option<&str>, kind
     };
     format!(
         "[spide · fix issue]\nThe user wants to address this health finding:\n\"{message}\"{}{}\n{how}\n\
-         Then raise ONE propose_decision with 2–3 concrete ways to resolve it (each with ops and trade-offs against the brief):\n\
-         - Prefer SIMPLIFYING first (inlining a pass-through, deleting a speculative abstraction, or merging over-fragmented types) when that resolves the root cause.\n\
-         - When a programming pattern fits (Strategy, Polymorphism, Facade, Pure Fabrication, Dependency Inversion, Parameter Object), explain WHY it pays for its extra indirection here and when it would be overkill.\n\
-         - If the finding stems from an artificial constraint or rule that doesn't fit the system's scale, say so explicitly.\n\
+         Then raise ONE propose_decision with AT LEAST 4 genuinely distinct architectural ways to resolve it (4–6 options, each with concrete ops, `pattern`, `design_notes` paragraph, `pros_detail` paragraph, `cons_detail` paragraph, and trade-offs against the brief):\n\
+         - Include a SIMPLIFICATION option (inlining a pass-through, deleting a speculative abstraction, or merging over-fragmented types) when that resolves the root cause.\n\
+         - Contrast genuinely different class organizations and patterns (e.g. Polymorphism/Strategy/State vs. Enum+Switch, Double Dispatch/Visitor vs. single dispatch, Composition/Decorator/Bridge vs. Inheritance, Dependency Inversion/Port vs. direct dependency, Pure Fabrication/Facade/Mediator vs. Information Expert). Explain WHY each mechanism pays for or fails to justify its indirection here.\n\
+         - Never pad with superficial tweaks. If the finding stems from an artificial constraint or rule that doesn't fit the system's scale, include an option or note saying so explicitly.\n\
          Don't pick for the user. Reply with one sentence.",
         rule.map(|r| format!("\nBroken rule: {r}")).unwrap_or_default(),
         fix_hint.map(|f| format!("\nPattern / guidance: {f}")).unwrap_or_default(),
@@ -131,7 +131,7 @@ pub fn challenge_assumptions(d: &Design, r: &spide_core::health::HealthReport) -
          Top findings (leverage-ordered):\n{}\n\n\
          Read get_design and get_health. Then:\n\
          1. Question 2–3 specific assumptions, constraints, layers, or abstractions that may be adding complexity without earning their keep.\n\
-         2. If there is a concrete simplification (collapsing a pass-through layer, inlining speculative interfaces, merging fragmented packages, or splitting a root-cause hotspot), raise ONE focused propose_decision comparing the simplified design against keeping the current structure (with honest trade-offs and health impact).\n\
+         2. If there is a concrete architectural improvement or simplification (collapsing a pass-through layer, inlining speculative interfaces, merging fragmented packages, or restructuring a root-cause hotspot), raise ONE focused propose_decision with AT LEAST 4 genuinely distinct architectural alternatives (each with `pattern`, `design_notes`, `pros_detail`, and `cons_detail` paragraphs, plus honest trade-offs and health impact).\n\
          3. Keep your reply concise, direct, and grounded in the actual classes and brief.",
         r.explain,
         d.rules.preset.as_str(),

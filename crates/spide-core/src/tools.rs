@@ -67,22 +67,32 @@ pub fn tool_list() -> Value {
          "inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["domain","package","use_case","sequence"]}},"required":["kind"]},
          "annotations":{"readOnlyHint":true}},
         {"name":"propose_decision","description":"Raise a design DECISION for user approval. Use this for every non-trivial choice \
-           (which class owns a responsibility, who talks to whom, inheritance vs composition, where a class lives…). Give 2–3 genuinely \
-           different, viable options, each with the concrete ops that implement it; the user sees a live preview of each, picks one or \
-           requests revisions, or approves it with optional notes. No defence is required. Do not apply the ops yourself. \
-           Keep each decision focused (one question).",
+           (class organization, responsibility ownership, dispatch mechanism, pattern selection, boundaries…). \
+           ALWAYS provide AT LEAST 4 genuinely distinct, substantive architectural alternatives (4–6 options) — never superficial \
+           renames or filler. Explore real OO/architectural design axes such as: polymorphism (Strategy/State/subtyping) vs. tagged enum/switch, \
+           double dispatch (Visitor) vs. single dispatch, composition/Decorator/Bridge vs. inheritance, Dependency Inversion (ports/interfaces) \
+           vs. direct concrete collaboration, Pure Fabrication/Mediator/Facade vs. Information Expert. \
+           For each option, provide concrete ops plus: `pattern` (named pattern/mechanism), `summary` (1-sentence overview), \
+           `design_notes` (a substantive paragraph explaining how classes/interfaces/enums are organized and why that pattern/dispatch works), \
+           `pros_detail` (a full paragraph of concrete architectural advantages), and `cons_detail` (a full paragraph of concrete architectural drawbacks). \
+           The user sees a live preview of each, picks one or requests revisions, or approves it with optional notes. \
+           No defence is required. Do not apply the ops yourself. Keep each decision focused (one question).",
          "inputSchema":{"type":"object","properties":{
             "question":{"type":"string"},
             "context":{"type":"string","description":"Why this decision matters now (1–2 sentences)."},
-            "options":{"type":"array","minItems":1,"maxItems":4,"items":{"type":"object","properties":{
-                "label":{"type":"string","description":"Short name, e.g. 'Order owns OrderLines'"},
-                "summary":{"type":"string"},
-                "pros":{"type":"array","items":{"type":"string"}},
-                "cons":{"type":"array","items":{"type":"string"}},
+            "options":{"type":"array","minItems":4,"maxItems":6,"items":{"type":"object","properties":{
+                "label":{"type":"string","description":"Short name, e.g. 'Polymorphic PricingStrategy'"},
+                "pattern":{"type":"string","description":"Named OO/architectural pattern or mechanism, e.g. 'Polymorphism (Strategy)', 'Double Dispatch (Visitor)', 'Tagged Enum + Exhaustive Switch', 'Composition / Decorator', 'Pure Fabrication'."},
+                "summary":{"type":"string","description":"Concise one-sentence summary of the option."},
+                "design_notes":{"type":"string","description":"Substantive paragraph explaining how the classes, interfaces/enums, and collaborations are organized, which pattern or dispatch mechanism is used, and why it fits this structure."},
+                "pros_detail":{"type":"string","description":"Substantive paragraph explaining the concrete architectural strengths (cohesion, coupling, which change axis is open/easy, invariants, testability). Avoid superficial points."},
+                "cons_detail":{"type":"string","description":"Substantive paragraph explaining the concrete architectural drawbacks (indirection cost, boilerplate, which change axis becomes harder, coupling or fragility risks). Avoid superficial points."},
+                "pros":{"type":"array","items":{"type":"string"},"description":"Optional short takeaway bullets complementing pros_detail."},
+                "cons":{"type":"array","items":{"type":"string"},"description":"Optional short takeaway bullets complementing cons_detail."},
                 "tradeoffs":{"type":"array","description":"Forces from the brief this option helps (+) or hurts (-).",
                     "items":{"type":"object","properties":{"force":{"type":"string"},"effect":{"type":"string","enum":["+","-"]},"note":{"type":"string"}},
                     "required":["force","effect"]}},
-                "ops": ops_schema},"required":["label","ops"]}}},
+                "ops": ops_schema},"required":["label","design_notes","pros_detail","cons_detail","ops"]}}},
           "required":["question","options"]}},
         {"name":"propose_ops","description":"Propose small, unambiguous changes (e.g. adding obvious attributes, fixing a multiplicity). They appear as \
            single-option decisions the user reviews on the diagram before approving. Group related small changes into one call with a short title-like rationale; keep unrelated changes in separate calls. Optional decision/option fields revise an existing pending plan, not approve it. Use propose_decision instead for anything the user should think about.",
@@ -340,12 +350,23 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<ToolOutcome, 
                 .collect();
             unknown.sort();
             unknown.dedup();
+            let opt_count = a.options.len();
+            let missing_depth = a.options.iter().any(|o| {
+                o.design_notes.as_deref().map(str::trim).unwrap_or("").is_empty()
+                    || o.pros_detail.as_deref().map(str::trim).unwrap_or("").is_empty()
+                    || o.cons_detail.as_deref().map(str::trim).unwrap_or("").is_empty()
+            });
             let id = store.propose_decision(a.question, a.context, a.options).map_err(|e| e.0)?;
-            let warn = if unknown.is_empty() {
-                String::new()
-            } else {
-                format!(" Note: trade-offs mention forces that are not in the brief: {}.", unknown.join(", "))
-            };
+            let mut warn = String::new();
+            if !unknown.is_empty() {
+                warn.push_str(&format!(" Note: trade-offs mention forces that are not in the brief: {}.", unknown.join(", ")));
+            }
+            if opt_count < 4 {
+                warn.push_str(&format!(" Note: only {opt_count} option(s) provided; provide at least 4 genuinely distinct architectural alternatives (e.g. different class organizations, patterns, or dispatch strategies)."));
+            }
+            if missing_depth {
+                warn.push_str(" Note: include substantive `design_notes`, `pros_detail`, and `cons_detail` paragraphs on every option explaining class organization, pattern choice, and concrete trade-offs.");
+            }
             ok(
                 format!(
                     "Decision {id} is now shown to the user with live previews. Consequences per option: {}.{warn} \
