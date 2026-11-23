@@ -805,7 +805,7 @@ mod tests {
         assert!(h.state().health.open);
         assert!(!h.state().brief, "opening health inspector closes brief");
         let report = &h.state().snap.as_ref().unwrap().metrics.health_report;
-        assert_eq!(report.version, "health-2");
+        assert_eq!(report.version, "health-3");
         assert!(report.score.is_some());
         assert_eq!(report.dimensions.len(), 6);
         // Switch through inspector tabs without panicking

@@ -352,7 +352,7 @@ pub fn workspace_actions(ui: &mut Ui, brief: bool, timeline: bool, commands: boo
         if ui.add_enabled_ui(!review, |ui| toggle_button(ui, "Timeline", timeline)).inner.on_disabled_hover_text("The timeline opens after the review (⌘T leaves review)").clicked() {
             out = Some(Action::Timeline);
         }
-        if button(ui, "Find").clicked() {
+        if ui.add(egui::Button::new(RichText::new("Search design, code, decisions…  ⌘F").font(sans(12.0)).color(css::DIM)).min_size(Vec2::new(220.0, 26.0))).clicked() {
             out = Some(Action::Find);
         }
         let r = ui.add(

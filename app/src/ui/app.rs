@@ -165,6 +165,8 @@ pub struct SpideApp {
     last_title: String,
     /// Find in Design / Go to Element
     pub find: Option<super::search::FindUi>,
+    pub search_index: Option<((u64, u64, u64), Vec<super::search::Item>)>,
+    pub search_loading: Option<(u64, u64, u64)>,
     /// back/forward over deliberate navigation
     pub nav: super::search::NavHistory,
     /// selected diagram elements (the last one is "the" selection)
@@ -424,6 +426,8 @@ impl SpideApp {
             open_error: None,
             last_title: String::new(),
             find: None,
+            search_index: None,
+            search_loading: None,
             nav: Default::default(),
             selection: vec![],
             show_shortcuts: false,
@@ -819,6 +823,8 @@ The original file is not changed.", design.name, design.live_classes().count(), 
         self.domain_data = None;
         self.views = Views::default();
         self.find = None;
+        self.search_index = None;
+        self.search_loading = None;
         self.nav.clear();
         self.selection.clear();
         self.context = None;
@@ -3170,7 +3176,7 @@ The original file is not changed.", design.name, design.live_classes().count(), 
                     self.close_timeline();
                 }
             }
-            Some(chrome::Action::Find) => self.palette = Some(Palette::new("find ")),
+            Some(chrome::Action::Find) => self.open_find(),
             Some(chrome::Action::Commands) => self.palette = if self.palette.is_some() { None } else { Some(Palette::new("")) },
             None => {}
         }

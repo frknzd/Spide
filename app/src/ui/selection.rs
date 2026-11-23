@@ -69,7 +69,7 @@ impl SpideApp {
     }
 
     fn is_pruned(&self, t: &Target) -> bool {
-        self.snap.as_ref().is_some_and(|s| super::search::index(&s.view).iter().any(|i| &i.target == t && i.pruned()))
+        self.snap.as_ref().is_some_and(|s| super::search::index(&s.view).iter().any(|i| i.target.as_ref() == Some(t) && i.pruned()))
     }
 
     fn pinned(&self, class: &str) -> bool {

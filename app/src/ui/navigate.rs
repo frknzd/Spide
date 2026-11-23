@@ -18,8 +18,30 @@ impl SpideApp {
     pub fn find_overlay(&mut self) {
         let Some(mut f) = self.find.take() else { return };
         let Some(snap) = self.snap.clone() else { return };
-        let items = search::index(&snap.view);
-        match search::show(&self.ctx, &mut f, &items) {
+        let (generation, code, root) = {
+            let state = self.backend.st.lock();
+            (state.project.as_ref().map(|p| p.index.generation ^ p.index.parsed_at.rotate_left(32)).unwrap_or(0), state.project.as_ref().and_then(|p| p.index.code.clone()), state.project_dir.clone())
+        };
+        let key = (snap.epoch, snap.rev, generation);
+        if self.search_index.as_ref().map(|(k, _)| *k) != Some(key) && self.search_loading != Some(key) {
+            self.search_loading = Some(key);
+            let design = snap.view.clone();
+            self.backend.call(move |_, _| Ok(search::workspace_index(&design, code.as_deref(), &root)), move |app, result| {
+                if app.search_loading == Some(key) {
+                    app.search_loading = None;
+                    if let Ok(items) = result { app.search_index = Some((key, items)); }
+                }
+            });
+        }
+        f.loading = self.search_index.as_ref().map(|(k, _)| *k) != Some(key);
+        let fallback;
+        let items = if let Some((_, items)) = self.search_index.as_ref().filter(|(k, _)| *k == key) {
+            items.as_slice()
+        } else {
+            fallback = search::index(&snap.view);
+            fallback.as_slice()
+        };
+        match search::show(&self.ctx, &mut f, items) {
             Some(FindOut::Go(i)) => self.go_to_item(&i),
             Some(FindOut::Close) => {}
             None => self.find = Some(f),
@@ -43,7 +65,15 @@ impl SpideApp {
     pub fn go_to_item(&mut self, i: &Item) {
         let here = self.current_location();
         self.nav.visit(here);
-        self.show_location(Location { tab: i.tab, target: Some(i.target.clone()), scenario: None });
+        match &i.destination {
+            Some(search::Destination::Decision(id)) => { self.shown_decision = Some(id.clone()); }
+            Some(search::Destination::Brief) => { self.brief = true; }
+            Some(search::Destination::Code { class, method }) => {
+                let (class, method) = (class.clone(), method.clone());
+                self.backend.run(move |st, _| crate::editor::open_element(st, &class, method.as_deref()).map(|_| ()));
+            }
+            None => self.show_location(Location { tab: i.tab, target: i.target.clone(), scenario: None }),
+        }
     }
 
     fn show_location(&mut self, loc: Location) {
@@ -56,7 +86,7 @@ impl SpideApp {
             return;
         };
         // the element may be gone (renamed, removed, other branch)
-        let exists = self.snap.as_ref().is_some_and(|s| search::index(&s.view).iter().any(|i| i.target == t));
+        let exists = self.snap.as_ref().is_some_and(|s| search::index(&s.view).iter().any(|i| i.target.as_ref() == Some(&t)));
         if !exists {
             self.selection.clear();
             return self.toast("info", format!("{} no longer exists in this design", t.label()));

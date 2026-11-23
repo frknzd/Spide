@@ -72,7 +72,7 @@ impl SpideApp {
         };
         self.scenario = view.scenario.filter(|n| s.view.sequences.iter().any(|seq| &seq.name == n && seq.status != spide_core::model::Status::Pruned));
         let items = super::search::index(&s.view);
-        self.selection = view.selection.into_iter().filter(|t| items.iter().any(|i| &i.target == t && !i.pruned())).collect();
+        self.selection = view.selection.into_iter().filter(|t| items.iter().any(|i| i.target.as_ref() == Some(t) && !i.pruned())).collect();
         self.show_implicit = view.implicit;
         self.lens = match view.lens.as_str() {
             "concerns" => spide_diagram::class_view::Lens::Concerns,

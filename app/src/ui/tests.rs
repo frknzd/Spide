@@ -825,7 +825,7 @@ fn edit_actions_follow_focus_and_unavailable_actions_explain_why() {
     h.state_mut().go_to_item(&item);
     steps(&mut h, 30);
     assert_eq!(h.state().tab, Tab::Class);
-    assert_eq!(h.state().selected_target(), Some(item.target.clone()));
+    assert_eq!(h.state().selected_target(), item.target.clone());
     h.state_mut().perform(ActionId::Back);
     steps(&mut h, 5);
     assert_eq!(h.state().tab, Tab::Package);
