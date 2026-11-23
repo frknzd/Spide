@@ -10,7 +10,7 @@ use crate::model::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const VERSION: &str = "health-2";
+pub const VERSION: &str = "health-3";
 
 /// Dimension specification: id, display label, overall weight, saturation slope.
 pub struct DimensionSpec {
@@ -414,7 +414,10 @@ fn from_issue(i: &Issue, d: &Design, dimension: &str) -> Vec<Signal> {
     } else {
         i.basis.clone()
     };
-    let root_cause = format!("{}:{}", i.kind, targets.join(","));
+    let mut canonical_targets = targets.clone();
+    canonical_targets.sort();
+    canonical_targets.dedup();
+    let root_cause = format!("{}:{}", i.kind, canonical_targets.join(","));
     // a cycle/violation burdens every participant
     targets
         .iter()
@@ -487,7 +490,12 @@ fn profile_signals(d: &Design, m: &Metrics, live: &[&Class], idioms: &mut BTreeM
             let target = format!("{}.{}", c.name, meth.name);
             let loc = f.file.clone();
             let cc = f.branches + 1;
-            if matches!(p.language, "java" | "design") && f.instanceofs > 0 {
+            // Java equality needs a runtime type guard; it is not variant dispatch.
+            let equality_guard = meth.name == "equals"
+                && meth.params.len() == 1
+                && matches!(meth.params[0].ty.as_str(), "Object" | "java.lang.Object")
+                && meth.returns.as_deref() == Some("boolean");
+            if matches!(p.language, "java" | "design") && f.instanceofs > 0 && !equality_guard {
                 let mut s = sig(
                     "instanceof",
                     &c.name,
@@ -798,7 +806,7 @@ fn force_health(d: &Design, m: &Metrics, dims: &[DimensionReport]) -> Vec<ForceH
         match f.kind {
             ForceKind::Change => {
                 if let Some(cs) = m.changes.iter().find(|c| c.name.eq_ignore_ascii_case(&f.name)) {
-                    if cs.analysed {
+                    if cs.analysed && !cs.stale {
                         let pct = (cs.locality * 100.0).round() as i64;
                         let status = if pct >= 75 { "aligned" } else if pct >= 50 { "watch" } else { "at_risk" };
                         let stale_note = if cs.stale { " · stale" } else { "" };
@@ -817,7 +825,7 @@ fn force_health(d: &Design, m: &Metrics, dims: &[DimensionReport]) -> Vec<ForceH
                             kind: f.kind.as_str().into(),
                             priority: f.priority,
                             status: "unmeasured".into(),
-                            summary: "Change scenario added but not analysed yet.".into(),
+                            summary: if cs.stale { "Change scenario analysis is stale; reanalyse before drawing conclusions." } else { "Change scenario added but not analysed yet." }.into(),
                             related_dimensions: vec!["extensibility".into()],
                             related_findings: 0,
                         });
@@ -1065,9 +1073,12 @@ fn design_flaw_signals(d: &Design, m: &Metrics, live: &[&Class]) -> Vec<Signal> 
         // Case A: high-level class (domain/application) depends directly on a concrete repository/adapter/infrastructure class
         let from_inner = matches!(layer_of(from), Some(Layer::Domain | Layer::Application))
             || matches!(role_of(&from.name).as_str(), "domain" | "service" | "controller");
+        // A suffix such as Store or Client does not establish persistence or I/O.
+        let to_role = crate::responsibility::role_of(d, to);
         let to_infra_role = matches!(layer_of(to), Some(Layer::Infrastructure))
             || matches!(to.stereotype.as_deref(), Some("repository" | "adapter"))
-            || matches!(role_of(&to.name).as_str(), "persistence" | "adapter");
+            || (matches!(to_role.source.as_str(), "explicit" | "agent")
+                && matches!(to_role.role.as_str(), "persistence" | "adapter"));
         let to_ifaces = interfaces_of.get(to.name.as_str()).cloned().unwrap_or_default();
         if from_inner && to_infra_role {
             let iface_hint = if !to_ifaces.is_empty() {
@@ -1648,6 +1659,31 @@ fn assumption_challenges(d: &Design, live: &[&Class], unique: &[&Signal]) -> Vec
     out
 }
 
+/// Group only symptoms backed by the same structural evidence. All original signals
+/// remain inspectable; independent cycles and unrelated findings stay separate.
+fn group_structural_causes(d: &Design, m: &Metrics, signals: &mut [Signal]) {
+    for s in signals {
+        if matches!(s.rule.as_str(), "god" | "cohesion" | "large_class" | "mixed_concerns")
+            && m.classes.get(&s.entity).is_some_and(|c| c.lcom.is_some_and(|l| l > 1))
+        {
+            s.root_cause = format!("responsibility:{}", s.entity);
+        }
+        if s.rule != "cycle" || !s.message.starts_with("package cycle:") { continue; }
+        // A package SCC is a symptom of a class SCC only when precisely one
+        // class SCC spans exactly those packages. Multiple SCCs remain independent.
+        let packages: BTreeSet<_> = s.targets.iter().cloned().collect();
+        if !m.package_cycles.iter().any(|pc| pc.iter().cloned().collect::<BTreeSet<_>>() == packages) { continue; }
+        let matches: Vec<_> = m.cycles.iter().filter(|cycle| {
+            cycle.iter().filter_map(|n| d.class(n).and_then(|c| c.package.clone())).collect::<BTreeSet<_>>() == packages
+        }).collect();
+        if matches.len() == 1 {
+            let mut targets = matches[0].clone();
+            targets.sort();
+            s.root_cause = format!("cycle:{}", targets.join(","));
+        }
+    }
+}
+
 /// The health report for a design (and, when present, its code facts and evidence).
 pub fn report(d: &Design, m: &Metrics, ctx: Context) -> HealthReport {
     let live: Vec<&Class> = d.classes.iter().filter(|c| c.status.is_live() && !d.is_external(&c.name)).collect();
@@ -1676,6 +1712,13 @@ pub fn report(d: &Design, m: &Metrics, ctx: Context) -> HealthReport {
             s.pattern_hint = pattern_hint_for(&s.rule).map(String::from);
         }
     }
+    // Uncorroborated heuristics are investigation leads, not confirmed defects.
+    for s in &mut signals {
+        if s.provenance == "heuristic" {
+            s.confidence = s.confidence.min(0.35);
+        }
+    }
+    group_structural_causes(d, m, &mut signals);
     // ---- exceptions
     let mut suppressed = vec![];
     signals.retain_mut(|s| match d.health_exceptions.iter().find(|x| x.active(ctx.now) && x.matches(s)) {
@@ -1733,11 +1776,24 @@ pub fn report(d: &Design, m: &Metrics, ctx: Context) -> HealthReport {
     let mut dimensions: Vec<DimensionReport> = Vec::with_capacity(DIMENSIONS.len());
     let mut rc_penalties: BTreeMap<String, f64> = BTreeMap::new();
 
+    // One root cause is charged to its strongest supported dimension, never once
+    // per symptom/dimension. Do this after exceptions so suppressed evidence cannot win.
+    let mut primary: BTreeMap<&str, (&str, f64)> = BTreeMap::new();
+    for s in &signals {
+        let weight = if s.provenance == "heuristic" { 0.0 } else { s.severity * s.confidence * provenance_weight(&s.provenance) };
+        primary.entry(&s.root_cause).and_modify(|current| {
+            if weight > current.1 { *current = (&s.dimension, weight); }
+        }).or_insert((&s.dimension, weight));
+    }
     for spec in DIMENSIONS {
         let mut active_rc: BTreeMap<&str, f64> = BTreeMap::new();
         for s in signals.iter().filter(|s| s.dimension == spec.id) {
             let key = if s.root_cause.is_empty() { s.message.as_str() } else { s.root_cause.as_str() };
-            let w = (s.severity * s.confidence * provenance_weight(&s.provenance)).clamp(0.0, 1.0);
+            let w = if s.provenance == "heuristic" || primary.get(s.root_cause.as_str()).is_some_and(|(dimension, _)| *dimension != spec.id) {
+                0.0
+            } else {
+                (s.severity * s.confidence * provenance_weight(&s.provenance)).clamp(0.0, 1.0)
+            };
             active_rc.entry(key).and_modify(|cur| *cur = cur.max(w)).or_insert(w);
         }
         let suppressed_rc: BTreeSet<&str> = suppressed
@@ -1763,7 +1819,8 @@ pub fn report(d: &Design, m: &Metrics, ctx: Context) -> HealthReport {
         if total_w > 0.0 {
             for (rc, w) in &active_rc {
                 let standalone = 100.0 * (1.0 - (-spec.slope * *w).exp());
-                rc_penalties.insert((*rc).to_string(), (standalone * 10.0).round() / 10.0);
+                let p = (standalone * 10.0).round() / 10.0;
+                rc_penalties.entry((*rc).to_string()).and_modify(|old| *old = old.max(p)).or_insert(p);
             }
         }
         let score = assessed.then(|| (100.0 - penalty).round().clamp(0.0, 100.0) as u8);

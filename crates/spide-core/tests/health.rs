@@ -67,7 +67,7 @@ fn exceptions_require_approval_and_expire_without_erasing_the_finding() {
 #[test]
 fn overall_score_is_anti_padding_monotonic_and_unassessed_when_empty() {
     let empty = compute(&Design::default(), false).health_report;
-    assert_eq!(empty.version, "health-2");
+    assert_eq!(empty.version, "health-3");
     assert_eq!(empty.score, None);
     assert_eq!(empty.evidence_level, "unassessed");
     assert_eq!(empty.dimensions.len(), 6);

@@ -233,7 +233,7 @@ fn score_free_evidence_and_exception_flow_respects_policy() {
     }
     let read = |name| serde_json::from_str::<Value>(&s.call_tool(name, &json!({}), "agent").unwrap()).unwrap();
     let before = read("get_health");
-    assert_eq!(before["version"], "health-2");
+    assert_eq!(before["version"], "health-3");
     assert!(!before["gaps"].as_array().unwrap().is_empty());
     assert!(before["score"].as_u64().is_some());
     assert_eq!(before["dimensions"].as_array().unwrap().len(), 6);

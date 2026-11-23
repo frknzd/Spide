@@ -666,7 +666,7 @@ fn observations(d: &Design, ghosts: bool) -> Metrics {
     let dep_set: BTreeSet<(String, String)> = deps.iter().map(|e| (e.from.clone(), e.to.clone())).collect();
     for cs in d.change_scenarios.iter().filter(|c| c.status.is_live()) {
         let fp = crate::scenarios::footprint(cs, d, &dep_set);
-        if fp.analysed && classes.len() >= 4 && fp.locality < 0.5 {
+        if fp.analysed && !fp.stale && classes.len() >= 4 && fp.locality < 0.5 {
             issues.push(Issue::new(
                 "change_ripple",
                 0.35,

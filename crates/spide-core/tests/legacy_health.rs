@@ -16,7 +16,7 @@ fn legacy_ratings_round_trip_but_do_not_change_health_report() {
     let baseline = compute(&Design::default(), false);
     let metrics = compute(&design, false);
     assert_eq!(metrics.health_report, baseline.health_report);
-    assert_eq!(metrics.health_report.version, "health-2");
+    assert_eq!(metrics.health_report.version, "health-3");
     assert_eq!(metrics.health_report.score, None, "empty design stays unassessed even with legacy ratings");
     let report = serde_json::to_value(metrics.health_report).unwrap();
     for key in ["measured", "assisted", "legacy", "coverage"] {

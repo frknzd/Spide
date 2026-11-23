@@ -35,7 +35,7 @@ struct RawMethod {
     is_static: bool,
     is_abstract: bool,
     /// (receiver expression kind, receiver name, method) — resolved later
-    invocations: Vec<(Option<String>, String)>,
+    invocations: Vec<(Option<String>, String, usize)>,
     identifiers: BTreeSet<String>,
     /// Local variables (incl. for-each variables) and their declared types.
     locals: Vec<(String, String)>,
@@ -46,6 +46,7 @@ struct RawMethod {
 struct RawType {
     name: String,
     java_package: String,
+    imports: Vec<String>,
     source: SourceSymbol,
     kind: &'static str, // class | interface | enum | record
     is_abstract: bool,
@@ -127,11 +128,26 @@ fn collect_body(n: Node, src: &[u8], m: &mut RawMethod) {
                 "field_access" => {
                     let obj = o.child_by_field_name("object").map(|x| text(x, src)).unwrap_or("");
                     let f = o.child_by_field_name("field").map(|x| text(x, src)).unwrap_or("");
-                    if obj == "this" { f.to_string() } else { text(o, src).to_string() }
+                    if obj == "this" { format!("this.{f}") } else { text(o, src).to_string() }
                 }
                 _ => text(o, src).to_string(),
             });
-            m.invocations.push((recv, name));
+            let arity = n.child_by_field_name("arguments").map(|a| {
+                let mut cursor = a.walk();
+                a.named_children(&mut cursor).filter(|n| !matches!(n.kind(), "line_comment" | "block_comment")).count()
+            }).unwrap_or(0);
+            m.invocations.push((recv, name, arity));
+        }
+        "method_reference" => {
+            // Target functional-interface arity is unavailable to this source index.
+            // Resolve only uniquely named methods, never guess an overload.
+            if let Some((receiver, name)) = text(n, src).rsplit_once("::") {
+                let receiver = receiver.trim();
+                let name = name.trim();
+                if !receiver.is_empty() && name != "new" && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    m.invocations.push((Some(receiver.to_string()), name.to_string(), usize::MAX));
+                }
+            }
         }
         "field_access" => {
             if n.child_by_field_name("object").is_some_and(|o| o.kind() == "this") {
@@ -313,8 +329,14 @@ fn parse_file(parser: &mut Parser, path: &Path, dir: &Path) -> Result<Vec<RawTyp
     if root.has_error() {
         return Err("syntax errors".into());
     }
+    let mut cursor = root.walk();
+    let imports: Vec<String> = root.named_children(&mut cursor)
+        .filter(|n| n.kind() == "import_declaration")
+        .map(|n| text(n, &src).trim_start_matches("import").trim().trim_end_matches(';').trim().to_string())
+        .filter(|s| !s.starts_with("static ")).collect();
     let rel = path.strip_prefix(dir).unwrap_or(path).display().to_string();
     for t in &mut out {
+        t.imports = imports.clone();
         t.source.file = rel.clone();
         for m in &mut t.methods {
             m.facts.file = rel.clone();
@@ -418,7 +440,7 @@ fn import_files(dir: &Path, code_root: Option<&str>, files: Vec<PathBuf>) -> Res
     };
     let by_simple: BTreeMap<String, String> =
         types.iter().filter(|t| count[&t.name] == 1).map(|t| (t.name.clone(), t.name.clone())).collect();
-    let resolve = |simple: &str| by_simple.get(simple).cloned();
+    let qualified: BTreeMap<String, String> = types.iter().map(|t| (t.source.symbol.clone(), name_of(t))).collect();
 
     let pkgs: BTreeSet<String> = types.iter().map(|t| t.java_package.clone()).collect();
     let root = code_root.map(String::from).unwrap_or_else(|| {
@@ -431,6 +453,26 @@ fn import_files(dir: &Path, code_root: Option<&str>, files: Vec<PathBuf>) -> Res
     let mut rels: Vec<Op> = vec![];
     for t in &types {
         let me = name_of(t);
+        let resolve = |name: &str| -> Option<String> {
+            if let Some(found) = qualified.get(name) { return Some(found.clone()); }
+            let mut scope = t.source.symbol.as_str();
+            while scope != t.java_package {
+                if let Some(found) = qualified.get(&format!("{scope}.{name}")) { return Some(found.clone()); }
+                let Some((parent, _)) = scope.rsplit_once('.') else { break; };
+                scope = parent;
+            }
+            let explicit: Vec<_> = t.imports.iter().filter(|i| i.rsplit('.').next() == Some(name)).collect();
+            if !explicit.is_empty() {
+                return if explicit.len() == 1 { qualified.get(explicit[0]).cloned() } else { None };
+            }
+            let same_package = if t.java_package.is_empty() { name.to_string() } else { format!("{}.{name}", t.java_package) };
+            if let Some(found) = qualified.get(&same_package) { return Some(found.clone()); }
+            let wildcard: BTreeSet<_> = t.imports.iter().filter_map(|i| i.strip_suffix(".*"))
+                .filter_map(|p| qualified.get(&format!("{p}.{name}"))).collect();
+            if wildcard.len() == 1 { return wildcard.into_iter().next().cloned(); }
+            if wildcard.len() > 1 { return None; }
+            by_simple.get(name).cloned()
+        };
         let fields: BTreeMap<&str, &str> = t.fields.iter().map(|f| (f.name.as_str(), f.ty.as_str())).collect();
         let attributes: Vec<Attribute> = t
             .fields
@@ -448,25 +490,38 @@ fn import_files(dir: &Path, code_root: Option<&str>, files: Vec<PathBuf>) -> Res
                 let locals: BTreeMap<&str, &str> =
                     m.params.iter().chain(m.locals.iter()).filter(|(_, ty)| ty != "var").map(|(n, ty)| (n.as_str(), ty.as_str())).collect();
                 let mut calls: BTreeSet<String> = BTreeSet::new();
-                for (recv, name) in &m.invocations {
+                let call_name = |owner: &str, name: &str, arity: usize| -> Option<String> {
+                    let target = types.iter().find(|ty| name_of(ty) == owner)?;
+                    let candidates: Vec<_> = target.methods.iter().filter(|method| method.name == name && (arity == usize::MAX || method.params.len() == arity)).collect();
+                    if candidates.len() != 1 { return None; }
+                    Some(if target.methods.iter().filter(|method| method.name == name).count() > 1 {
+                        signature(candidates[0])
+                    } else { name.to_string() })
+                };
+                for (recv, name, arity) in &m.invocations {
                     match recv.as_deref() {
                         None | Some("this") => {
-                            calls.insert(name.clone());
+                            if let Some(name) = call_name(&me, name, *arity) { calls.insert(name); }
                         }
                         Some(r) => {
-                            let ty = fields.get(r).or_else(|| locals.get(r)).copied();
+                            let ty = if let Some(field) = r.strip_prefix("this.") {
+                                fields.get(field)
+                            } else {
+                                locals.get(r).or_else(|| fields.get(r))
+                            }.copied();
                             let mut names = vec![];
                             if let Some(ty) = ty {
-                                names.extend(ty.split(|c: char| !c.is_alphanumeric() && c != '_').map(String::from));
+                                // A collection receiver is not its element type.
+                                names.push(ty.split(['<', '[']).next().unwrap_or(ty).trim().to_string());
                             } else {
                                 // static call on a type: Foo.bar()
                                 names.push(r.to_string());
                             }
                             if let Some(target) = names.iter().filter(|n| !COLLECTIONS.contains(&n.as_str())).find_map(|n| resolve(n)) {
                                 if target != me {
-                                    calls.insert(format!("{target}.{name}"));
+                                    if let Some(name) = call_name(&target, name, *arity) { calls.insert(format!("{target}.{name}")); }
                                 } else {
-                                    calls.insert(name.clone());
+                                    if let Some(name) = call_name(&target, name, *arity) { calls.insert(name); }
                                 }
                             }
                         }
@@ -522,7 +577,7 @@ fn import_files(dir: &Path, code_root: Option<&str>, files: Vec<PathBuf>) -> Res
             }
         }
         for f in t.fields.iter().filter(|f| !f.is_static) {
-            let names: Vec<&str> = f.ty.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| !s.is_empty()).collect();
+            let names: Vec<&str> = f.ty.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '.').filter(|s| !s.is_empty()).collect();
             let many = f.ty.contains('[') || names.iter().any(|n| COLLECTIONS.contains(n));
             for n in names {
                 if let Some(x) = resolve(n).filter(|x| *x != me) {
