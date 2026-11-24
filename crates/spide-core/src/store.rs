@@ -800,8 +800,17 @@ pub fn supertypes(d: &Design, class: &str) -> Vec<String> {
 }
 
 pub fn has_method(d: &Design, class: &str, method: &str) -> bool {
+    let method = method.trim();
+    if method.is_empty() {
+        return false;
+    }
     std::iter::once(class.to_string()).chain(supertypes(d, class)).any(|c| {
-        d.live_class(&c).is_some_and(|c| c.methods.iter().any(|m| m.name == method && m.status.is_live()))
+        d.live_class(&c).is_some_and(|c| {
+            c.methods.iter().any(|m| {
+                m.status.is_live()
+                    && (m.name == method || m.name.split('(').next().map(str::trim) == Some(method))
+            })
+        })
     })
 }
 

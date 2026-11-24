@@ -155,3 +155,55 @@ fn validation_and_rename_use_the_lifeline_class() {
     assert_eq!(s.class_of("l"), "Lease");
     assert_eq!(s.lifeline("l").label(false), "l : Lease");
 }
+
+#[test]
+fn validation_matches_overloaded_methods() {
+    let mut store = Store::default();
+    store
+        .apply_user(
+            serde_json::from_str(
+                r#"[
+                    {"op":"add_class","name":"Caller"},
+                    {"op":"add_class","name":"HeaderMasker","methods":[
+                        {"name":"mask(Map<String,List<String>>)"},
+                        {"name":"mask(String,String)"},
+                        {"name":"maskValue"}
+                    ]}
+                ]"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let s = seq(serde_json::json!({
+        "name": "SD3",
+        "lifelines": [
+            {"name": "c", "class": "Caller"},
+            {"name": "hm", "class": "HeaderMasker"}
+        ],
+        "steps": [
+            {"from": "c", "to": "hm", "method": "mask", "args": "headers"},
+            {"from": "c", "to": "hm", "method": "mask(headers)"},
+            {"from": "c", "to": "hm", "method": "mask(Map<String,List<String>>)"},
+            {"from": "c", "to": "hm", "method": "mas"}
+        ]
+    }));
+    let problems = store.set_sequence(s).unwrap();
+    assert_eq!(problems, vec!["message #4: HeaderMasker.mas() does not exist".to_string()]);
+    let stored = &store.design.sequences[0];
+    assert!(stored.messages[0].problem.is_none());
+    assert!(stored.messages[1].problem.is_none());
+    assert!(stored.messages[2].problem.is_none());
+    assert!(stored.messages[3].problem.is_some());
+
+    // Pruned overloads must not match when no live overload remains
+    store
+        .prune(
+            &[
+                Target::Method { class: "HeaderMasker".into(), name: "mask(Map<String,List<String>>)".into() },
+                Target::Method { class: "HeaderMasker".into(), name: "mask(String,String)".into() },
+            ],
+            None,
+        )
+        .unwrap();
+    assert!(!store::has_method(&store.design, "HeaderMasker", "mask"));
+}
